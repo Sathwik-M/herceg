@@ -26,8 +26,10 @@ export class Toolbar {
   #theme = "";
   #visible = false;
   #shown = true;
+  /** Pixels from the right and bottom edges of the chart. */
+  #corner = "right:6px;bottom:6px";
 
-  /** A toolbar named `label` in the bottom right corner of `root`. */
+  /** A toolbar named `label` in the bottom right corner of `root` (see `place`). */
   constructor(root: HTMLElement, label: string, tools: readonly ToolButton[]) {
     const document = root.ownerDocument;
     this.element = document.createElement("div");
@@ -73,6 +75,18 @@ export class Toolbar {
     this.#place();
   }
 
+  /** Places the toolbar in the bottom right corner of `room` (a panel's plot) in a chart of `width` by `height`. */
+  place(
+    room: { x: number; y: number; width: number; height: number },
+    width: number,
+    height: number,
+  ) {
+    const corner = `right:${width - room.x - room.width + 6}px;bottom:${height - room.y - room.height + 6}px`;
+    if (corner === this.#corner) return;
+    this.#corner = corner;
+    this.#place();
+  }
+
   /** Reads toggles' states, and which buttons are left out, again. */
   refresh(): void {
     for (const { button, tool } of this.#buttons) {
@@ -103,6 +117,6 @@ export class Toolbar {
 
   /** Hidden buttons stay focusable, and show when focused; a toolbar left out is neither. */
   #place(): void {
-    this.element.style.cssText = `position:absolute;right:6px;bottom:6px;display:${this.#shown ? "flex" : "none"};gap:2px;transition:opacity 120ms;opacity:${this.#visible ? 1 : 0}`;
+    this.element.style.cssText = `position:absolute;${this.#corner};display:${this.#shown ? "flex" : "none"};gap:2px;transition:opacity 120ms;opacity:${this.#visible ? 1 : 0}`;
   }
 }

@@ -71,6 +71,9 @@ export interface LegendEntry {
   readonly color: string;
 }
 
+/** Network nodes moved by the chart's user, by item key: where each is, in the network's layout units. */
+export type ItemPositions = Readonly<Record<string, Readonly<{ x: number; y: number }>>>;
+
 export interface InspectOptions extends PanelTarget {
   /** How to find the data; by default the chart's tooltip mode. */
   mode?: TooltipMode;
@@ -95,7 +98,9 @@ export interface Chart {
    * node radii stay in pixels.
    * In charts whose panels have x scales of their own, an x range needs the
    * `panel` whose scale shows it, and null without one resets every scale;
-   * y ranges are the chart's, whatever the panel.
+   * y ranges are the chart's, whatever the panel. Facet panels of maps or
+   * networks share one view; a map or network subplot has its own, which
+   * needs its `panel` (unless the chart has no other view).
    */
   setViewport(
     view: Partial<Viewport> | readonly [number, number] | null,
@@ -104,7 +109,8 @@ export interface Chart {
   /**
    * What the chart shows: the x range of the x scale every panel shares
    * (or, in charts whose panels have x scales of their own, of `panel`'s),
-   * and the y ranges, each null when that axis is not zoomed.
+   * and the y ranges, each null when that axis is not zoomed; for a map or
+   * network subplot, with its `panel`, its plane's.
    */
   getViewport(target?: PanelTarget): Viewport;
   /** What is brushed (x and y ranges, epoch ms for time axes, and a lasso's outline), or null. */
@@ -136,27 +142,45 @@ export interface Chart {
   setCamera(camera: CameraSpec | null): void;
   /**
    * The node a treemap or sunburst is drilled into (null for the whole
-   * tree) and the path to it from the top level; undefined for other charts.
+   * tree) and the path to it from the top level, as set though not drawn
+   * yet; undefined for charts without trees. Facet panels share one root;
+   * each subplot's tree has its own, which `panel` names (needed when
+   * several subplots draw trees).
    */
-  readonly drillRoot: DrillRoot | undefined;
+  getDrillRoot(target?: PanelTarget): DrillRoot | undefined;
   /**
    * Drills a treemap or sunburst into a node, named by its item key (as
    * inspections, the legend, and `drill` events give it) or by its names
    * from the top level down, or with null back out to the whole tree, as
-   * clicks do with `interaction.zoom`. A `drill` event follows when the root
-   * changed. Throws for a node the tree does not have, and for other charts.
+   * clicks do with `interaction.zoom`: in every facet panel, or in the
+   * subplot `panel` names. A `drill` event follows when the root changed.
+   * Throws for a node the tree does not have, for charts without trees,
+   * and without `panel` when several subplots draw trees.
    */
-  setDrillRoot(node: string | readonly string[] | null): void;
+  setDrillRoot(node: string | readonly string[] | null, target?: PanelTarget): void;
+  /**
+   * The nodes the chart's user moved (dragged, moved with keys, or put with
+   * `setItemPosition`), by item key, where each is in the network's layout
+   * units: of every facet panel's network, or of the subplot `panel` names.
+   * A copy; empty for charts without networks.
+   */
+  getItemPositions(target?: PanelTarget): ItemPositions;
   /**
    * Moves a network's node, keyed as its items are, to a place in the
    * network's layout units (as `itemMove` events report them; links settle
    * about 30 units long), or with null back to where the layout puts it.
    * Nodes stay where they are put until the network's data changes, including
-   * outside the current view; navigation does not clamp or change their positions. An
-   * `itemMove` event follows when the node moved. Throws for a key of no
-   * node drawn, and for other charts.
+   * outside the current view; navigation does not clamp or change their positions.
+   * Facet panels' networks share one layout, and so their moves; each
+   * subplot's network has its own, which `panel` names. An `itemMove` event
+   * follows when the node moved. Throws for a key of no node drawn, for
+   * charts without networks, and without `panel` when several subplots draw them.
    */
-  setItemPosition(key: string, position: { x: number; y: number } | null): void;
+  setItemPosition(
+    key: string,
+    position: { x: number; y: number } | null,
+    target?: PanelTarget,
+  ): void;
   /** The panels of the last frame, in reading order. */
   getPanels(): readonly PanelInfo[];
   /**

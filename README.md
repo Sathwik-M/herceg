@@ -92,8 +92,9 @@ y axis (in facets and subplots too, shared or per panel), small multiples
 histograms, box plots, and violins summarizing each panel's rows,
 annotations over a table drawing each row in its own panel, and categories
 per panel for every mark on a category axis), points on category axes,
-subplots (with weighted rows and columns), pies, treemaps, sunbursts, gauges, funnels, radars, and Sankey
-diagrams in each facet panel or in a subplot of their own, live notebook charts (a widget that streams updates from Python
+subplots (with weighted rows and columns), pies, treemaps, sunbursts, gauges, funnels, radars, Sankey
+diagrams, maps, and networks in each facet panel or in a subplot of their own (facet panels drilled,
+panned, and zoomed together, each subplot alone), live notebook charts (a widget that streams updates from Python
 and reports interaction, tree drill roots, and network node positions back),
 a Streamlit component with the same drill and move results, row views and
 selection stores shared by charts and
@@ -114,14 +115,13 @@ servers.
 
 Next, in order:
 
-1. Layout: maps, networks, and 3D charts in panels.
+1. Layout: 3D charts in panels.
 2. Animation of stacked and labeled bars, of categories that come and go,
    and of panels.
 3. Linked selections beyond points, bars, lines, areas, maps, trees, and
    networks: highlighting bins, groups, cells, and spans whose rows are
-   partly selected, lassos over summaries and networks, pies, Sankey
-   diagrams, and trees in panels, drilling in panels, networks that pan and
-   zoom and settle around moved nodes, and channels shared by separate
+   partly selected, lassos over summaries, pies and Sankey diagrams,
+   networks that settle around moved nodes, and channels shared by separate
    notebook widgets (which report drills and moves).
 4. More financial tools (drawing tools); 3D meshes, parametric surfaces, and translucent
    and wireframed surfaces on the GPU.

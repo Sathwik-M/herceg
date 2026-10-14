@@ -64,13 +64,12 @@ def test_treemaps_and_sunbursts_drill_with_zoom_and_select_rows():
             getattr(hg.Chart(SALES, zoom="x"), kind)(path=["region"])
         with pytest.raises(ValueError, match=f"Chart brush: a {kind} has no x axis"):
             getattr(hg.Chart(SALES, brush="x"), kind)(path=["region"])
-    # In facet panels, trees neither drill nor select yet.
-    with pytest.raises(
-        ValueError, match="Chart row_selection: a treemap cannot select rows here yet"
-    ):
-        hg.Chart(SALES, facet="region", row_selection=hg.SelectionBinding("c")).treemap(
-            path=["country"]
-        )
+    # In facet panels too, sharing one root.
+    faceted = hg.Chart(
+        SALES, facet="region", zoom=True, row_selection=hg.SelectionBinding("c")
+    ).treemap(path=["country"])
+    spec, _ = faceted.to_spec()
+    assert spec["interaction"] == {"zoom": True} and spec["rowSelection"]["channel"] == "c"
 
 
 def test_networks_drag_nodes_draw_directed_links_and_link_labels():

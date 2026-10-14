@@ -49,7 +49,8 @@ The chart fills its container's width and is 320 px tall unless `width`,
 `toSVG`, `toPNG`, and `renderToPDF(chart)` from `herceg/pdf`). Chart events are props: `onViewport`, `onSelect`, `onHover`, `onClick`,
 `onRowSelection` (a channel of the chart's `rowSelection` changed),
 `onCamera`, `onDrill` (a treemap or sunburst drilled into a node), `onItemMove` (a
-network's node moved), `onVisibility` (series hidden or shown), and `onRender` (a frame
+network's node moved; with subplots, these and `onViewport` and `onSelect` events of a
+subplot's tree, map, or network name it in `panels`), `onVisibility` (series hidden or shown), and `onRender` (a frame
 of the data drawn, for overlays, the first one once the ref is set); the latest handler
 is called, so inline functions do not resubscribe. A `rowSelection` prop
 (`rowSelection({ store, channel })`) made again each render is the same binding while it

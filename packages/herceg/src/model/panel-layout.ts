@@ -81,6 +81,9 @@ export interface PanelItem {
   index: number;
   /** The rows of the mark's table the panel draws, ascending; all of them when undefined. */
   rows: Uint32Array | undefined;
+  /** For a map: each layer's rows, as `rows` gives a mark's, and those it is fitted to (see `LayoutFrame`). */
+  layerRows?: readonly (Uint32Array | undefined)[];
+  fitRows?: readonly (Uint32Array | undefined)[];
 }
 
 /**
@@ -91,6 +94,8 @@ export interface PanelItem {
 export interface PanelChart extends PanelRoom {
   readonly hidden: ReadonlySet<string>;
   readonly config: Pick<ChartSpec, "resolve"> & { readonly marks: readonly ChartMark[] };
+  /** The layout marks drawing in panels, as `PanelLayout.check` gave them. */
+  readonly layouts: readonly LayoutMark[];
 }
 
 /** A chart's size in CSS pixels, which its panels must fit. */
@@ -219,6 +224,10 @@ export type LayoutOptions = Pick<ChartSpec, "resolve" | "interaction" | "y" | "y
   x?: (AxisSpec & Pick<XAxisSpec, "seams">) | undefined;
 };
 
+/** The chart options a layout checks, and those its layout marks are drawn with (a map's projection). */
+export type LayoutConfig = LayoutOptions &
+  Pick<ChartSpec, "projection"> & { readonly marks: readonly ChartMark[] };
+
 /**
  * Splits a chart's series into panels, keeping what it can from one scene
  * to the next, and refuses panels the chart has no room for; `bands` are
@@ -235,8 +244,15 @@ export interface PanelSplitter {
 }
 
 export interface PanelLayout {
-  /** Rejects marks along axes, layout marks, and options the panels cannot draw. */
-  check(marks: readonly Mark[], options: LayoutOptions, layouts?: readonly LayoutMark[]): void;
+  /**
+   * Rejects marks along axes, layout marks, and options the panels cannot
+   * draw; returns the layout marks that draw in panels (a map's layers joined).
+   */
+  check(
+    marks: readonly Mark[],
+    config: LayoutConfig,
+    layouts?: readonly LayoutMark[],
+  ): LayoutMark[];
   /** Whether the panels split the mark's rows (see `Mark.series`), rather than draw it whole. */
   splits(mark: Mark): boolean;
   /** How panels share y when the chart's `resolve` does not say. */
@@ -561,26 +577,17 @@ export function lowestWithAxes(
   return { lowest, between };
 }
 
-/** Layout marks that can draw in a panel; maps, networks, and 3D charts have charts to themselves. */
-const IN_PANELS = new Set(["pie", "treemap", "sunburst", "gauge", "funnel", "radar", "sankey"]);
+/** Layout marks that can draw in a panel; 3D charts have charts to themselves. */
+const IN_PANELS = new Set([
+  ...["pie", "treemap", "sunburst", "gauge", "funnel", "radar", "sankey"],
+  ...["graph", "geoshape", "geopoint"],
+]);
 
 /** Refuses layout marks panels cannot draw yet. */
 export function checkLayouts(layouts: readonly LayoutMark[]): void {
   for (const { spec } of layouts)
     if (!IN_PANELS.has(spec.type))
       throw new Error(`${spec.type}: no facets or panels yet; draw it in a chart of its own`);
-}
-
-/**
- * Refuses options for an x axis in a chart whose panels all draw layout
- * marks, the first of `type`: they have no axes.
- */
-export function refuseAxes(type: string, options: LayoutOptions): void {
-  const { zoom, brush, sync } = options.interaction ?? {};
-  const option = zoom ? "zoom" : brush ? "brush" : sync ? "sync" : undefined;
-  if (option)
-    throw new Error(`${type} ${option}: no axes to ${option}; drop interaction.${option}`);
-  if (options.x?.seams) throw new Error(`${type} seams: no x axis to mark seams on; drop x.seams`);
 }
 
 /**

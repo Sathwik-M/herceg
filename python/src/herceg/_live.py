@@ -16,6 +16,7 @@ from . import _geo
 from ._chart import (
     OPTIONS,
     assemble_spec,
+    check_layout_options,
     check_y_zoom,
     columns_spec,
     on_right_axis,
@@ -34,10 +35,14 @@ Message = tuple[dict[str, Any], list[bytes]]
 class LiveChart:
     def __init__(self, chart: Chart) -> None:
         _check_live(chart._settings)
+        chart._check_spec()
         self._settings = dict(chart._settings)
         self._options = spec_options(self._settings)
         self._layout = chart._layout_spec()
         self._marks = chart._mark_specs()
+        # What option updates are checked against: the layout marks and the subplots.
+        self._layouts = chart._layouts()
+        self._subplots = len(chart._panels)
         # Current columns by table name: only those marks read, as in the spec.
         self._tables = chart._used_columns()
         self._derived = chart._derived_specs()
@@ -61,16 +66,47 @@ class LiveChart:
         self.dropped = {name: 0 for name in self._tables}
         self.generation = {name: 0 for name in self._tables}
 
-    @property
-    def can_drill(self) -> bool:
-        return self._one_item_mark({"treemap", "sunburst"})
+    def state_panels(self, event: str, table: str | None = None) -> list[str]:
+        """The keys of the states the chart's trees (``"drill"``), networks
+        (``"itemMove"``), or maps and networks (``"viewport"``) have: each
+        subplot's of theirs, or ``""`` for the chart's one (its facet panels
+        share it). The chart's own viewport, ``""``, is not listed. With
+        ``table``, only those of marks reading it (a network's links or
+        nodes), directly or through tables derived from it."""
+        kinds = _STATE_MARKS[event]
+        marks = [
+            mark
+            for mark in self._marks
+            if mark["type"] in kinds
+            and (
+                table is None
+                or any(self._reads(mark[key], table) for key in ("data", "nodes") if key in mark)
+            )
+        ]
+        if "panels" not in self._layout:
+            return [""] if marks and event != "viewport" else []
+        return list(dict.fromkeys(mark["panel"] for mark in marks))
+
+    def _reads(self, name: str, table: str) -> bool:
+        """Whether table ``name`` is ``table`` or derived from it."""
+        while name != table and name in self._derived:
+            name = self._derived[name]["source"]
+        return name == table
 
     @property
-    def can_move_items(self) -> bool:
-        return self._one_item_mark({"graph"})
+    def has_view(self) -> bool:
+        """Whether the chart has a view of its own (``viewport``): of its axes,
+        or of its one map or network, which facet panels share; not when every
+        subplot draws a layout mark, whose maps and networks have their own."""
+        drawn = {mark["panel"] for mark in self._layouts}
+        return not self._subplots or len(drawn) < self._subplots
 
-    def _one_item_mark(self, kinds: set[str]) -> bool:
-        return not self._layout and len(self._marks) == 1 and self._marks[0]["type"] in kinds
+    @property
+    def plane_view(self) -> bool:
+        """Whether the chart's own view is of its one map's or network's plane
+        (which facet panels share), not of axes."""
+        planes = ("graph", "geoshape", "geopoint")
+        return not self._subplots and any(mark["type"] in planes for mark in self._layouts)
 
     @property
     def shares_y(self) -> bool:
@@ -178,6 +214,7 @@ class LiveChart:
         # Checked before anything changes, as the chart checks it when made.
         if "facet" in self._layout:
             check_y_zoom(settings, right=any(on_right_axis(mark) for mark in self._marks))
+        check_layout_options(settings, self._layouts, self._subplots)
         options = spec_options(settings)
         changed = {
             key: options.get(key)
@@ -254,6 +291,14 @@ def check_live_rows(chart: Chart) -> None:
                 "SelectionBinding data: live charts report rows of data Python holds, and a "
                 "derived table's rows are computed in the browser; bind the table it derives from"
             )
+
+
+#: The marks whose states `LiveChart.state_panels` lists, by event.
+_STATE_MARKS = {
+    "drill": ("treemap", "sunburst"),
+    "itemMove": ("graph",),
+    "viewport": ("geoshape", "geopoint", "graph"),
+}
 
 
 def _check_live(settings: dict[str, Any]) -> None:

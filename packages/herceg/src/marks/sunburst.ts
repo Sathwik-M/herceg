@@ -109,7 +109,7 @@ export class SunburstMark implements LayoutMark {
     // A facet panel draws the part of the tree its rows give a value; a
     // chart drilled into a node, the subtree under it, the node in the middle.
     const root = frame.root?.length ? this.#data.rootOf(frame.id, frame.root) : 0;
-    const view = root > 0 ? this.#data.drilled(root) : this.#data.view(frame.rows);
+    const view = root > 0 ? this.#data.drilled(root, frame.rows) : this.#data.view(frame.rows);
     const { tree, branch } = view;
     // Breadcrumbs take a strip above the tree in charts that drill.
     const path =
@@ -159,7 +159,8 @@ export class SunburstMark implements LayoutMark {
     const geometry: Geometry[] = [...(path?.geometry ?? [])];
     const opacityAt = (depth: number) => Math.max(0.45, 1 - 0.2 * (depth - 1));
     // A drilled sunburst's root fills its middle, a faint disc of its color.
-    const centered = root > 0 && hole > GAP;
+    // A facet panel with nothing under the root draws none.
+    const centered = root > 0 && hole > GAP && view.values[0]! > 0;
     const centerColor = colors[0] ?? theme.muted;
     if (centered) {
       const lit = !counts || counts.hits[0]! > 0;
@@ -343,7 +344,7 @@ export class SunburstMark implements LayoutMark {
       },
       summary: () => this.#summary(view, shown, branches, locale, percent),
       rowsOf: (key, of) => (of === this.table ? this.#data.rowsOf(frame.id, view, key) : undefined),
-      drill: this.#data.drill(frame.id, root, path?.crumbs ?? []),
+      drill: this.#data.drill(frame.id, root, view, path?.crumbs ?? []),
     };
   }
 

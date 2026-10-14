@@ -71,6 +71,13 @@ export interface GeoShapeOptions<S extends Schema> {
   /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
   tooltip?: MarkTooltip<S>;
   id?: string;
+  /**
+   * With the chart's `facet`, "repeat" draws all the layer's rows in every
+   * panel (a base map) instead of splitting them by the facet field.
+   */
+  facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel of the map: layers naming one panel are one map. */
+  panel?: string;
 }
 
 const STROKE_WIDTH = 0.75;
@@ -145,8 +152,13 @@ export class GeoShapeMark implements GeoLayer {
     this.reach = width / 2;
   }
 
-  join(marks: readonly LayoutMark[], config: ChartConfig): LayoutMark {
-    return joinLayers(marks, config.projection);
+  join(
+    marks: readonly LayoutMark[],
+    config: ChartConfig,
+    indices?: readonly number[],
+    panel?: string,
+  ): LayoutMark {
+    return joinLayers(marks, config.projection, indices, panel);
   }
 
   /** Charts draw maps' layers through `join`; drawn alone, a layer takes the default projection. */
@@ -187,11 +199,11 @@ export class GeoShapeMark implements GeoLayer {
     return [[{ stops: scale.legendStops(), domain, midpoint, title: this.spec.color! }], []];
   }
 
-  extent(into: GeoExtent): void {
+  extent(into: GeoExtent, rows?: Uint32Array): void {
     const { codes, set } = this.table.geometries(this.field);
     const { coordinates, ringOffsets, polygonOffsets, geometryOffsets } = set;
     const seen = new Uint8Array(geometryOffsets.length - 1);
-    for (const g of codes) {
+    for (const g of codesOf(codes, rows)) {
       if (g < 0 || seen[g]) continue;
       seen[g] = 1;
       const first = ringOffsets[polygonOffsets[geometryOffsets[g]!]!]!;
@@ -201,9 +213,9 @@ export class GeoShapeMark implements GeoLayer {
     }
   }
 
-  box(plan: MapFrame["plan"]): Float64Array | undefined {
+  box(plan: MapFrame["plan"], rows?: Uint32Array): Float64Array | undefined {
     const { codes, set } = this.table.geometries(this.field);
-    return boxOfCodes(set, codes, plan);
+    return boxOfCodes(set, codesOf(codes, rows), plan);
   }
 
   place(frame: MapFrame): LayoutResult {
@@ -248,7 +260,10 @@ export class GeoShapeMark implements GeoLayer {
       : undefined;
     const drawn: Drawn = { rows: [], shapes: [], colorIndex: new Uint32Array(0), colors, move };
     const fills: number[] = [];
-    for (let row = 0; row < codes.length; row++) {
+    // A facet panel's rows, or every row.
+    const count = frame.rows?.length ?? codes.length;
+    for (let at = 0; at < count; at++) {
+      const row = frame.rows ? frame.rows[at]! : at;
       const g = codes[row]!;
       if (g < 0) continue;
       if (projected) {
@@ -472,6 +487,11 @@ function categoryKey(id: string | number, category: string): string {
   return JSON.stringify({ mark: id, category });
 }
 
+/** The geometry codes of `rows` (all of them by default). */
+function codesOf(codes: Int32Array, rows: Uint32Array | undefined): Int32Array {
+  return rows ? Int32Array.from(rows, (row) => codes[row]!) : codes;
+}
+
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
@@ -503,6 +523,8 @@ export function geoshape<S extends Schema>(
       "strokeWidth",
       "label",
       "id",
+      "facet",
+      "panel",
     ]),
   };
   if (options.colors) spec.colors = [...options.colors];

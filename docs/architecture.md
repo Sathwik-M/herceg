@@ -24,7 +24,7 @@ One name per concept, used the same way in code and docs.
 | **Break** | A span of time a time axis leaves out (nights, weekends, holidays): the axis measures the time it shows, and data inside a break is not drawn. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
 | **Viewport** | What a chart shows when zoomed: `{ x, y, yRight }`, the visible x range (one per x scale when panels have x scales of their own) and the left and right y axes' ranges; null for an axis that is not zoomed, which shows its configured domain or its data. A map's are ranges of its projection's plane; a network's are ranges of its force layout, with y increasing downwards. |
-| **Drill root** | The node a treemap or sunburst is drilled into, whose subtree it lays out (`drillRoot`, chart state that clicks, keys, and `setDrillRoot` change); null for the whole tree. |
+| **Drill root** | The node a treemap or sunburst is drilled into, whose subtree it lays out (`getDrillRoot`, chart state that clicks, keys, and `setDrillRoot` change, shared by facet panels and each subplot's own); null for the whole tree. |
 | **Controls** | What a chart of a 3D, map, tree, or network mark loads to turn, pan and zoom, drill, or move nodes by pointer, keyboard, and toolbar (`dom/controls.ts`). |
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
 | **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
@@ -2239,8 +2239,8 @@ The network controller composes shared plane navigation with node dragging
 and one toolbar. Lasso mode claims plain drags; Shift-drag pans. Otherwise,
 a node press drags that node and a background press pans. With zoom on,
 Shift+arrows and 0 navigate, Alt+Shift+arrows moves a focused node, and the
-restore-nodes button remains separate. A viewport change cancels a node
-drag. Controls load only through layout marks, so line charts carry none
+restore-nodes button remains separate. A change of the view of the plane
+a node is dragged on (not another subplot's) cancels the drag. Controls load only through layout marks, so line charts carry none
 of this code. Python widgets preserve graph x/y ranges; Streamlit keeps
 plane views separately from axis panels, restoring viewport and positions
 before replaying a lasso, and scopes network state to its layout epoch.
@@ -2249,19 +2249,29 @@ Node dragging and plane navigation share pointer ownership from the initial
 press until completion or cancellation, so another touch cannot start the
 other gesture, even before the first pointer moves. Maps ignore second touches.
 Both Python front ends compare resolved map projection parameters before
-keeping ranges and lassos; a data change that changes inferred conic parameters
-clears the viewport and lasso together.
+keeping ranges and lassos, per map (the chart's one, or each subplot's;
+facet panels' fitted to the rows the panels draw); a data change that
+changes inferred conic parameters clears that map's viewport and lasso
+together.
 
 ### Layout marks in panels
 
-Pies, treemaps, sunbursts, gauges, funnels, radars, and Sankey diagrams draw
-in panels; networks, maps, and 3D charts, whose layouts and navigation are
-their own, still have charts to themselves (`IN_PANELS` in
-`model/panel-layout.ts`). The `PanelLayout`'s checks own the rules: with a
-facet, a layout mark is the chart's only mark and splits its rows (it cannot
-repeat); with subplots, it names one panel, which takes no axis settings and
-no other mark, `"*"` marks included. A chart whose panels all draw layout
-marks refuses zoom, brushes, and sync, having no axes.
+Every layout mark but 3D charts draws in panels (`IN_PANELS` in
+`model/panel-layout.ts`; a 3D chart's camera and GPU painter are the
+chart's). The `PanelLayout`'s checks own the rules, and return the layout
+marks the panels draw (`ItemViews.inPanels`): the geoshape and geopoint
+layers naming one subplot, or all of them in facets, joined into one map
+(`GeoMap`, which knows each layer's index among the chart's marks, so its
+items name their mark and its layers' identities are the chart's, not the
+map's). With a facet, a layout mark is the chart's only mark and splits its
+rows (a map's layers each split theirs, or repeat with `facet: "repeat"`,
+and one must split); with subplots, it names one panel, which takes no axis
+settings and no other mark, `"*"` marks included. `ItemViews.interactions`
+checks a chart's `interaction` against what its layout marks take (zoom for
+drilling, a plane's zoom and lasso, dragging nodes), the same check as for a
+chart of one: panels with axes take zoom and brushes along x; where every
+panel draws a layout mark, options none of them takes are refused, and so
+are sync, seams, and `resolve`.
 
 The splitter marks such panels in its split (`PanelSplit.items`: the mark,
 its index among the chart's marks, and its rows there). A facet hands the
@@ -2317,6 +2327,52 @@ with transparent text, so folded steps stay reachable by Tab and screen
 readers, and it resolves nodes named by key or by names from the top. Drilling into a region of a treemap of 10,000 leaves takes about
 1.5 ms a frame in Chrome (0.8 ms for the scene in Node), and back to the
 whole tree about 2.2 ms.
+
+A facet splits each map layer's rows as it splits a mark's table
+(`PanelItem.layerRows`, and the rows of every panel together,
+`PanelItem.fitRows`, which each panel's map fits and plans a conic
+projection by, so every panel shows a place at the same pixels of its room).
+Maps in panels project their shapes at a scale level, as a zoomed map does,
+even when fitted (`LayoutFrame.inPanel`), so panels of one size share one
+cached projection: the shape cache keeps four transforms per geometry set,
+which six fitted panels at six origins would otherwise thrash (a pan of one
+of six map subplots of 200 regions: about 44 ms a scene before, 0.4 ms
+after, in Node). A network's facet panels share one layout of the whole
+network: each draws the links its rows give, with their totals and labels
+over those rows alone (`GraphMark.#part`, kept per rows), and the nodes they
+join; the placement (the force layout fitted to a room and its overlapping
+nodes pushed apart) is computed once per room size at its corner and moved
+to each room, so equal panels draw a node at the same place of each, and
+pointer lookups are kept per panel.
+
+What the chart's user changes of layout marks is kept per state in
+`ItemViews`: a tree's drill root, a map's or network's view (ranges of its
+plane), and a network's moved nodes, with the node being dragged. Facet
+panels show one mark's rows split by a field, so they share one state, keyed
+""; each subplot has its own, keyed by its id; a chart of one layout mark has
+"". The first panel of a state drawn in a scene settles it (a root the whole
+tree lost gives way to its nearest ancestor, reported once; moves of
+another layout go), and a scene drops the states of subplots the last one
+left out. A facet panel whose part of the tree has nothing under the root
+still draws the path to it. Methods take a panel (`Chart.setDrillRoot(node,
+{ panel })`, `setItemPosition`, `getItemPositions`, `getDrillRoot`, and for
+planes `setViewport` and `getViewport`) and resolve it to its state; without
+one, the chart's one state, or the one subplot's of that kind, and an error
+naming the panels when there are several. Changes report the panels of a
+subplot's state (`panels: [id]`) through the item-change sink. A plane's view
+is the chart's viewport only in name: `Chart.setViewport` asks the items
+first (`ItemViews.setView` with the model, which owns the view where the
+target is a plane panel, or where the chart has no panels with axes), so a
+chart's axes keep their viewports apart from its maps', and without a panel
+in a chart with axes the view is the axes'. A lasso on a plane belongs to
+its state's panels (`SelectionOwner.plane`): drawn in each of a facet's,
+written as the rows each panel draws inside it, and reported with the
+subplot's `panels`; a chart still has one selection. Clicks and the
+keyboard's Space select what the item stands for in its panel: a tree's
+part of the tree keeps its nodes' nodes in the whole tree and its rows
+(`TreeView.nodes`, `TreeView.rows`), so a node's rows and the highlight's
+counts are the panel's; a link's rows are its panel's; a node's rows of the
+nodes table are the same in every panel.
 
 What layout marks drew is kept by an `ItemViews` (`model/item-views.ts`), one
 per chart: each panel's `LayoutResult` with its key, name, plot, and mark, the
@@ -2434,11 +2490,14 @@ measure, project, cut, divide, simplify, and fit the first time (in Node,
 one machine), 11 ms at a new size, 2 ms to draw again after a value
 changes, and about 2 µs to find the region under the pointer.
 
-A map's view is the chart's viewport, ranges of x and y in the plane
-(`LayoutFrame.viewport`, from the model's x viewport and left y viewport):
+A map's view is ranges of x and y in the plane (`LayoutFrame.viewport`),
+kept with the other state its user changes in `ItemViews` (see Layout marks
+in panels), which `Chart.setViewport` and `getViewport` reach when the
+chart's view is a plane's:
 the map is drawn at the scale at which the ranges given fit the room,
 centered on them, and along an axis without a range on the fitted map's
-middle; without either it is the fitted map, drawn exactly as before. Rather
+middle; without either it is the fitted map, drawn exactly as before (in a
+chart of one map; maps in panels always project at a level, below). Rather
 than projecting every shape at every pan step's transform, a zoomed or
 panned map projects shapes at a level (`zoomedTransform`: the next power of
 2^(1/4) at or above the scale shown, its origin on a grid of 2^18 pixels by
@@ -3397,20 +3456,27 @@ their own) before it changes anything.
 
 ### Layout controls
 
-Charts of one layout mark are navigated by controls of the mark's family:
-3D charts turn (`dom/orbit.ts`), maps pan and zoom (`dom/map-controls.ts`),
-treemaps and sunbursts drill (`dom/drill.ts`), and networks' nodes move
-(`dom/node-drag.ts`). The mark names the controls its options turn on
+Layout marks are navigated by controls of their family: 3D charts turn
+(`dom/orbit.ts`), maps pan and zoom (`dom/map-controls.ts`), treemaps and
+sunbursts drill (`dom/drill.ts`), and networks' nodes move
+(`dom/node-drag.ts`). A mark names the controls its options turn on
 (`LayoutMark.controls(config)`, a kind and the sentence the chart's
-description adds about its keys) and what of `interaction` a chart of it
-alone takes (`LayoutMark.interactions`: `zoom: true`, a map's plane, which
-takes "xy" too, a lasso, `drag`), which `ItemViews.alone` checks, refusing
-the rest with what the option does elsewhere. The DOM chart has one path for
+description adds about its keys) and what of `interaction` it takes
+(`LayoutMark.interactions`: `zoom: true`, a map's plane, which takes "xy"
+too, a lasso, `drag`), which `ItemViews.interactions` checks, refusing the
+rest with what the option does elsewhere. The DOM chart has one path for
 all of them: it loads `dom/layout-controls.ts` with one dynamic `import()`
-when its mark asks for controls, which loads that family's module and
-mounts it with a host (`dom/controls.ts`: the chart's handle, its model,
-the pointer overlay, announcements, a redraw, the legend, and the keyboard
-cursor's item). The optional `ItemViews` runtime owns the active controls,
+when its marks ask for controls, which loads each family's module once
+(subplots of trees and maps load both) and mounts it with a host
+(`dom/controls.ts`: the chart's handle, its model, the pointer overlay,
+announcements, a redraw, the legend, and where the keyboard cursor is: its
+panel and its item). Each family acts on its panels: the pointer in the
+panel it presses (a drag keeps the panel it started in), the keys in the
+cursor's panel, a toolbar per state (one in the chart's corner for a
+chart's one or its facet panels', one in each subplot's corner otherwise,
+named with the subplot's title), and breadcrumbs over each tree's path (of
+trees sharing a root, the first panel's take the Tab key and screen
+readers, the others the pointer only). The optional `ItemViews` runtime owns the active controls,
 their pending import, and their latest scene through a portable lifecycle
 interface; it contains no browser imports. Controls of another kind, or of
 a chart destroyed or changed while they loaded, are disposed. Promise
@@ -3470,9 +3536,8 @@ table its marks read (`model/row-selection.ts`). The binding is an object
 made by `rowSelection()`, as facets and navigators are, so the code comes
 only with charts that import it: a line chart that binds no store carries
 the hooks that call it (about 150 B gzip). The model calls the binding's
-`check` as it validates (layout marks other than a map's, a tree's, or a
-network's with a chart of its own refuse one, as do layout marks in panels
-and 3D marks; so do
+`check` as it validates (layout marks other than maps, trees, and
+networks refuse one, alone or in panels, as do 3D marks; so do
 stores of tables no mark reads, and brushes or lassos over summaries'
 statistics), and the mounted chart calls `mount`, which gives it a
 `RowLink`: the store subscriptions, what the chart's gestures wrote, and the
@@ -3877,13 +3942,19 @@ Drill roots and manual network positions use the same revision and origin
 protocol as viewports. Python exposes `drill_root` as a tuple of ancestor
 item keys (None for the whole tree), and `item_positions` as a mapping of
 item keys to layout-coordinate pairs. Their callbacks receive the resulting
-state. Snapshots restore them before listening to engine events; position
+state. Each subplot's tree, network, or map has states of its own, kept by
+event and panel (messages carry its `panel`, snapshots `panel_states`) and
+exposed as `panel_drill_roots`, `panel_item_positions`, and
+`panel_viewports`, with callbacks registered for a panel; the scalar
+properties are the chart's one state (facet panels share it). Snapshots
+restore them before listening to engine events; position
 assignments suppress intermediate setter events. Move deltas are accumulated
 and combined once a frame before whole-state comparison and reporting; peers
 apply only changed coordinates and defer hidden nodes until they are shown.
-Network data changes clear
-positions in Python even without an open output and advance the stale-report
-fence. Map viewport restoration keeps x and y without requiring axis metadata.
+A change of a network's data (its links' or its nodes' table, or a table
+either derives from) clears that network's positions in Python even
+without an open output and advances its stale-report fence; other
+networks keep theirs. Map viewport restoration keeps x and y without requiring axis metadata.
 Replacements reset those tables in place, so points with `animationKey`
 animate across replacements, as they do in JavaScript apps.
 The Streamlit component (`herceg.streamlit.chart`, components v2) has no
@@ -3901,7 +3972,13 @@ it does not hear of zooming. `on_drill` and `on_item_move` enable persistent
 widgets. Roots survive redraws through their nearest surviving ancestor;
 positions survive style-only redraws and are tagged with the network data
 and layout identity so Python discards stale results. These values travel in
-the existing component state, with one binary chart payload per run.
+the existing component state, with one binary chart payload per run: each
+holds the chart's one state and each subplot's by panel (`{ root, panels }`,
+`{ epoch, positions, panels }`, and the viewport with `panels`), which reruns
+keep where a subplot's plane has the same key (a map's projection, or a
+network in the same layout). The layout epoch is the chart's, as the data
+epoch of row selections is: a run changing one network's data lays out
+every network again.
 Charts without a theme read the app's from the
 CSS variables Streamlit gives components, since Python may not know it.
 
@@ -4010,9 +4087,9 @@ mouse input, through Playwright's mouse.
   instead of 0.6 ms. A calendar keeps every span it resolved for as long as
   its `TimeBreaks` lives (24 bytes per interval).
 - Row selections cover marks along axes and maps, treemaps, sunbursts, and
-  networks with charts of their own: other layout marks, layout marks in
-  panels, and 3D marks refuse a binding, and custom marks and annotations
-  neither write nor dim. A map's lasso selects a region by its anchor, not
+  networks, alone or in facet panels and subplots: other layout marks and
+  3D marks refuse a binding, and custom marks and annotations neither write
+  nor dim. A map's lasso selects a region by its anchor, not
   by overlap; a network's lasso selects node centers and requires a nodes table.
   Histograms, box plots, violins, error bars, candlesticks, and heatmaps
   write rows but draw every row undimmed (a bin with some rows selected is

@@ -6,7 +6,9 @@
 // back. A drag draws the node where the pointer is each frame and makes it
 // a move once dropped, reported as an `itemMove` event. Moves are made on
 // what the chart drew, in the layout the user sees: a change of the
-// network's data not drawn yet lays it out again, which drops them.
+// network's data not drawn yet lays it out again, which drops them. Facet
+// panels' networks share one layout, so a node moved in one moves in all;
+// a subplot's network has moves of its own.
 
 import type { NodeMoves } from "../marks/graph.ts";
 import type { ChartConfig } from "../model/model.ts";
@@ -33,9 +35,10 @@ export class Controls implements ChartControls {
   readonly #pointer = new PointerOwnership();
   readonly #stop: (() => void)[] = [];
   #drags = false;
-  /** A press on a node: its pointer and key, where the press and the node started. */
+  /** A press on a node: its pointer, panel, and key, where the press and the node started. */
   #press: {
     pointer: number;
+    panel: string;
     key: string;
     x: number;
     y: number;
@@ -48,22 +51,30 @@ export class Controls implements ChartControls {
     this.#host = host;
     const root = host.chart.root;
     this.#root = root;
+    const moved = (panel: string) => this.#drags && this.#moved(panel) > 0;
     this.#navigation = new PlaneControls(
       host,
       "network",
-      (event) => this.#onNode(event),
-      [
+      (event, panel) => this.#onNode(event, panel),
+      (panel) => [
         {
           label: "Put moved nodes back",
           glyph: RESET_GLYPH,
-          act: () => this.#reset(),
-          hidden: () => !this.#drags || (host.model.items?.movedItems.size ?? 0) === 0,
+          act: () => this.#reset(panel()),
+          hidden: () => !moved(panel()),
         },
       ],
-      () => this.#drags && (host.model.items?.movedItems.size ?? 0) > 0,
+      moved,
       this.#pointer,
     );
-    this.#stop.push(host.chart.on("viewport", () => this.#cancel()));
+    // A drag maps the pointer through its plane's view: a change of that view ends it.
+    this.#stop.push(
+      host.chart.on("viewport", ({ panels }) => {
+        const press = this.#press;
+        const state = host.model.items?.panels.find(({ key }) => key === press?.panel)?.state;
+        if (state === (panels?.[0] ?? "")) this.#cancel();
+      }),
+    );
     this.#listen();
   }
 
@@ -88,17 +99,23 @@ export class Controls implements ChartControls {
     this.#cancel();
   }
 
-  #moves(): NodeMoves | undefined {
-    return this.#host.model.items?.result()?.moves;
+  /** How many nodes the network of panel `panel` has moved. */
+  #moved(panel: string): number {
+    return this.#host.model.items?.movedItems(panel).size ?? 0;
+  }
+
+  /** What moving nodes of panel `panel`'s network needs, as last drawn. */
+  #moves(panel: string): NodeMoves | undefined {
+    return this.#host.model.items?.result(panel)?.moves;
   }
 
   /** Whether the node a press is on is still drawn in the layout it was pressed in. */
-  #still(press: { key: string; moves: NodeMoves }): boolean {
-    const moves = this.#moves();
+  #still(press: { panel: string; key: string; moves: NodeMoves }): boolean {
+    const moves = this.#moves(press.panel);
     return moves?.layout === press.moves.layout && moves.current() && moves.movable(press.key);
   }
 
-  #onNode(event: PointerEvent): boolean {
+  #onNode(event: PointerEvent, panel: string): boolean {
     if (
       !this.#drags ||
       this.#navigation.lassoing ||
@@ -107,7 +124,7 @@ export class Controls implements ChartControls {
       return false;
     const [x, y] = this.#point(event);
     const inspection = this.#host.model.inspect(x, y);
-    return inspection?.axis === "item" && !!this.#moves()?.movable(inspection.key);
+    return inspection?.axis === "item" && !!this.#moves(panel)?.movable(inspection.key);
   }
 
   #point(event: MouseEvent): [number, number] {
@@ -115,16 +132,15 @@ export class Controls implements ChartControls {
     return [event.clientX - rect.left, event.clientY - rect.top];
   }
 
-  /** Moves the node keyed `key` to a place in layout units, in the layout `moves` drew. */
-  #moveTo(key: string, moves: NodeMoves, [x, y]: readonly [number, number]): void {
-    const items = this.#host.model.items;
-    items?.setItemPosition(key, { x, y }, moves.layout);
+  /** Moves the node keyed `key` to a place in layout units, in the layout `moves` drew in panel `panel`. */
+  #moveTo(panel: string, key: string, moves: NodeMoves, [x, y]: readonly [number, number]): void {
+    this.#host.model.items?.setItemPosition(key, { x, y }, panel, moves.layout);
   }
 
-  #reset(): void {
+  #reset(panel: string): void {
     const items = this.#host.model.items;
     if (!items) return;
-    for (const key of [...items.movedItems.keys()]) items.setItemPosition(key, null);
+    for (const key of [...items.movedItems(panel).keys()]) items.setItemPosition(key, null, panel);
     this.#host.announce("Put the moved nodes back.");
   }
 
@@ -135,6 +151,18 @@ export class Controls implements ChartControls {
     this.#press = null;
     this.#host.model.items?.drag(null);
     this.#host.invalidate();
+  }
+
+  /** The panel drawing a network that holds a pixel of the chart. */
+  #panelAt(x: number, y: number): string | undefined {
+    return this.#host.model.items?.panels.find(
+      ({ plot, result }) =>
+        result.moves &&
+        x >= plot.x &&
+        x <= plot.x + plot.width &&
+        y >= plot.y &&
+        y <= plot.y + plot.height,
+    )?.key;
   }
 
   #listen(): void {
@@ -148,16 +176,18 @@ export class Controls implements ChartControls {
       this.#stop.push(() => root.removeEventListener(type, handler, options));
     };
     on("pointerdown", (event) => {
-      if (this.#press || event.button !== 0 || !this.#onNode(event)) return;
+      if (this.#press || event.button !== 0) return;
       if (this.#navigation.contains(event.target) || !this.#host.onPlot(event.target)) return;
-      const moves = this.#moves();
       const [x, y] = this.#point(event);
+      const panel = this.#panelAt(x, y);
+      if (panel === undefined || !this.#onNode(event, panel)) return;
+      const moves = this.#moves(panel);
       const inspection = this.#host.model.inspect(x, y);
       const key = inspection?.axis === "item" ? inspection.key : undefined;
       const from = key !== undefined && moves?.movable(key) ? moves.pixelOf(key) : undefined;
       if (!from || !moves) return;
       if (!this.#pointer.acquire(event.pointerId)) return;
-      this.#press = { pointer: event.pointerId, key: key!, x, y, from, moves, moved: false };
+      this.#press = { pointer: event.pointerId, panel, key: key!, x, y, from, moves, moved: false };
       root.setPointerCapture?.(event.pointerId);
     });
     on("pointermove", (event) => {
@@ -176,7 +206,7 @@ export class Controls implements ChartControls {
         press.from[0] + x - press.x,
         press.from[1] + y - press.y,
       );
-      this.#host.model.items?.drag(press.key, at);
+      this.#host.model.items?.drag(press.key, at, press.panel);
       this.#host.invalidate();
     });
     on("pointerup", (event) => {
@@ -196,7 +226,7 @@ export class Controls implements ChartControls {
         press.from[0] + x - press.x,
         press.from[1] + y - press.y,
       );
-      this.#moveTo(press.key, press.moves, at);
+      this.#moveTo(press.panel, press.key, press.moves, at);
       this.#host.announce(`Moved ${nameOf(press.key)}.`);
     });
     const cancel = (event: PointerEvent) => {
@@ -208,23 +238,39 @@ export class Controls implements ChartControls {
     on("keydown", (event) => this.#key(event), { capture: true });
   }
 
-  /** Shift with an arrow key moves the node read; 0 puts every moved node back. */
+  /**
+   * Shift with an arrow key moves the node read; 0 puts every moved node
+   * back, in the panel the keyboard reads (or the chart's one network).
+   */
   #key(event: KeyboardEvent): void {
     if (!this.#drags || event.target !== this.#root) return;
     const zooms = !!this.#host.model.config.interaction?.zoom;
+    const cursor = this.#host.cursor();
+    const networks = this.#host.model.items?.panels.filter(({ result }) => result.moves) ?? [];
+    const panel = cursor
+      ? cursor.panel
+      : networks.every(({ state }) => state === networks[0]?.state)
+        ? networks[0]?.key
+        : undefined;
+    const moves = panel === undefined ? undefined : this.#moves(panel);
+    if (!moves) return;
     const way = event.shiftKey && (!zooms || event.altKey) ? WAYS[event.key] : undefined;
     if (way) {
-      const key = this.#host.cursor();
-      const moves = this.#moves();
+      const key = cursor?.key;
       // A step from where the node is, or was last moved to though not drawn there yet.
-      const moved = key === undefined ? undefined : this.#host.model.items?.movedItems.get(key);
-      const pixel =
-        key !== undefined && moves?.movable(key) ? moves.pixelOf(key, moved) : undefined;
+      const moved =
+        key === undefined ? undefined : this.#host.model.items?.movedItems(panel).get(key);
+      const pixel = key !== undefined && moves.movable(key) ? moves.pixelOf(key, moved) : undefined;
       if (!pixel) return;
       const [px, py] = pixel;
-      this.#moveTo(key!, moves!, moves!.toLayout(key!, px + way[0] * STEP, py + way[1] * STEP));
+      this.#moveTo(
+        panel!,
+        key!,
+        moves,
+        moves.toLayout(key!, px + way[0] * STEP, py + way[1] * STEP),
+      );
       this.#host.announce(`Moved ${nameOf(key!)} ${way[2]}.`);
-    } else if (event.key === "0" && !zooms) this.#reset();
+    } else if (event.key === "0" && !zooms) this.#reset(panel!);
     else return;
     event.preventDefault();
     event.stopImmediatePropagation();

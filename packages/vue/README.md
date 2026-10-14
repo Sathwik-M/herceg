@@ -49,7 +49,9 @@ The chart fills its container's width and is 320 px tall unless `width`,
 `height`, or a style says otherwise; `class`, `style`, and other attributes
 go to the container element. Chart events are Vue events: `@viewport`,
 `@select`, `@hover`, `@camera` (a 3D chart turned), `@drill` (a treemap or sunburst
-drilled into a node), `@item-move` (a network's node moved), `@visibility` (series hidden or shown),
+drilled into a node), `@item-move` (a network's node moved; with subplots, these and
+`@viewport` and `@select` events of a subplot's tree, map, or network name it in
+`panels`), `@visibility` (series hidden or shown),
 `@render` (a frame of the data drawn, for overlays, the first one as the chart mounts), `@row-selection` (a channel of
 the chart's `rowSelection` changed), and `@click` (the chart's click, with the
 data under the pointer, not the element's). A `:row-selection` binding made again,

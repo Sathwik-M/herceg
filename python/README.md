@@ -103,6 +103,29 @@ hg.Chart(sales, zoom=True).treemap(path=["region", "country"], value="revenue")
 hg.Chart(talks, zoom=True, drag=True).graph("from", "to", directed=True, link_label_field="kind")
 ```
 
+Maps and networks draw in facets and panels too, and every tree, map, and
+network navigates there as alone. A map's layers each split their rows by
+the facet column, unless `facet="repeat"` draws one whole in every panel (a
+base map), and every panel is fitted to the rows of all of them; in panels,
+the layers naming a `panel` are its map. A network's facet panels share one
+layout of the whole network, each drawing its rows' links and the nodes
+they join. Facet panels share one drill root, one view, and one set of
+moved nodes, so zooming one zooms them all; each panel's tree, map, or
+network has its own.
+
+```python
+(
+    hg.Chart(stores, facet="year", zoom=True)
+    .geoshape(data=countries, facet="repeat")      # the same base map in every panel
+    .geopoint("lon", "lat", size="sales")          # each year's stores
+)
+(
+    hg.Chart(budget, panels=["cost", "staff"], panel_columns=2, zoom=True)
+    .treemap(["unit", "team"], "cost", panel="cost")
+    .treemap(["unit", "team"], "staff", panel="staff")
+)
+```
+
 Violins accept `split=True` and `inner="box" | "quartiles" | "none"` in both
 `hg.violin(...)` and `Chart.violin(...)`. The default box is unchanged;
 `"quartiles"` draws dashed Q1/Q3 lines and a solid median, and `"none"`
@@ -189,9 +212,10 @@ violins summarize each panel's rows (histograms in bins chosen from the rows
 of the panels sharing an x scale); annotations over a table draw each row in
 its own row's panel; marks with `facet="repeat"` draw all their rows in every
 panel, which dendrograms need; pies, treemaps, sunbursts, gauges, funnels,
-radars, and Sankey diagrams draw each facet panel's rows in it, as a
-faceted chart's only mark, or fill a panel of their own with `panel=` (no
-`"*"`, and no other mark there), whose neighbors keep their axes; `panels` (ids or
+radars, Sankey diagrams, maps (a map's layers together), and networks draw
+each facet panel's rows in it, as a faceted chart's only mark, or fill a
+panel of their own with `panel=` (no `"*"`, and no other mark there), whose
+neighbors keep their axes; `panels` (ids or
 `hg.Panel("latency", title="Latency", x=hg.Axis(title="Time"),
 y=hg.Axis(title="ms"), y_right=hg.Axis(title="requests"))`), `panel_columns`, and
 `panel_row_heights` and `panel_column_widths` (relative heights of the rows
@@ -898,8 +922,19 @@ pattern. `drill_root` is an `hg.DrillRoot`: a tuple of item keys from the top
 level through the current root, or `None` for the whole tree. Assign a path
 reported by `on_drill` to restore it; assigning `None` (or `()`) resets it.
 The keys are the same opaque keys reported by inspections, rather than labels.
-Drilling is available for a chart of one treemap or sunburst without facets
-or panels; `zoom=True` enables mouse and keyboard drilling.
+`zoom=True` enables mouse and keyboard drilling. Facet panels share one
+root, which `drill_root` holds. In panels, each treemap or sunburst drills
+on its own: `panel_drill_roots` maps each such panel's id to its root, and
+assigning a mapping drills the panels it names; `on_drill(callback,
+panel="b")` hears of one panel's changes, while `drill_root` and a plain
+`on_drill` refuse such a chart, naming the mapping. `item_positions` and
+`panel_item_positions`, `on_item_move(..., panel=)`, and for maps' and
+networks' views `viewport` and `panel_viewports` with `on_viewport(...,
+panel=)`, follow the same rule: `viewport` is the chart's axes' (or its
+facet panels' shared map's) and each map or network panel's is its own
+(numbers in its plane's units, without `y_right`); a chart none of whose
+panels has axes refuses `viewport` and a plain `on_viewport`. A
+`Selection` from a lasso on a map or network panel names it in `panels`.
 
 ```python
 tree = hg.treemap(sales, path=["region", "country"], value="revenue", zoom=True).widget()
@@ -915,8 +950,8 @@ to `(x, y)` pairs in the network's layout units, rather than pixels. It holds
 only manually moved nodes. Assigning replaces the whole mapping: omitting a
 key puts that node back in its computed position, and `{}` resets every node.
 The getter and callbacks return copies; edit a copy and assign it to apply it.
-Network data changes clear the overrides, while title, theme, and resize keep
-them. A display that hides a node keeps its override and applies it when
+A change of a network's data (its links or its nodes) clears its overrides,
+while title, theme, resize, and other tables' changes keep them. A display that hides a node keeps its override and applies it when
 the node is shown again. Moves and multi-node resets are combined per frame. Item keys and drill targets are checked by the browser; an unknown key
 shows an error above the chart and reconciles the state to what was applied.
 
@@ -1060,10 +1095,13 @@ report view changes to Python, or leave it ignored to navigate in the browser.
 
 Maps preserve their viewport and lasso only while the resolved projection
 parameters match. A data update that changes a conic projection's inferred
-central meridian or parallels clears both, in Streamlit and notebook widgets.
+central meridian or parallels, or a widget update of `projection`, clears
+both (each map subplot's alone), in Streamlit and notebook widgets.
 
 `state.drill_root` and `state.item_positions` use the same tuple of item
-keys and dictionary of layout-coordinate pairs as notebook widgets. They
+keys and dictionary of layout-coordinate pairs as notebook widgets, and
+`state.panel_drill_roots`, `state.panel_item_positions`, and
+`state.panel_viewports` hold each panel's, as widgets' mappings do. They
 are persistent state, including inside forms, and reach Python when their
 reaction is enabled. Reaction functions take no arguments, like the other
 Streamlit callbacks. A compatible redraw keeps the drill root (or its nearest

@@ -314,7 +314,8 @@ describe("brushes as conditions", () => {
       facet: facet("host"),
       resolve: { x: "independent" },
     });
-    const selection = brushedRows(model, readings, xRange([0, 10]), ["q"]);
+    const owner = { x: model.panels().find(({ key }) => key === "q")!.xGroup, panels: ["q"] };
+    const selection = brushedRows(model, readings, xRange([0, 10]), owner);
     expect(rowsOf(selection, readings)).toEqual([1, 3]);
     // Panels sharing x: a brush covers every panel, without a condition on them.
     const shared = drawn({ marks: [point(readings, { x: "x", y: "a" })], facet: facet("host") });

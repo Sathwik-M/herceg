@@ -805,9 +805,10 @@ def test_network_data_changes_clear_moves_and_fence_delayed_reports_without_a_di
 
 def test_item_state_setters_refuse_charts_without_the_controls():
     widget, _ = live()
-    with pytest.raises(ValueError, match="widget.drill_root: only"):
+    assert widget.drill_root is None and widget.item_positions == {}
+    with pytest.raises(ValueError, match="widget.drill_root: the chart has no treemap or sunburst"):
         widget.drill_root = None
-    with pytest.raises(ValueError, match="widget.item_positions: only"):
+    with pytest.raises(ValueError, match="widget.item_positions: the chart has no network"):
         widget.item_positions = {}
 
 

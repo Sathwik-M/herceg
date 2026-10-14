@@ -2,7 +2,17 @@
 // plain JSON in which the axes holding times are named, so Python can return
 // datetimes, and category positions are their labels rather than band indices.
 
-import type { Axis, AxisInfo, Chart, DrillRoot, Inspection, Selection, Viewport } from "herceg";
+import type {
+  Axis,
+  AxisInfo,
+  Chart,
+  ChartOptions,
+  DrillRoot,
+  Inspection,
+  PanelTarget,
+  Selection,
+  Viewport,
+} from "herceg";
 
 export interface DrillPayload {
   path: string[];
@@ -14,24 +24,58 @@ export function drillPayload(root: DrillRoot | undefined): DrillPayload | null {
   return root?.key == null ? null : { path: root.path.map(({ key }) => key) };
 }
 
+/**
+ * The panel a state of a chart's layout marks belongs to, as a chart's
+ * methods take it: none for "", the chart's one (or its facet panels' one).
+ */
+export function targetOf(panel: string): PanelTarget | undefined {
+  return panel === "" ? undefined : { panel };
+}
+
+/**
+ * The keys of the states the chart's marks of `types` have (see
+ * `targetOf`): each subplot's of theirs, or the chart's one ("") without
+ * subplots; none without such marks.
+ */
+export function statePanels(
+  config: Pick<ChartOptions, "marks" | "panels">,
+  types: readonly string[],
+): string[] {
+  const marks = config.marks.filter(({ spec }) => types.includes(spec.type));
+  if (!config.panels) return marks.length > 0 ? [""] : [];
+  return [...new Set(marks.map(({ spec }) => spec.panel!))];
+}
+
+/** Marks with drill roots, moved nodes, and views of planes of their own, by state. */
+export const DRILLS = ["treemap", "sunburst"];
+export const MOVES = ["graph"];
+export const PLANES = ["geoshape", "geopoint", "graph"];
+
 /** Restoring an old path falls back to its nearest surviving ancestor. */
-export function showDrillRoot(chart: Chart, payload: DrillPayload | null, restore = false) {
-  if (!chart.drillRoot && !payload) return;
+export function showDrillRoot(
+  chart: Chart,
+  payload: DrillPayload | null,
+  restore = false,
+  panel = "",
+) {
+  const target = targetOf(panel);
+  const root = chart.getDrillRoot(target);
+  if (!root && !payload) return;
   const path = payload?.path ?? [];
   if (!restore) {
-    chart.setDrillRoot(path.at(-1) ?? null);
+    chart.setDrillRoot(path.at(-1) ?? null, target);
     return;
   }
-  if (!chart.drillRoot) return;
+  if (!root) return;
   for (const key of [...path].reverse()) {
     try {
-      chart.setDrillRoot(key);
+      chart.setDrillRoot(key, target);
       return;
     } catch (error) {
       if (!(error instanceof RangeError)) throw error;
     }
   }
-  chart.setDrillRoot(null);
+  chart.setDrillRoot(null, target);
 }
 
 /** Records one engine delta in the accumulated manual positions. */
@@ -56,17 +100,19 @@ export function showItemPositions(
   next: ItemPositionsPayload,
   held: ItemPositionsPayload,
   restore = false,
+  panel = "",
 ) {
+  const target = targetOf(panel);
   for (const key of Object.keys(held)) {
     if (Object.hasOwn(next, key)) continue;
-    chart.setItemPosition(key, null);
+    chart.setItemPosition(key, null, target);
     delete held[key];
   }
   for (const [key, [x, y]] of Object.entries(next)) {
     const before = held[key];
     if (before?.[0] === x && before[1] === y) continue;
     try {
-      chart.setItemPosition(key, { x, y });
+      chart.setItemPosition(key, { x, y }, target);
       Object.defineProperty(held, key, {
         value: [x, y],
         enumerable: true,
@@ -97,6 +143,8 @@ export interface ViewportPayload {
 
 /** A selection: x and y ranges and a lasso's outline. */
 export interface SelectionPayload {
+  /** The panels it belongs to, when they are a subplot's (a map's or network's lasso). */
+  panels?: string[];
   x: Ends | null;
   y: Ends | null;
   /** [x, y] pairs: numbers, epoch ms on time axes, and band positions on category axes. */
@@ -149,20 +197,22 @@ interface Scales {
 
 /**
  * The axes Python reads, as the chart last drew them: x, which every panel
- * of a live chart shares, and the y axes of `panel` (by default the first
- * panel's).
+ * with axes of a live chart shares, and the y axes of `panel` (by default
+ * the first with axes). A map's or network's subplot has none: its plane's
+ * values are plain numbers.
  */
 function scalesOf(chart: Chart, panel?: string): Scales {
-  const panels = chart.getPanels();
-  const found = panels.find(({ key }) => key === panel) ?? panels[0];
-  return { x: panels[0]?.x, y: found?.y, yRight: found?.yRight };
+  const axes = chart.getPanels().filter(({ x }) => x);
+  const found = panel === undefined ? axes[0] : axes.find(({ key }) => key === panel);
+  return { x: found && axes[0]!.x, y: found?.y, yRight: found?.yRight };
 }
 
 const timeAxes = (scales: Scales, axes: readonly Axis[]): Axis[] =>
   axes.filter((axis) => scales[axis]?.type === "time");
 
-export function viewportPayload(chart: Chart, view: Viewport): ViewportPayload {
-  const scales = scalesOf(chart);
+/** A viewport as Python reads it; a plane's (a map's or network's subplot's) has no times. */
+export function viewportPayload(chart: Chart, view: Viewport, plane = false): ViewportPayload {
+  const scales = plane ? { x: undefined, y: undefined } : scalesOf(chart);
   return {
     x: ends(view.x, scales.x),
     y: ends(view.y, scales.y),
@@ -188,11 +238,13 @@ export function chartViewport(chart: Chart, payload: ViewportPayload | null): Vi
 export function selectionPayload(
   chart: Chart,
   selection: Selection | null,
+  panels?: readonly string[],
 ): SelectionPayload | null {
   if (!selection || !(selection.x || selection.y || selection.lasso)) return null;
   const scales = scalesOf(chart, chart.selectionPanels?.[0]);
   const categories = selection.lasso ? categoriesOf(chart) : undefined;
   return {
+    ...(panels && { panels: [...panels] }),
     x: ends(selection.x, scales.x),
     y: ends(selection.y, scales.y),
     lasso: selection.lasso?.map(([x, y]) => [x, y]) ?? null,
@@ -212,7 +264,7 @@ export function chartSelection(chart: Chart, payload: SelectionPayload | null): 
   if (payload.lasso && payload.categories) {
     if (JSON.stringify(categoriesOf(chart)) !== JSON.stringify(payload.categories)) return null;
   }
-  const scales = scalesOf(chart);
+  const scales = scalesOf(chart, payload.panels?.[0]);
   const x = chartRange(payload.x, scales.x);
   const y = chartRange(payload.y, scales.y);
   if ((payload.x && !x) || (payload.y && !y)) return null;

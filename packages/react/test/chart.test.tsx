@@ -5,6 +5,7 @@ import {
   geometry,
   type Chart as HercegChart,
   line,
+  panels,
   RowSet,
   rangeNavigator,
   rowSelection,
@@ -434,7 +435,24 @@ describe("<Chart>", () => {
     );
     act(() => ref.current!.setDrillRoot(["N"]));
     expect(drills).toEqual(['[0,"N"]']);
-    expect(ref.current!.drillRoot?.path.map(({ label }) => label)).toEqual(["N"]);
+    expect(ref.current!.getDrillRoot()?.path.map(({ label }) => label)).toEqual(["N"]);
+    // Each subplot's tree drills alone, its events naming it.
+    const scoped: unknown[] = [];
+    act(() =>
+      root.render(
+        <Chart
+          ref={ref}
+          panels={panels([{ id: "a" }, { id: "b" }])}
+          interaction={{ zoom: true }}
+          onDrill={({ key, panels }) => scoped.push([key, panels])}
+        >
+          <Treemap data={sales} path={["region", "country"]} value="v" panel="a" />
+          <Treemap data={sales} path={["region", "country"]} value="v" panel="b" />
+        </Chart>,
+      ),
+    );
+    act(() => ref.current!.setDrillRoot(["S"], { panel: "b" }));
+    expect(scoped).toEqual([['[1,"S"]', ["b"]]]);
     const talks = table({ from: ["a", "b"], to: ["b", "c"] });
     const moves: unknown[] = [];
     act(() =>

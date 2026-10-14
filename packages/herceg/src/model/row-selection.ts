@@ -20,6 +20,7 @@ import {
   clickedRows,
   cursorRows,
   type PointRows,
+  type SelectionOwner,
 } from "./selected-rows.ts";
 
 /** A chart's binding to a channel of a table's selection store. */
@@ -169,19 +170,18 @@ export class RowSelection {
 
   /**
    * Refuses charts whose rows cannot be selected yet: layout marks other
-   * than a map's, a tree's, or a network's alone (pies, 3D charts, layout
-   * marks in panels), stores of tables no mark reads, and brushes along an
-   * axis of statistics (a histogram's counts, a box plot's values) or
-   * lassos over them.
+   * than maps, trees, and networks (pies, 3D charts), stores of tables no
+   * mark reads, and brushes along an axis of statistics (a histogram's
+   * counts, a box plot's values) or lassos over them.
    */
   check(config: ChartConfig, marks: readonly Mark[], layouts: readonly LayoutMark[]): void {
-    const [layout] = layouts;
-    if (layout && (!layout.selects || config.facet || config.panels))
+    const layout = layouts.find((mark) => !mark.selects);
+    if (layout)
       throw new Error(
-        `${layout.spec.type} rowSelection: cannot select rows yet; it needs marks along x and y axes, or a map, treemap, sunburst, or network in a chart of its own`,
+        `${layout.spec.type} rowSelection: cannot select rows yet; it needs marks along x and y axes, or maps, treemaps, sunbursts, and networks`,
       );
     const brush = config.interaction?.brush;
-    const read = layout ? tablesOf(layout) : marks.map((mark) => mark.table);
+    const read = [...layouts.flatMap(tablesOf), ...marks.map((mark) => mark.table)];
     for (const bound of this.#bound) {
       if (!read.includes(bound.table))
         throw new Error(
@@ -355,7 +355,7 @@ export class RowLink {
    */
   brushed(
     selection: Brushed | null,
-    owner: { readonly panels: readonly string[] } | null,
+    owner: SelectionOwner | null,
     write: boolean,
   ): Written | undefined {
     // A selection shown without writing (a synced chart's, another view's)
@@ -375,7 +375,7 @@ export class RowLink {
     // Every table's rows are found before any channel changes.
     const changes = this.#bound.flatMap((bound) => {
       if (!bound.events.has(gesture)) return [];
-      const rows = brushedRows(this.#model, bound.table, selection, owner?.panels ?? null);
+      const rows = brushedRows(this.#model, bound.table, selection, owner);
       return rows ? [{ bound, selection: rows }] : [];
     });
     this.#brushed.clear();
