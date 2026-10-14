@@ -31,16 +31,19 @@ import type { ChartConfig, ChartModel, Viewport } from "./model.ts";
 import type { LayoutConfig, LayoutOptions, PanelItem } from "./panel-layout.ts";
 import type { SelectionOwner } from "./selected-rows.ts";
 
-/** The panels a change belongs to, when it is a subplot's rather than the chart's. */
-interface Scoped {
-  panels?: readonly string[];
-}
-
-/** Changes of layout items, reported by mounted charts through their matching events. */
+/**
+ * Changes of layout items, reported by mounted charts through their matching
+ * events; `panels` names the subplot a change belongs to, when it is not the
+ * chart's. Written out in each, so adapters' declarations can name them.
+ */
 export interface ItemChanges {
-  drill: DrillRoot & Scoped;
-  itemMove: { key: string; position: { x: number; y: number } | null } & Scoped;
-  viewport: Viewport & Scoped;
+  drill: DrillRoot & { panels?: readonly string[] };
+  itemMove: {
+    key: string;
+    position: { x: number; y: number } | null;
+    panels?: readonly string[];
+  };
+  viewport: Viewport & { panels?: readonly string[] };
 }
 
 /** Optional navigation attached to layout items by an interactive runtime. */
@@ -500,7 +503,7 @@ export class ItemViews {
   }
 
   /** The panels a change of a state belongs to, when they are a subplot's. */
-  #scope(view: ItemView): Scoped {
+  #scope(view: ItemView): { panels?: readonly string[] } {
     return view.state === "" ? {} : { panels: [view.key] };
   }
 
@@ -515,7 +518,7 @@ export class ItemViews {
   }
 
   /** A drill root the data changed since last asked (a node it lost), once, with its scope. */
-  reconciled(): (DrillRoot & Scoped) | undefined {
+  reconciled(): ItemChanges["drill"] | undefined {
     for (const view of this.#views) {
       const state = this.#states.get(view.state);
       const root = state?.reconciled;
@@ -542,7 +545,7 @@ export class ItemViews {
   setDrillRoot(
     node: string | readonly string[] | null,
     panel?: string,
-  ): (DrillRoot & Scoped) | undefined {
+  ): ItemChanges["drill"] | undefined {
     const view = this.#owner("drill", panel, "setDrillRoot");
     const drill = view.result.drill!;
     const key = node === null ? null : drill.find(node);
