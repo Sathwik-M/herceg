@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { fromMatrix } from "../../src/data/matrix.ts";
 import { table } from "../../src/data/table.ts";
 import { createChart } from "../../src/dom/chart.ts";
@@ -23,6 +23,7 @@ import { renderToSVG } from "../../src/render/static.ts";
 import { cloudPainter } from "../../src/render/webgl.ts";
 import type { RasterGeometry, RectGeometry } from "../../src/scene/scene.ts";
 import { MOUSE, modelOf } from "./helpers.ts";
+import { hasWebGL2 } from "./webgl.ts";
 
 /** Without a background, the canvas holds what marks paint alone. */
 const CLEAR = { tokens: { background: "transparent" } } as const;
@@ -717,7 +718,7 @@ describe("new marks in the browser", () => {
   });
 });
 
-describe("point clouds on the GPU", () => {
+describe.skipIf(!hasWebGL2())("point clouds on the GPU", () => {
   const cloudTable = (n: number, scale = 1) => {
     // Most points at (1, 1); two at (8, 8) for overlap; one alone at (5, 5).
     const x = new Float64Array(n).fill(scale);
@@ -740,9 +741,13 @@ describe("point clouds on the GPU", () => {
         1,
       ).data;
   };
-  const painter = cloudPainter()!;
+  let painter: NonNullable<ReturnType<typeof cloudPainter>>;
   let paints: boolean[] = [];
-  const paint = painter.paint.bind(painter);
+  let paint: typeof painter.paint;
+  beforeAll(() => {
+    painter = cloudPainter()!;
+    paint = painter.paint.bind(painter);
+  });
   beforeEach(() => {
     paints = [];
     painter.paint = (...args) => {

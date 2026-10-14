@@ -1,13 +1,14 @@
 // The WebGL painter following point clouds as their tables stream, driven
 // directly with clouds of whole columns.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { table } from "../../src/data/table.ts";
 import { createChart } from "../../src/dom/chart.ts";
 import { point } from "../../src/marks/point.ts";
 import { cloudPainter } from "../../src/render/webgl.ts";
 import type { PointCloud, PointGeometry } from "../../src/scene/scene.ts";
+import { hasWebGL2 } from "./webgl.ts";
 
-const painter = cloudPainter()!;
+let painter: NonNullable<ReturnType<typeof cloudPainter>>;
 const owners: object[] = [];
 afterEach(() => {
   for (const owner of owners.splice(0)) painter.release(owner);
@@ -55,7 +56,11 @@ function stream() {
   return { cloud, paint, alpha };
 }
 
-describe("streaming point clouds", () => {
+describe.skipIf(!hasWebGL2())("streaming point clouds", () => {
+  beforeAll(() => {
+    painter = cloudPainter()!;
+  });
+
   it("upload again for appended points their normalization cannot place", () => {
     const s = stream();
     expect(s.paint(s.cloud([0, 1e-310]))).toBe(true);
