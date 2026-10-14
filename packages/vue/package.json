@@ -5,11 +5,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Sathwik-M/herceg.git",
+    "url": "git+https://github.com/op55-org/herceg.git",
     "directory": "packages/vue"
   },
-  "homepage": "https://github.com/Sathwik-M/herceg/tree/main/packages/vue#readme",
-  "bugs": "https://github.com/Sathwik-M/herceg/issues",
+  "homepage": "https://github.com/op55-org/herceg/tree/main/packages/vue#readme",
+  "bugs": "https://github.com/op55-org/herceg/issues",
   "type": "module",
   "sideEffects": false,
   "exports": {

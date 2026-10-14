@@ -17,9 +17,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Sathwik-M/herceg/tree/main/python#readme"
-Repository = "https://github.com/Sathwik-M/herceg"
-Issues = "https://github.com/Sathwik-M/herceg/issues"
+Homepage = "https://github.com/op55-org/herceg/tree/main/python#readme"
+Repository = "https://github.com/op55-org/herceg"
+Issues = "https://github.com/op55-org/herceg/issues"
 
 [project.optional-dependencies]
 pandas = ["pandas>=2.0"]
