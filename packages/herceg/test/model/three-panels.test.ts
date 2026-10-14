@@ -15,6 +15,7 @@ import type { FaceGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ChartSpec } from "../../src/spec/spec.ts";
 import { FaceBuffer } from "../../src/three/faces.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 const data = table({ x: [0, 1, 0, 1], y: [0, 0, 1, 1], z: [0, 1, 2, 3] });
 function config() {
@@ -46,7 +47,7 @@ describe("3D subplots", () => {
   it("keeps palette slots for actual series when categories arrive after a cached scene", () => {
     const data = table({ x: [0], y: [0], z: [0], group: category(["a"]) });
     const chart = new ChartModel({
-      theme: { palette: ["#ff0000", "#0000ff"] },
+      theme: { tokens: { palette: ["#ff0000", "#0000ff"] } },
       panels: panels([{ id: "a" }]),
       marks: [point3d(data, { x: "x", y: "y", z: "z", series: "group", panel: "a" })],
     });
@@ -54,7 +55,7 @@ describe("3D subplots", () => {
     chart.scene(estimateText);
     data.append({ x: [1], y: [1], z: [1], group: ["b"] });
     const scene = chart.scene(estimateText);
-    expect(scene.legend.map(({ label, color }) => [label, color])).toEqual([
+    expect(legendOf(scene).map(({ label, color }) => [label, color])).toEqual([
       ["a", "#ff0000"],
       ["b", "#0000ff"],
     ]);

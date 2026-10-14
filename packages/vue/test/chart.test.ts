@@ -32,8 +32,10 @@ import {
   onUpdated,
   reactive,
   ref,
+  shallowReactive,
   shallowRef,
 } from "vue";
+import { prepareFonts } from "../../herceg/src/fonts.ts";
 import {
   Area,
   Bar,
@@ -776,6 +778,33 @@ describe("<Chart>", () => {
     expect(updates).toHaveLength(0);
   });
 
+  it("updates the chart when its fonts change, and only then", async () => {
+    const { view, chart } = chartRef();
+    const data = new Uint8Array(
+      await (
+        await fetch(new URL("../../herceg/test/fixtures/pdf-fonts/sans.ttf", import.meta.url))
+      ).arrayBuffer(),
+    );
+    const state = shallowReactive({
+      fonts: prepareFonts([{ family: "VueFixture", data }]),
+      tick: 1,
+    });
+    mount(
+      `<p>{{ state.tick }}</p>
+      <Chart ref="view" :fonts="state.fonts"><Line :data="metrics" x="t" y="a" /></Chart>`,
+      () => ({ metrics, view, state }),
+    );
+    const updates = spyUpdates(chart());
+    state.tick = 2;
+    await nextTick();
+    expect(updates).toHaveLength(0);
+    const next = prepareFonts([{ family: "VueFixture", data }]);
+    state.fonts = next;
+    await nextTick();
+    expect(updates).toHaveLength(1);
+    expect(optionsOf(chart()).fonts).toBe(next);
+  });
+
   it("binds a row selection from reactive state, kept while its store and channel are", async () => {
     const { view, chart } = chartRef();
     const store = selectionStore(metrics);
@@ -874,10 +903,10 @@ describe("<Chart>", () => {
   it("passes how panels share scales to the chart", async () => {
     const sales = table({ t: [0, 1, 10, 11], v: [1, 2, 3, 4], region: ["N", "N", "S", "S"] });
     const { view, chart } = chartRef();
-    const resolve = shallowRef<{ x?: "independent" }>({ x: "independent" });
+    const x = shallowRef<{ scope?: "panel" }>({ scope: "panel" });
     mount(
-      `<Chart ref="view" :facet="by" :resolve="resolve"><Line :data="sales" x="t" y="v" /></Chart>`,
-      () => ({ sales, view, by: facet("region"), resolve }),
+      `<Chart ref="view" :facet="by" :x="x"><Line :data="sales" x="t" y="v" /></Chart>`,
+      () => ({ sales, view, by: facet("region"), x }),
     );
     const groups = () =>
       new Set(
@@ -886,7 +915,7 @@ describe("<Chart>", () => {
           .map((p) => p.x!.group),
       ).size;
     expect(groups()).toBe(2);
-    resolve.value = {};
+    x.value = {};
     await nextTick();
     chart().render();
     expect(groups()).toBe(1);

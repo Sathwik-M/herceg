@@ -20,6 +20,7 @@ import type { RasterGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ChartSpec } from "../../src/spec/spec.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
+import { rampsOf } from "../helpers/guides.ts";
 
 const GRAY = ["#000000", "#ffffff"];
 const HOUR = 3_600_000;
@@ -294,7 +295,7 @@ describe("heatmap cells along number and time axes", () => {
       strip(x, v, { reduce: "sum", colorDomain: undefined as never }, { legend: true }),
       450,
     );
-    expect(scene.colorLegends[0]!.high.text).toBe("60");
+    expect(rampsOf(scene)[0]!.high.text).toBe("60");
   });
 
   it("reduce shared pixels the same whatever order the cells' rows come in", () => {
@@ -668,7 +669,7 @@ describe("heatmaps on number axes in panels", () => {
     const { model, scene } = build({
       marks: [heatmap(load, { x: "hour", y: "host", color: "cpu" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     const [n, s] = model.panels();
     expect(n!.x.domain).toEqual([-0.5, 1.5]);
@@ -697,10 +698,7 @@ describe("heatmaps on number axes in panels", () => {
       facet: facet("region"),
       legend: true,
     });
-    expect([scene.colorLegends[0]!.low.text, scene.colorLegends[0]!.high.text]).toEqual([
-      "3",
-      "10",
-    ]);
+    expect([rampsOf(scene)[0]!.low.text, rampsOf(scene)[0]!.high.text]).toEqual(["3", "10"]);
     const at = (panel: number, hour: number) => {
       const { x, y, key } = model.panels()[panel]!;
       return model.inspect(x.map(hour), y.map(0), undefined, key)?.points[0]?.value;
@@ -739,7 +737,7 @@ describe("heatmaps on number axes in panels", () => {
   it("draw in subplots beside lines on x scales of their own", () => {
     const { model, scene } = build({
       panels: panels([{ id: "cells" }, { id: "line", x: { type: "linear" } }]),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
       marks: [heatmap(load, { x: "hour", y: "host", color: "cpu", panel: "cells" })],
     });
     expect(scene.panels[0]!.marks[0]!.kind).toBe("raster");
@@ -826,13 +824,15 @@ describe("heatmap cells between edges", () => {
     const [px, py] = [model.xScale()!.map(0.5), model.yScale()!.map(0)];
     expect(model.inspect(px, py)!.points[0]!.value).toBe(1);
     expect(Array.from(clickedRows(model, new Set([edges as never]), px, py)!.rows)).toEqual([0]);
-    expect([scene.colorLegends[0]!.low.text, scene.colorLegends[0]!.high.text]).toEqual(["1", "3"]);
+    expect([rampsOf(scene)[0]!.low.text, rampsOf(scene)[0]!.high.text]).toEqual(["1", "3"]);
     // A row of no category has no band, so it adds to no sum either.
     const named = table({ x: ["a", null, "c"], y: ["b", "b", "b"], v: [1, 100, 3] });
-    const banded = build({
-      marks: [heatmap(named, { x: "x", y: "y", color: "v", reduce: "sum" })],
-      legend: true,
-    }).scene.colorLegends[0]!;
+    const banded = rampsOf(
+      build({
+        marks: [heatmap(named, { x: "x", y: "y", color: "v", reduce: "sum" })],
+        legend: true,
+      }).scene,
+    )[0]!;
     expect([banded.low.text, banded.high.text]).toEqual(["1", "3"]);
   });
 

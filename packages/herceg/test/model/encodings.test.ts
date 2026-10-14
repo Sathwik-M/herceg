@@ -16,6 +16,7 @@ import type { PointGeometry, RasterGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ChartSpec } from "../../src/spec/spec.ts";
 import { LIGHT } from "../../src/theme.ts";
+import { keysOf, legendOf, rampsOf } from "../helpers/guides.ts";
 
 /** A shape as legends draw it: at most 4.5 pixels in radius, reaching at most 6. */
 const legendShape = (symbol: SymbolName) =>
@@ -43,8 +44,8 @@ describe("legends of encodings", () => {
     const sized = () => point(cities, { x: "x", y: "y", size: "pop" });
     const colored = () => point(cities, { x: "x", y: "y", color: "growth" });
     const { scene } = build({ marks: [sized(), sized(), colored(), colored()] });
-    expect(scene.glyphLegends).toHaveLength(1);
-    expect(scene.colorLegends).toHaveLength(1);
+    expect(keysOf(scene)).toHaveLength(1);
+    expect(rampsOf(scene)).toHaveLength(1);
   });
 
   it("describe color scales before keys, as the legend shows them", () => {
@@ -64,7 +65,7 @@ describe("legends of encodings", () => {
       legend: false,
       marks: [point(cities, { x: "x", y: "y", size: "pop", color: "growth" })],
     });
-    expect([scene.glyphLegends, scene.colorLegends, model.legendSummaries()]).toEqual([[], [], []]);
+    expect([keysOf(scene), rampsOf(scene), model.legendSummaries()]).toEqual([[], [], []]);
   });
 });
 
@@ -98,8 +99,8 @@ describe("point size by field", () => {
 
   it("shows a size key with round values", () => {
     const { scene } = build({ marks: [point(cities, { x: "x", y: "y", size: "pop" })] });
-    expect(scene.glyphLegends).toHaveLength(1);
-    const [key] = scene.glyphLegends;
+    expect(keysOf(scene)).toHaveLength(1);
+    const [key] = keysOf(scene);
     expect(key!.title.text).toBe("pop");
     expect(key!.entries.map((e) => e.label.text)).toEqual(["100", "200", "400"]);
     // Circles of growing radius, the largest 12 pixels.
@@ -114,9 +115,11 @@ describe("point size by field", () => {
   it("keys sizes across negative and mixed-sign values", () => {
     const keyOf = (values: number[]) => {
       const t = table({ x: values.map((_, i) => i), y: values, s: values });
-      return build({
-        marks: [point(t, { x: "x", y: "y", size: "s" })],
-      }).scene.glyphLegends[0]!.entries.map((e) => e.label.text);
+      return keysOf(
+        build({
+          marks: [point(t, { x: "x", y: "y", size: "s" })],
+        }).scene,
+      )[0]!.entries.map((e) => e.label.text);
     };
     expect(keyOf([-10, -5, -1])).toEqual(["-8", "-6", "-2"]);
     expect(keyOf([-5, 0, 10])).toHaveLength(3);
@@ -186,7 +189,7 @@ describe("point size by field", () => {
   it("keeps a legend for each color scale, and one for scales marks share", () => {
     const a = table({ x: [0, 1], y: [0, 1], c: [0, 1] });
     const b = table({ x: [0, 1], y: [1, 0], c: [100, 200] });
-    const legends = (marks: ChartConfig["marks"]) => build({ marks }).scene.colorLegends;
+    const legends = (marks: ChartConfig["marks"]) => rampsOf(build({ marks }).scene);
     const two = legends([
       point(a, { x: "x", y: "y", color: "c" }),
       point(b, { x: "x", y: "y", color: "c" }),
@@ -222,9 +225,11 @@ describe("point size by field", () => {
     const wide = new SequentialScale([-1e308, 1e308], ["#000000", "#ffffff"], 0);
     expect([wide.index(-1e308), wide.index(0), wide.index(1e308)]).toEqual([0, 127, 254]);
     // The legend places the midpoint in the middle too.
-    const legend = build({
-      marks: [point(t, { x: "x", y: "y", color: "v", colorMidpoint: 0 })],
-    }).scene.colorLegends[0]!;
+    const legend = rampsOf(
+      build({
+        marks: [point(t, { x: "x", y: "y", color: "v", colorMidpoint: 0 })],
+      }).scene,
+    )[0]!;
     expect(legend.middle).toBeCloseTo(0.5);
     // Subnormal spans keep their resolution.
     const small = table({ x: [0, 1], y: [0, 1], v: [0, Number.MIN_VALUE] });
@@ -293,13 +298,13 @@ describe("point color by field", () => {
     const fill = (i: number) => g.colors!.palette[g.colors!.index[i]!];
     expect(fill(0)).toBe(viridis[0]);
     expect(fill(4)).toBe(viridis.at(-1));
-    expect(scene.colorLegends[0]).toMatchObject({
+    expect(rampsOf(scene)[0]).toMatchObject({
       stops: viridis,
       title: { text: "growth" },
       low: { text: "-2" },
       high: { text: "4" },
     });
-    expect(scene.colorLegends[0]!.middle).toBeUndefined();
+    expect(rampsOf(scene)[0]!.middle).toBeUndefined();
   });
 
   it("centers diverging colors on the midpoint, and places it in the legend", () => {
@@ -308,9 +313,9 @@ describe("point color by field", () => {
     });
     const g = scene.panels[0]!.marks[0] as PointGeometry;
     // The theme's diverging ramp by default; 0 takes its neutral middle color.
-    expect(scene.colorLegends[0]!.stops).toBe(LIGHT.diverging);
+    expect(rampsOf(scene)[0]!.stops).toEqual(LIGHT.diverging);
     expect(g.colors!.palette[g.colors!.index[2]!]).toBe("#f7f7f7");
-    expect(scene.colorLegends[0]!.middle).toBeCloseTo(2 / 6);
+    expect(rampsOf(scene)[0]!.middle).toBeCloseTo(2 / 6);
     const svg = renderSvg(scene);
     expect(svg).toContain('offset="33.3%" stop-color="#f7f7f7"');
   });
@@ -330,7 +335,7 @@ describe("point color by field", () => {
     const blank = table({ x: [1, 2], y: [3, 4], c: [Number.NaN, Number.NaN] });
     const { scene } = build({ marks: [point(blank, { x: "x", y: "y", color: "c" })] });
     expect(scene.panels[0]!.marks).toEqual([]);
-    expect(scene.colorLegends).toEqual([]);
+    expect(rampsOf(scene)).toEqual([]);
   });
 
   it("keeps series in the legend, in a neutral color", () => {
@@ -338,7 +343,7 @@ describe("point color by field", () => {
       marks: [point(cities, { x: "x", y: "y", series: "region", color: "growth" })],
     });
     const circle = symbolPath("circle", 0, 0, 4.5);
-    expect(scene.legend.map((item) => [item.label, item.color, item.glyph])).toEqual([
+    expect(legendOf(scene).map((item) => [item.label, item.color, item.glyph])).toEqual([
       ["n", LIGHT.muted, circle],
       ["s", LIGHT.muted, circle],
       ["e", LIGHT.muted, circle],
@@ -387,17 +392,20 @@ describe("point color by category", () => {
     expect([0, 1, 2, 3, 4].map((i) => colorOf(g!, i))).toEqual(
       [0, 1, 0, 1, 2].map((i) => LIGHT.palette[i]),
     );
-    const key = scene.glyphLegends[0]!;
+    const key = keysOf(scene)[0]!;
     expect(key.title.text).toBe("region");
     expect(key.entries.map((e) => [e.label.text, e.fill])).toEqual([
       ["n", LIGHT.palette[0]],
       ["s", LIGHT.palette[1]],
       ["e", LIGHT.palette[2]],
     ]);
-    expect(scene.colorLegends).toEqual([]);
+    expect(rampsOf(scene)).toEqual([]);
     expect(model.legendSummaries()).toEqual(["Color shows region: n, s, e."]);
     const svg = renderSvg(scene);
-    expect(svg).toContain(`fill="${LIGHT.palette[2]}" fill-opacity="1"`);
+    // Color keys' glyphs are their colors, opaque.
+    expect(svg).toContain(
+      `d="M-4.5 0a4.5 4.5 0 1 1 9 0a4.5 4.5 0 1 1 -9 0" fill="${LIGHT.palette[2]}"/>`,
+    );
   });
 
   it("reads the category in tooltips, swatches in its color, and leaves rows without one out", () => {
@@ -423,8 +431,8 @@ describe("point color by category", () => {
       marks: [point(cities, { x: "x", y: "y", series: "region", color: "region" })],
     });
     expect((scene.panels[0]!.marks as PointGeometry[]).every((g) => !g.colors)).toBe(true);
-    expect(scene.glyphLegends).toEqual([]);
-    expect(scene.legend.map((item) => item.color)).toEqual(LIGHT.palette.slice(0, 3));
+    expect(keysOf(scene)).toEqual([]);
+    expect(legendOf(scene).map((item) => item.color)).toEqual(LIGHT.palette.slice(0, 3));
   });
 
   it("colors by category whatever the series, listing series in a neutral color", () => {
@@ -437,11 +445,11 @@ describe("point color by category", () => {
     const { scene } = build({
       marks: [point(tagged, { x: "x", y: "y", series: "kind", color: "tag" })],
     });
-    expect(scene.legend.map((item) => [item.label, item.color])).toEqual([
+    expect(legendOf(scene).map((item) => [item.label, item.color])).toEqual([
       ["p", LIGHT.muted],
       ["q", LIGHT.muted],
     ]);
-    expect(scene.glyphLegends[0]!.entries.map((e) => e.label.text)).toEqual(["a", "b"]);
+    expect(keysOf(scene)[0]!.entries.map((e) => e.label.text)).toEqual(["a", "b"]);
   });
 
   it("keeps a value's color as the table streams", () => {
@@ -454,7 +462,7 @@ describe("point color by category", () => {
     const colors = new Map<string, string>();
     for (let i = 1; i < 40; i++) {
       stream.append({ x: [i], y: [i], kind: [`k${i}`] });
-      for (const { label, fill } of model.scene(estimateText).glyphLegends[0]!.entries) {
+      for (const { label, fill } of keysOf(model.scene(estimateText))[0]!.entries) {
         if (colors.has(label.text)) expect(fill, label.text).toBe(colors.get(label.text));
         colors.set(label.text, fill!);
       }
@@ -468,7 +476,7 @@ describe("point color by category", () => {
       kind: encodedCategory(new Int32Array([1, 0]), ["A", "B"]),
     });
     const { scene } = build({ marks: [point(flipped, { x: "x", y: "y", color: "kind" })] });
-    expect(scene.glyphLegends[0]!.entries.map((e) => [e.label.text, e.fill])).toEqual([
+    expect(keysOf(scene)[0]!.entries.map((e) => [e.label.text, e.fill])).toEqual([
       ["B", LIGHT.palette[0]],
       ["A", LIGHT.palette[1]],
     ]);
@@ -485,10 +493,10 @@ describe("point color by category", () => {
       ],
     });
     model.setSize(600, 300, 1);
-    expect(model.scene(estimateText).glyphLegends).toHaveLength(2);
+    expect(keysOf(model.scene(estimateText))).toHaveLength(2);
     // Without c, the second mark's a and b keep the colors they had.
     second.dropFirst(1);
-    const keys = model.scene(estimateText).glyphLegends;
+    const keys = keysOf(model.scene(estimateText));
     expect(keys.map((key) => key.entries.map((e) => e.fill))).toEqual([
       [LIGHT.palette[0], LIGHT.palette[1]],
       [LIGHT.palette[1], LIGHT.palette[2]],
@@ -503,12 +511,12 @@ describe("point color by category", () => {
       kind: Array.from({ length: 260 }, (_, i) => `k${i}`),
     });
     const { scene, model } = build({
-      theme: { palette },
+      theme: { tokens: { palette: palette } },
       marks: [point(many, { x: "x", y: "y", color: "kind" })],
     });
     const [g] = scene.panels[0]!.marks as PointGeometry[];
     expect(g!.colors!.palette).toHaveLength(255);
-    const fills = scene.glyphLegends[0]!.entries.map((e) => e.fill);
+    const fills = keysOf(scene)[0]!.entries.map((e) => e.fill);
     expect(fills[255]).toBe(palette[0]);
     const at = model.inspect(model.xScale()!.map(255), model.yScale()!.map(255))!;
     expect(at.points[0]!.color).toBe(palette[0]);
@@ -527,7 +535,7 @@ describe("point color by category", () => {
       marks: [{ type: "point", x: "x", y: "y", color: "c" }],
     };
     const { scene } = build(loadSpec(spec).config);
-    expect(scene.glyphLegends[0]!.entries.map((e) => e.fill)).toEqual(LIGHT.palette.slice(0, 2));
+    expect(keysOf(scene)[0]!.entries.map((e) => e.fill)).toEqual(LIGHT.palette.slice(0, 2));
   });
 });
 
@@ -579,8 +587,8 @@ describe("point symbols", () => {
     const { scene } = build({ marks: [point(cities, { x: "x", y: "y", symbol: "region" })] });
     const g = scene.panels[0]!.marks[0] as PointGeometry;
     expect(Array.from(g.symbols!.subarray(0, 5))).toEqual([0, 1, 0, 1, 2]);
-    expect(scene.glyphLegends).toHaveLength(1);
-    expect(scene.glyphLegends[0]!.entries.map((e) => [e.label.text, e.glyph])).toEqual(
+    expect(keysOf(scene)).toHaveLength(1);
+    expect(keysOf(scene)[0]!.entries.map((e) => [e.label.text, e.glyph])).toEqual(
       [
         ["n", "circle"],
         ["s", "square"],
@@ -593,8 +601,8 @@ describe("point symbols", () => {
     const { scene } = build({
       marks: [point(cities, { x: "x", y: "y", series: "region", symbol: "region" })],
     });
-    expect(scene.glyphLegends).toEqual([]);
-    expect(scene.legend.map((item) => item.glyph)).toEqual(
+    expect(keysOf(scene)).toEqual([]);
+    expect(legendOf(scene).map((item) => item.glyph)).toEqual(
       (["circle", "square", "triangle"] as const).map(legendShape),
     );
     const svg = renderSvg(scene);
@@ -647,7 +655,7 @@ describe("point symbols", () => {
     // Enough values for the table to compact its dictionary several times.
     for (let i = 1; i < 200; i++) {
       stream.append({ x: [i], y: [i], kind: [`k${i}`] });
-      const entries = model.scene(estimateText).glyphLegends[0]!.entries;
+      const entries = keysOf(model.scene(estimateText))[0]!.entries;
       expect(entries.map((e) => e.label.text)).toEqual([`k${i - 1}`, `k${i}`]);
       for (const { label, glyph } of entries) {
         if (shapes.has(label.text)) expect(glyph, label.text).toBe(shapes.get(label.text));
@@ -723,7 +731,7 @@ describe("sequential scale", () => {
     const { scene } = build({
       marks: [heatmap(positive, { x: "x", y: "y", color: "v", colorMidpoint: 0 })],
     });
-    expect(scene.colorLegends[0]).toMatchObject({
+    expect(rampsOf(scene)[0]).toMatchObject({
       low: { text: "0" },
       high: { text: "4" },
       middle: 0,
@@ -763,7 +771,7 @@ describe("color schemes in specs", () => {
   it("resolves scheme names when loading", () => {
     const { config } = loadSpec(spec("magma"));
     const { scene } = build(config);
-    expect(scene.colorLegends[0]!.stops).toEqual(scheme("magma"));
+    expect(rampsOf(scene)[0]!.stops).toEqual(scheme("magma"));
   });
 
   it("names the schemes when one is unknown", () => {
@@ -777,6 +785,6 @@ describe("color schemes in specs", () => {
     const sized = spec(undefined);
     (sized.marks[0] as { size?: unknown }).size = "y";
     (sized.marks[0] as { radiusRange?: unknown }).radiusRange = [1, 8];
-    expect(build(loadSpec(sized).config).scene.glyphLegends).toHaveLength(1);
+    expect(keysOf(build(loadSpec(sized).config).scene)).toHaveLength(1);
   });
 });

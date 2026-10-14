@@ -10,6 +10,8 @@ import type { NumericArray } from "../data/column.ts";
 import type { SymbolName } from "../draw/symbols.ts";
 import type { Mapping } from "../lod/m4.ts";
 import type { Polyline } from "../lod/polyline.ts";
+import type { Clip } from "../spec/spec.ts";
+import type { PlotPaint, ResolvedHalo, StrokePaint, TextPaint } from "../style/style.ts";
 import type { Theme } from "../theme.ts";
 
 export interface Rect {
@@ -88,6 +90,17 @@ export interface Geometry {
   readonly key: string;
   // biome-ignore lint/suspicious/noExplicitAny: the erasure point described above.
   readonly draw: Drawing<any>;
+  /** What the drawing is cut to, as its mark's `clip` says; see `clipOf`. */
+  readonly clip?: Clip | undefined;
+}
+
+/**
+ * What a geometry is cut to: its mark's `clip`, or by default data to its
+ * panel's plot and guides to nothing. Data not cut to the plot is drawn
+ * above the data that is, guides above both.
+ */
+export function clipOf(geometry: Geometry): Clip {
+  return geometry.clip ?? (geometry.draw.guide ? false : "plot");
 }
 
 /** One SVG element: its tag and attribute values (unescaped). */
@@ -216,8 +229,8 @@ export interface TextGeometry extends Geometry {
   draw: Drawing<TextGeometry>;
   fill: string;
   anchor: "start" | "middle" | "end";
-  /** Outline each label in the background color, for text drawn over data. */
-  halo: boolean;
+  /** The outline drawn under each label, for text over data; none when undefined. */
+  halo: ResolvedHalo | undefined;
   coords: Float32Array;
   labels: string[];
   count: number;
@@ -671,17 +684,146 @@ export interface AxisTick {
   label: string;
 }
 
-export interface AxisGeometry {
-  orient: "bottom" | "left" | "right";
-  /** The axis line: y for a bottom axis, x for a left or right axis. */
-  offset: number;
-  /** Extent along the axis direction. */
-  start: number;
-  end: number;
-  ticks: AxisTick[];
-  /** Draw the axis line and tick marks (bottom axes) or only labels (left). */
-  line: boolean;
-  title: { text: string; x: number; y: number } | undefined;
+/**
+ * Text at its final place, as every renderer draws it: anchored at (x, y)
+ * by its start, middle, or end and its baseline, turned `angle` degrees
+ * clockwise about that point.
+ */
+export interface TextItem {
+  readonly type: "text";
+  readonly text: string;
+  readonly x: number;
+  readonly y: number;
+  readonly anchor: "start" | "middle" | "end";
+  readonly baseline: "middle" | "hanging" | "alphabetic";
+  readonly angle: number;
+  readonly paint: TextPaint;
+  /** Drawn at this share of the paint's opacity, as a hidden series' legend entry is. */
+  readonly opacity?: number | undefined;
+  /** The outline drawn under the text, resolved against what it is drawn on. */
+  readonly halo?: ResolvedHalo | undefined;
+  /** The paint's background box, padded around the text, before any turn. */
+  readonly box?: Rect | undefined;
+}
+
+/** Straight lines in one stroke: x1, y1, x2, y2 per segment. */
+export interface SegmentsItem {
+  readonly type: "segments";
+  readonly coords: readonly number[];
+  readonly paint: StrokePaint;
+}
+
+/** A shape in SVG path data drawn about `at`, such as a legend's glyph. */
+export interface ShapeItem {
+  readonly type: "shape";
+  readonly d: string;
+  readonly at: readonly [number, number];
+  readonly fill: string;
+  readonly fillOpacity?: number | undefined;
+  /** An outline 1 pixel wide, with round joins. */
+  readonly stroke?: string | undefined;
+  readonly opacity?: number | undefined;
+}
+
+/** A rectangle, rounded by `radius`. */
+export interface RectItem {
+  readonly type: "rect";
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly radius: number;
+  readonly fill: string;
+  readonly opacity?: number | undefined;
+}
+
+/**
+ * A rectangle filled with a color ramp from left to right: each stop at its
+ * offset, from 0 to 1.
+ */
+export interface RampItem {
+  readonly type: "ramp";
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly radius: number;
+  readonly stops: readonly string[];
+  readonly offsets: readonly number[];
+}
+
+/** What guides are drawn of: placed text, lines, shapes, rectangles, and ramps. */
+export type GuideItem = TextItem | SegmentsItem | ShapeItem | RectItem | RampItem;
+
+/**
+ * Chart furniture at its final place: what renderers draw (`items`, in
+ * order) and, by kind, what the runtime and tests read of it. Renderers
+ * draw the items and compute no positions of their own.
+ */
+export interface GuideBase {
+  /** Unique within the scene and the same from one scene to the next. */
+  readonly key: string;
+  readonly items: readonly GuideItem[];
+}
+
+/**
+ * Where an axis is drawn and how it looks, everything its items are made
+ * from: other ticks are placed the same way (`axisItems`), as a change of
+ * view playing places the ticks between two scenes.
+ */
+export interface AxisPlacement {
+  /** Below the plot, an x axis, which draws its line and tick marks; beside it, a y axis, which draws neither. */
+  readonly side: "bottom" | "left" | "right";
+  /** The axis' line: y for an axis below the plot, x for one beside it. */
+  readonly edge: number;
+  /** Its extent along its direction, from the plot's start to its end. */
+  readonly start: number;
+  readonly end: number;
+  readonly tickLength: number;
+  /** Pixels from the line to the near edge of the labels. */
+  readonly gap: number;
+  /** What the labels and title are drawn on, for their halos: the chart's background. */
+  readonly surface: string;
+  readonly paints: {
+    readonly line: StrokePaint;
+    readonly tick: StrokePaint;
+    readonly label: TextPaint;
+    readonly title: TextPaint;
+  };
+}
+
+/** An axis of a panel: its scale's ticks along one side of the plot, and its title. */
+export interface AxisGuide extends GuideBase, AxisPlacement {
+  readonly kind: "axis";
+  /** The scale it shows: "x", "y", or "yRight". */
+  readonly scale: string;
+  readonly ticks: readonly AxisTick[];
+  /** Its title: at (x, y), the side of the text `anchor` says (its middle by default). */
+  readonly title:
+    | { text: string; x: number; y: number; anchor?: TextItem["anchor"] | undefined }
+    | undefined;
+}
+
+/** The chart's title. */
+export interface TitleGuide extends GuideBase {
+  readonly kind: "title";
+  readonly text: string;
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * A panel's title or a facet panel's header (a grid's column and row
+ * values too): centered vertically on `y`, starting at, centered on, or
+ * ending at `x`, and turned `angle` degrees clockwise about that point.
+ */
+export interface HeaderGuide extends GuideBase {
+  readonly kind: "header";
+  readonly text: string;
+  readonly x: number;
+  readonly y: number;
+  readonly anchor: "start" | "middle" | "end";
+  readonly angle: 0 | 90;
 }
 
 export interface LegendItem {
@@ -701,24 +843,54 @@ export interface LegendItem {
 }
 
 /**
- * How a color ramp or a key of glyphs is drawn as SVG, carried by the legend
- * so charts without one carry no drawing code for it. `id` is unique in the
- * document, for definitions such as a ramp's gradient.
+ * The series legend: an entry per series, each a swatch then its label, at
+ * (x, y), its left edge and middle. The browser draws it as buttons from
+ * `entries`, in the label's style; static output draws `items`.
  */
-export interface LegendDrawing<L> {
-  readonly svg: (legend: L, theme: Theme, id: string) => string;
+export interface LegendGuide extends GuideBase {
+  readonly kind: "legend";
+  readonly entries: readonly LegendItem[];
+  readonly label: TextPaint;
+  /** The labels' halo over what the legend is drawn on. */
+  readonly halo: ResolvedHalo | undefined;
 }
 
 /**
- * Legend of point sizes, shapes, or category colors: a title, then glyphs in
- * their `fill` (or the theme's muted color), each followed by its label.
+ * The legend of a continuous color scale, on one row: title, low label,
+ * color ramp, high label. Positions are left edges; `y` is the row's middle.
+ */
+export interface RampGuide extends GuideBase {
+  readonly kind: "ramp";
+  readonly stops: readonly string[];
+  /**
+   * Where the ramp's middle color sits, from 0 to 1, for diverging scales:
+   * the midpoint's place between the low and high values. Stops below the
+   * middle spread over the ramp up to it, the rest beyond.
+   */
+  readonly middle: number | undefined;
+  readonly y: number;
+  readonly title: { text: string; x: number };
+  readonly low: { text: string; x: number };
+  readonly high: { text: string; x: number };
+  readonly ramp: { x: number; width: number };
+  /**
+   * SVG markup of its ramp item, which the shared writer leaves to the
+   * marks with color ramps (see marks/legend-parts.ts) so other charts do
+   * not carry it; `id` is unique in the document, for the gradient.
+   */
+  readonly rampMarkup: (item: RampItem, id: string) => string;
+}
+
+/**
+ * A legend of point sizes, shapes, or category colors: a title, then glyphs
+ * in their `fill` (or the theme's muted color), each followed by its label.
  * Glyphs are SVG path data centered on (0, 0), drawn at (x, y); other
  * positions are left edges, and `y` is the middle of an item's row.
  */
-export interface GlyphLegend {
-  draw: LegendDrawing<GlyphLegend>;
-  title: { text: string; x: number; y: number };
-  entries: {
+export interface KeyGuide extends GuideBase {
+  readonly kind: "key";
+  readonly title: { text: string; x: number; y: number };
+  readonly entries: readonly {
     glyph: string;
     x: number;
     y: number;
@@ -727,25 +899,8 @@ export interface GlyphLegend {
   }[];
 }
 
-/**
- * Legend for a continuous color scale, on one row: title, low label, color
- * ramp, high label. Positions are left edges; `y` is the row's middle.
- */
-export interface ColorLegend {
-  draw: LegendDrawing<ColorLegend>;
-  stops: readonly string[];
-  /**
-   * Where the ramp's middle color sits, from 0 to 1, for diverging scales:
-   * the midpoint's place between the low and high values. Stops below the
-   * middle spread over the ramp up to it, the rest beyond.
-   */
-  middle?: number | undefined;
-  y: number;
-  title: { text: string; x: number };
-  low: { text: string; x: number };
-  high: { text: string; x: number };
-  ramp: { x: number; width: number };
-}
+/** Chart furniture outside panels' axes, in drawing order. */
+export type Guide = TitleGuide | HeaderGuide | LegendGuide | RampGuide | KeyGuide;
 
 /**
  * One plotting area: its data, clipped to `plot`, its guides (rules and
@@ -756,24 +911,21 @@ export interface Panel {
   key: string;
   /** Area inside the axes, where data is clipped. */
   plot: Rect;
-  /** Pixel positions of vertical and horizontal grid lines. */
-  grid: { x: number[]; y: number[] };
-  axes: AxisGeometry[];
+  /**
+   * The plot's background, drawn under the grid lines, and its border,
+   * drawn over the data; undefined when it has neither.
+   */
+  frame?: PlotPaint | undefined;
+  /** Pixel positions of vertical and horizontal grid lines, and how each kind is drawn. */
+  grid: {
+    x: number[];
+    y: number[];
+    xPaint?: StrokePaint | undefined;
+    yPaint?: StrokePaint | undefined;
+  };
+  axes: AxisGuide[];
   /** Geometry in drawing order; guides among it are drawn above the rest. */
   marks: Geometry[];
-}
-
-/**
- * A line of text the layout places, such as a facet header: vertically
- * centered on `y`, starting at or centered on `x`, and turned `angle`
- * degrees clockwise about that point.
- */
-export interface SceneText {
-  text: string;
-  x: number;
-  y: number;
-  anchor: "start" | "middle";
-  angle: 0 | 90;
 }
 
 export interface Scene {
@@ -781,16 +933,10 @@ export interface Scene {
   height: number;
   pixelRatio: number;
   theme: Theme;
-  title: { text: string; x: number; y: number } | undefined;
-  /** Facet headers: each panel's values above it, or a grid's column and row values. */
-  headers: SceneText[];
   /** Plotting areas; a chart without facets has one. */
   panels: Panel[];
-  legend: LegendItem[];
-  /** Legends of continuous color scales, one per distinct scale. */
-  colorLegends: ColorLegend[];
-  /** Legends of point sizes and shapes encoded by fields. */
-  glyphLegends: GlyphLegend[];
+  /** The title, panels' titles and headers, and legends, in drawing order. */
+  guides: Guide[];
   /** Points in all mark geometry after level-of-detail reduction. */
   vertices: number;
 }
@@ -806,12 +952,19 @@ export function tickLabelGap(fontSize: number): number {
   return Math.max(8, Math.round(fontSize * 0.65));
 }
 
-/** Where each stop of a color legend sits along its ramp, from 0 to 1: evenly, with the middle stop at `middle`. */
-export function rampOffsets(legend: ColorLegend): number[] {
-  const middle = legend.middle ?? 0.5;
-  const last = Math.max(1, legend.stops.length - 1);
-  return legend.stops.map((_, i) => {
+/** Where each of `stops` sits along a ramp, from 0 to 1: evenly, with the middle stop at `middle`. */
+export function rampOffsets(stops: readonly string[], middle = 0.5): number[] {
+  const last = Math.max(1, stops.length - 1);
+  return stops.map((_, i) => {
     const t = i / last;
     return t <= 0.5 ? t * 2 * middle : middle + (t - 0.5) * 2 * (1 - middle);
   });
+}
+
+/** A scene's guides of one kind, in drawing order. */
+export function guidesOf<K extends Guide["kind"]>(
+  scene: Pick<Scene, "guides">,
+  kind: K,
+): Extract<Guide, { kind: K }>[] {
+  return scene.guides.filter((guide): guide is Extract<Guide, { kind: K }> => guide.kind === kind);
 }

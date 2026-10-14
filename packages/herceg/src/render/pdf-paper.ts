@@ -1,6 +1,6 @@
 // Paper sizing and fitting in the page's chart coordinate system.
 import { num, PdfPage } from "./pdf-document.ts";
-import type { PdfFontResolver } from "./pdf-font-resolver.ts";
+import type { PdfFontResolver } from "./pdf-font-embed.ts";
 
 /** Paper sizes and uniform margins, in PDF points (72 per inch). */
 export interface PdfPageOptions {

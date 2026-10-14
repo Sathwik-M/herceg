@@ -1,7 +1,7 @@
 import type { NumericArray } from "../data/column.ts";
 import type { CategoryField, NumericField, PositionField, Schema, Table } from "../data/table.ts";
 import { BOTTOM, LEFT, RIGHT, rectDrawing, TOP } from "../draw/rect.ts";
-import { textDrawing } from "../draw/text.ts";
+import { labelHalo, textDrawing } from "../draw/text.ts";
 import { type Formatter, numberFormatter } from "../format/format.ts";
 import { estimateText } from "../layout/text.ts";
 import type { Breaks } from "../lod/m4.ts";
@@ -9,7 +9,8 @@ import { headroomDomain } from "../model/axis.ts";
 import { contrastingText } from "../scale/color.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { MOVING_BARS, type RectGeometry, type TextGeometry } from "../scene/scene.ts";
-import type { BarSpec, BarStack, Frozen } from "../spec/spec.ts";
+import type { BarSpec, BarStack, Clip, Frozen } from "../spec/spec.ts";
+import type { Halo } from "../spec/style.ts";
 import { surface } from "../theme.ts";
 import { BandShares, STILL } from "./dodge.ts";
 import { definedFields } from "./line.ts";
@@ -48,12 +49,18 @@ import { checkTooltip, type MarkTooltip } from "./tooltip-fields.ts";
 import { unionExtent } from "./trace.ts";
 
 interface BarStyle<S extends Schema> {
-  /** Set false to leave text without its readability outline. */
-  halo?: boolean;
+  /** The outline that keeps text readable: "auto" (the default), false for none, or a color of its own. */
+  halo?: Halo;
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /**
+   * What the mark's drawing is cut to: "plot", "chart", or false for
+   * nothing, so markers at the plot's edge show whole. Without it, data is
+   * cut to the plot and labels are drawn whole.
+   */
+  clip?: Clip;
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
   /** Category field: one bar series per value. */
@@ -441,7 +448,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
     const { share, width, groups, offset: offsetOf } = this.placement(visible, along);
     const out: (RectGeometry | TextGeometry)[] = [];
     const labels = this.spec.labels
-      ? new BarLabels(this.#format(frame.locale), frame, horizontal, this.spec.halo !== false)
+      ? new BarLabels(this.#format(frame.locale), frame, horizontal, this.spec.halo)
       : undefined;
     // The closest neighboring bar centers: within a group, a share apart;
     // with one series, a position step apart.
@@ -464,7 +471,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
       // Unstacked bars round the corners at their value's end. The buffer
       // matches the rectangles' capacity, so it grows only when they do.
       const rounding =
-        !this.spec.stack && frame.theme.barRadius > 0
+        !this.spec.stack && frame.theme.style.bar.radius > 0
           ? frame.bytes(s.key, "ends", Math.ceil(rects.length / 4))
           : undefined;
       const items = keyed && end - start <= MOVING_BARS;
@@ -502,7 +509,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
           if (this.spec.stack) labeled.inside(value, middle, root, tip, width, s.color, opacity);
           else {
             const cap = rounding
-              ? Math.min(frame.theme.barRadius, width / 2, Math.abs(root - tip))
+              ? Math.min(frame.theme.style.bar.radius, width / 2, Math.abs(root - tip))
               : 0;
             labeled.outside(value, middle, root, tip, spacing, s.color, opacity, width, cap);
           }
@@ -516,7 +523,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
         fillOpacity: opacity,
         rects,
         count,
-        rounded: rounding && { radius: frame.theme.barRadius, ends: rounding },
+        rounded: rounding && { radius: frame.theme.style.bar.radius, ends: rounding },
         bars: shown && { horizontal, at: shown, span: span! },
       });
       if (labeled) out.push(...labeled.flush(s.key));
@@ -683,14 +690,15 @@ class BarLabels {
   readonly #format: Formatter;
   readonly #frame: Frame;
   readonly #horizontal: boolean;
-  readonly #halo: boolean;
+  /** The mark's `halo`: what labels that need one get. */
+  readonly #halo: Halo | undefined;
   readonly #size: number;
   readonly #font: string;
   /** What text inside a bar contrasts with: the background, or a page of the theme's kind. */
   readonly #backdrop: string;
   #groups = new Map<string, LabelGroup>();
 
-  constructor(format: Formatter, frame: Frame, horizontal: boolean, halo: boolean) {
+  constructor(format: Formatter, frame: Frame, horizontal: boolean, halo: Halo | undefined) {
     const { theme } = frame;
     this.#format = format;
     this.#frame = frame;
@@ -816,7 +824,7 @@ class BarLabels {
         key: `${key}|${stage}`,
         fill: group.fill,
         anchor: group.anchor,
-        halo: group.halo,
+        halo: group.halo ? labelHalo(this.#halo, group.fill, this.#frame) : undefined,
         coords,
         labels: group.items.map((item) => item.text),
         count: group.items.length,
@@ -870,7 +878,7 @@ class BarLabels {
     y: number,
     text: string,
   ) {
-    halo &&= this.#halo;
+    halo &&= this.#halo !== false;
     const stage = `labels ${anchor} ${fill} ${halo}`;
     let group = this.#groups.get(stage);
     if (!group) {
@@ -1038,6 +1046,7 @@ export function bar<S extends Schema>(
       "axis",
       "facet",
       "panel",
+      "clip",
     ]),
   };
   if (table.name !== undefined) spec.data = table.name;

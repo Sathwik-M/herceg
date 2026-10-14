@@ -122,14 +122,14 @@ def test_empty_single_merge_ties_and_inversions():
         assert tree({**DATA, "height": height}).to_svg().startswith("<svg")
 
 
-def test_facets_require_repeat_and_resolve_categories():
+def test_facets_require_repeat_and_scope_categories():
     with pytest.raises(
         ValueError,
         match='dendrogram facet: a tree cannot be split across facet panels; give facet="repeat"',
     ):
         hg.Chart(DATA, facet="group").dendrogram("first", "second", "height", leaves=LEAVES)
     cells = {"x": ["a", "b"], "y": ["a", "b"], "v": [1, 2], "group": ["N", "S"]}
-    chart = hg.Chart(cells, facet="group", resolve_x="independent", resolve_y="independent")
+    chart = hg.Chart(cells, facet="group", x=hg.Axis(scope="panel"), y=hg.Axis(scope="panel"))
     chart.heatmap("x", "y", "v").dendrogram(
         "first", "second", "height", leaves=LEAVES, data=DATA, facet="repeat"
     )
@@ -137,9 +137,9 @@ def test_facets_require_repeat_and_resolve_categories():
     assert spec["marks"][1]["facet"] == "repeat"
     assert chart.to_svg().startswith("<svg")
     with pytest.raises(
-        ValueError, match=r"Chart sync: panels with categories of their own \(resolve_x\)"
+        ValueError, match=r"Chart sync: panels with categories of their own \(x scope"
     ):
-        hg.Chart(DATA, panels=["tree"], resolve_x="independent", sync="tree").dendrogram(
+        hg.Chart(DATA, panels=["tree"], x=hg.Axis(scope="panel"), sync="tree").dendrogram(
             "first", "second", "height", leaves=LEAVES, panel="tree"
         )
 
@@ -162,8 +162,8 @@ def test_clustermap_panels():
         panel_columns=2,
         panel_row_heights=[1, 4],
         panel_column_widths=[1, 4],
-        resolve_x="columns",
-        resolve_y="rows",
+        x=hg.Axis(scope="column"),
+        y=hg.Axis(scope="row"),
         width=800,
         height=600,
     )
@@ -182,7 +182,7 @@ def test_clustermap_panels():
     )
     spec, _ = chart.to_spec()
     assert spec["grid"] == {"columns": 2, "rowHeights": [1, 4], "columnWidths": [1, 4]}
-    assert spec["resolve"] == {"x": "columns", "y": "rows"}
+    assert (spec["x"], spec["y"]) == ({"scope": "column"}, {"scope": "row"})
     assert [m["panel"] for m in spec["marks"]] == ["matrix", "top", "left"]
     assert chart.to_svg().count('fill="none" stroke=') >= 2
     assert chart.to_pdf().startswith(b"%PDF")

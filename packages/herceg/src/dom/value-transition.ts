@@ -9,13 +9,15 @@
 // move with the axes, or that adds or drops rows, shows at once.
 
 import type { TableChange } from "../data/table.ts";
+import type { MeasureText } from "../layout/text.ts";
 import type { MarkKey } from "../marks/mark.ts";
 import type { planAxis } from "../model/axis.ts";
+import type { axisGuide } from "../model/axis-guide.ts";
 import type { ChartConfig, ChartModel, DrawnPanel } from "../model/model.ts";
 import type {
   ArcGeometry,
   AreaGeometry,
-  AxisGeometry,
+  AxisGuide,
   Geometry,
   LineGeometry,
   Panel,
@@ -75,6 +77,9 @@ import {
  */
 export interface Builders extends Lines {
   planAxis: typeof planAxis;
+  axisGuide: typeof axisGuide;
+  /** How the chart measures text, for labels' boxes. */
+  measure: MeasureText;
 }
 
 /** How long a change takes without a `duration`, in milliseconds. */
@@ -139,7 +144,7 @@ export interface Shown {
   /** The scales and axes the marks were drawn with; undefined for a pie. */
   panel: DrawnPanel | undefined;
   /** The axes drawn: one that moves keeps its labels or its lack of them. */
-  axes: readonly AxisGeometry[];
+  axes: readonly AxisGuide[];
   /** Copies of what can move, by geometry key. */
   items: Map<string, ShownItem>;
   /**
@@ -544,10 +549,12 @@ export function plan(
     before: shown.panel!.plans,
     after: panel!.plans,
     planAxis: builders.planAxis,
+    axisGuide: builders.axisGuide,
+    measure: builders.measure,
   };
   // Labels coming or going (as an axis gets something to label) would appear at the start.
-  const labeled = (list: readonly AxisGeometry[]) =>
-    list.map(({ orient, ticks }) => `${orient}${ticks.length > 0}`).join();
+  const labeled = (list: readonly AxisGuide[]) =>
+    list.map(({ side, ticks }) => `${side}${ticks.length > 0}`).join();
   if (axes && (!plannable(axes) || labeled(shown.axes) !== labeled(drawn.axes))) return undefined;
   const tween: Tween = {
     start: shown.time,

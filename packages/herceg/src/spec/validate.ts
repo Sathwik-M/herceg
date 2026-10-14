@@ -24,22 +24,33 @@ import {
   type BinaryColumnSpec,
   type CameraSpec,
   type CategoryColumnSpec,
+  type ChartAxisSpec,
   type ChartSpec,
   type ColumnsSpec,
   type DerivedSpec,
   type GeometryColumnSpec,
   type GridFacetSpec,
   type GridSpec,
+  type InsidePlace,
   type InteractionSpec,
+  type LegendSpec,
   type MarkSpec,
   type NavigatorSpec,
   type PanelSpec,
+  type PanelTitleSpec,
+  type PlotStyle,
   type ProjectionSpec,
-  type ResolveSpec,
   type RowSelectionSpec,
+  type SidePlace,
   SPEC_VERSION,
+  type StrokeStyle,
+  type StyleRoles,
+  type TextBox,
+  type TextStyle,
   type ThemeSpec,
+  type ThemeTokens,
   type TimeColumnSpec,
+  type TitleSpec,
   type TooltipSpec,
   type WrappedFacetSpec,
   type XAxisSpec,
@@ -433,10 +444,18 @@ function axisChecks(spec: Record<string, unknown>): ChecksOf<AxisSpec> {
     format: format(spec.type),
     tooltipFormat: format(spec.type),
     show: boolean,
+    style: axisStyle,
   };
 }
 
-const axis: Check = (v, path) => {
+/** Which panels share a scale. */
+const scope = oneOf("chart", "panel", "row", "column");
+
+/**
+ * A y axis (`chart`, the chart's y or yRight, whose scale panels may share),
+ * or a panel's or a 3D chart's axis.
+ */
+function anyAxis(v: unknown, path: string, chart: boolean): void {
   object(v, path);
   const spec = v as Record<string, unknown>;
   // Only the x axis has breaks: refuse them elsewhere rather than ignore them.
@@ -444,14 +463,24 @@ const axis: Check = (v, path) => {
     fail(`${path}.breaks`, "breaks on the chart's x axis only", spec.breaks);
   if (spec.seams !== undefined)
     fail(`${path}.seams`, "seams on the chart's x axis only", spec.seams);
-  properties(spec, path, axisChecks(spec));
-};
+  if (chart)
+    properties(spec, path, { ...axisChecks(spec), scope } satisfies ChecksOf<ChartAxisSpec>);
+  else {
+    if (spec.scope !== undefined)
+      fail(`${path}.scope`, "scope on the chart's x, y, or yRight only", spec.scope);
+    properties(spec, path, axisChecks(spec));
+  }
+}
+
+const axis: Check = (v, path) => anyAxis(v, path, false);
+const chartAxis: Check = (v, path) => anyAxis(v, path, true);
 
 const xAxis: Check = (v, path) => {
   object(v, path);
   const spec = v as Record<string, unknown>;
   properties(spec, path, {
     ...axisChecks(spec),
+    scope,
     // Whether any x scale is a time scale shows only once panels are planned.
     breaks: (v, at) => {
       checkBreaks(v, at);
@@ -473,33 +502,206 @@ const xAxis: Check = (v, path) => {
 };
 
 const THEMES = ["light", "dark", "high-contrast", "high-contrast-dark", "auto"];
+
+/** Space around a box: one number of pixels, or one per side. */
+const insets: Check = (v, path) => {
+  if (typeof v === "number") return width(v, path);
+  object(v, path);
+  properties(v as Record<string, unknown>, path, {
+    top: width,
+    right: width,
+    bottom: width,
+    left: width,
+  });
+};
+
+const halo: Check = (v, path) => {
+  if (v === false || v === "auto") return;
+  if (!isRecord(v)) fail(path, '"auto", false, or an object with a color', v);
+  checkProperties(v, path, ["color"], { color: string, width, opacity: fraction });
+};
+
+const textBox: Check = (v, path) => {
+  if (v === false) return;
+  if (!isRecord(v)) fail(path, "false or an object with fill", v);
+  checkProperties(v, path, ["fill"], {
+    fill: string,
+    stroke: string,
+    strokeWidth: width,
+    radius: width,
+  } satisfies ChecksOf<TextBox>);
+};
+
+const textStyle: Check = (v, path) => {
+  object(v, path);
+  properties(v as Record<string, unknown>, path, {
+    font: string,
+    fontSize: positive,
+    fontWeight: (w, at) => {
+      if (typeof w !== "number" || !Number.isInteger(w) || w < 1 || w > 1000)
+        fail(at, "a whole number from 1 to 1000, such as 400 or 600", w);
+    },
+    fontStyle: oneOf("normal", "italic"),
+    color: string,
+    opacity: fraction,
+    lineHeight: positive,
+    align: oneOf("start", "center", "end"),
+    halo,
+    background: textBox,
+    padding: insets,
+  } satisfies ChecksOf<TextStyle>);
+};
+
+const strokeChecks = {
+  stroke: string,
+  strokeWidth: width,
+  dash,
+  opacity: fraction,
+} satisfies ChecksOf<StrokeStyle>;
+
+const strokeStyle: Check = (v, path) => {
+  object(v, path);
+  properties(v as Record<string, unknown>, path, strokeChecks);
+};
+
+/** The checks of each style role. */
+const ROLES = {
+  text: textStyle,
+  title: textStyle,
+  panelTitle: textStyle,
+  axisTitle: textStyle,
+  tickLabel: textStyle,
+  legendLabel: textStyle,
+  legendTitle: textStyle,
+  plot: (v, path) => {
+    object(v, path);
+    properties(v as Record<string, unknown>, path, {
+      fill: string,
+      stroke: string,
+      strokeWidth: width,
+    } satisfies ChecksOf<PlotStyle>);
+  },
+  grid: strokeStyle,
+  axisLine: strokeStyle,
+  tick: strokeStyle,
+  line: (v, path) => {
+    object(v, path);
+    properties(v as Record<string, unknown>, path, { strokeWidth: positive });
+  },
+  bar: (v, path) => {
+    object(v, path);
+    properties(v as Record<string, unknown>, path, { radius: width });
+  },
+  tooltip: (v, path) => {
+    object(v, path);
+    properties(v as Record<string, unknown>, path, { fill: string, stroke: string });
+  },
+} satisfies ChecksOf<StyleRoles>;
+
+/** Styles of `roles` only: a guide's or a panel's, which style what it draws. */
+function rolesOf<K extends keyof StyleRoles>(roles: readonly K[]): Check {
+  const checks = Object.fromEntries(roles.map((role) => [role, ROLES[role]])) as Record<K, Check>;
+  return (v, path) => {
+    object(v, path);
+    properties(v as Record<string, unknown>, path, checks);
+  };
+}
+
+const AXIS_ROLES = ["axisLine", "tick", "tickLabel", "axisTitle", "grid"] as const;
+const axisStyle = rolesOf(AXIS_ROLES);
+
 const theme: Check = (v, path) => {
   if (typeof v === "string") return oneOf(...THEMES)(v, path);
   object(v, path);
   properties(v as Record<string, unknown>, path, {
     extends: oneOf(...THEMES),
-    titleSize: positive,
-    gridDash: numbers,
-    lineWidth: positive,
-    barRadius: (v, path) => {
-      if (typeof v !== "number" || !(v >= 0) || !Number.isFinite(v))
-        fail(path, "a radius of 0 or more", v);
+    tokens: (t, at) => {
+      object(t, at);
+      properties(t as Record<string, unknown>, at, {
+        background: string,
+        text: string,
+        muted: string,
+        grid: string,
+        axis: string,
+        palette: strings,
+        sequential: strings,
+        diverging: strings,
+        rise: string,
+        fall: string,
+      } satisfies ChecksOf<ThemeTokens>);
     },
-    tooltipBackground: string,
-    tooltipBorder: string,
-    background: string,
-    text: string,
-    muted: string,
-    grid: string,
-    axis: string,
-    font: string,
-    fontSize: positive,
-    palette: strings,
-    sequential: strings,
-    diverging: strings,
-    rise: string,
-    fall: string,
+    style: (r, at) => {
+      object(r, at);
+      properties(r as Record<string, unknown>, at, ROLES);
+    },
   } satisfies ChecksOf<ThemeSpec>);
+};
+
+const sides = oneOf("top", "right", "bottom", "left");
+
+/** Where a guide goes: on a side outside the plots, or inside a plot. */
+const place: Check = (v, path) => {
+  object(v, path);
+  const spec = v as Record<string, unknown>;
+  const where = { scope: oneOf("chart", "panel"), panel: string };
+  if (spec.inside !== undefined) {
+    if (spec.side !== undefined) fail(path, "side or inside, not both", v);
+    properties(spec, path, {
+      inside: oneOf(
+        "top-left",
+        "top",
+        "top-right",
+        "right",
+        "bottom-right",
+        "bottom",
+        "bottom-left",
+        "left",
+      ),
+      inset: width,
+      ...where,
+    } satisfies ChecksOf<InsidePlace>);
+    return;
+  }
+  checkProperties(spec, path, ["side"], {
+    side: sides,
+    align: oneOf("start", "center", "end"),
+    offset: width,
+    ...where,
+  } satisfies ChecksOf<SidePlace>);
+};
+
+/** A chart's title: its text, or its text with its place and style. */
+const title: Check = (v, path) => {
+  if (typeof v === "string") return;
+  if (!isRecord(v)) fail(path, "a string or an object with text", v);
+  checkProperties(v, path, ["text"], {
+    text: string,
+    place: (p, at) => {
+      object(p, at);
+      checkProperties(p as Record<string, unknown>, at, ["side"], {
+        side: oneOf("top", "bottom"),
+      });
+    },
+    style: textStyle,
+  } satisfies ChecksOf<TitleSpec>);
+};
+
+const panelTitle: Check = (v, path) => {
+  if (typeof v === "string") return;
+  if (!isRecord(v)) fail(path, "a string or an object with text", v);
+  checkProperties(v, path, ["text"], {
+    text: string,
+    style: textStyle,
+  } satisfies ChecksOf<PanelTitleSpec>);
+};
+
+const legend: Check = (v, path) => {
+  if (typeof v === "boolean") return;
+  if (!isRecord(v)) fail(path, "true, false, or an object", v);
+  properties(v, path, {
+    place,
+    style: rolesOf(["legendLabel", "legendTitle", "tickLabel"]),
+  } satisfies ChecksOf<LegendSpec>);
 };
 
 /** A tree's fields: a path of category fields, or node and parent fields. */
@@ -526,7 +728,11 @@ type CommonKey = "type" | "data" | "id";
 /** Placement properties of the marks whose specs have them. */
 const side = oneOf("left", "right");
 const repeat = oneOf("repeat");
-const placement = { axis: side, facet: repeat, panel: string };
+/** What a mark's drawing is cut to. */
+const clip: Check = (v, path) => {
+  if (v !== "plot" && v !== "chart" && v !== false) fail(path, '"plot", "chart", or false', v);
+};
+const placement = { axis: side, facet: repeat, panel: string, clip };
 
 /** What a mark's tooltips show of its rows: fields, by name or with a label and format. */
 const tooltip: Check = (v, path) => {
@@ -617,6 +823,7 @@ const MARKS: MarkChecks = {
     checks: {
       facet: repeat,
       panel: string,
+      clip,
       first: field,
       second: field,
       height: field,
@@ -652,7 +859,7 @@ const MARKS: MarkChecks = {
   region: {
     required: [],
     checks: {
-      halo: boolean,
+      halo,
       ...placement,
       x1: position,
       x2: position,
@@ -667,7 +874,7 @@ const MARKS: MarkChecks = {
   text: {
     required: ["x", "y"],
     checks: {
-      halo: boolean,
+      halo,
       ...placement,
       x: position,
       y: position,
@@ -683,7 +890,7 @@ const MARKS: MarkChecks = {
   bar: {
     required: ["x", "y"],
     checks: {
-      halo: boolean,
+      halo,
       tooltip,
       ...placement,
       x: fields,
@@ -775,7 +982,7 @@ const MARKS: MarkChecks = {
   sankey: {
     required: ["source", "target"],
     checks: {
-      halo: boolean,
+      halo,
       panel: string,
       source: field,
       target: field,
@@ -788,7 +995,7 @@ const MARKS: MarkChecks = {
   graph: {
     required: ["source", "target"],
     checks: {
-      halo: boolean,
+      halo,
       source: field,
       target: field,
       value: field,
@@ -858,7 +1065,7 @@ const MARKS: MarkChecks = {
   funnel: {
     required: ["category"],
     checks: {
-      halo: boolean,
+      halo,
       panel: string,
       category: field,
       value: field,
@@ -869,7 +1076,7 @@ const MARKS: MarkChecks = {
   radar: {
     required: [],
     checks: {
-      halo: boolean,
+      halo,
       panel: string,
       category: field,
       value: field,
@@ -1506,7 +1713,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
     chart,
     "spec",
     {
-      title: string,
+      title,
       description: string,
       width: positive,
       height: positive,
@@ -1550,8 +1757,8 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
         }
       },
       x: xAxis,
-      y: axis,
-      yRight: axis,
+      y: chartAxis,
+      yRight: chartAxis,
       panels: (p, path) => {
         if (!Array.isArray(p)) fail(path, "a list of panels", p);
         const ids = new Set<string>();
@@ -1561,7 +1768,8 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
           const panel = item as Record<string, unknown>;
           checkProperties(panel, at, ["id"], {
             id: string,
-            title: string,
+            title: panelTitle,
+            style: rolesOf(["plot", "panelTitle", ...AXIS_ROLES]),
             camera,
             x: axis,
             y: axis,
@@ -1587,14 +1795,6 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
           },
         } satisfies ChecksOf<GridSpec>);
       },
-      resolve: (r, path) => {
-        object(r, path);
-        properties(r as Record<string, unknown>, path, {
-          x: oneOf("shared", "independent", "rows", "columns"),
-          y: oneOf("shared", "independent", "rows", "columns"),
-          yRight: oneOf("shared", "independent", "rows", "columns"),
-        } satisfies ChecksOf<ResolveSpec>);
-      },
       facet: (f, path) => {
         object(f, path);
         const spec = f as Record<string, unknown>;
@@ -1611,7 +1811,8 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
         if ("columns" in spec)
           fail(`${path}.columns`, "absent in a grid of row and column fields", spec.columns);
       },
-      legend: boolean,
+      legend,
+      padding: insets,
       tooltip: (t, path) => {
         if (typeof t === "boolean") return;
         object(t, path);
@@ -1648,7 +1849,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
               if (ids.indexOf(id) !== i) fail(`${at}[${i}]`, "a mark id not listed before", id);
             });
           },
-          halo: boolean,
+          halo,
         } satisfies ChecksOf<NavigatorSpec>);
       },
       animation: (a, path) => {
@@ -1705,7 +1906,11 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
       locale: string,
       timeZone: string,
       projection,
-      z: axis,
+      z: (v, path) => {
+        if (isRecord(v) && v.style !== undefined)
+          fail(`${path}.style`, "no style on a 3D chart's axes, which take the theme's", v.style);
+        axis(v, path);
+      },
       camera,
       boxAspect,
     } satisfies ChecksOf<Omit<ChartSpec, "marks" | "version">>,

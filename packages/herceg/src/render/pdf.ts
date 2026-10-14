@@ -20,23 +20,23 @@ import { traceRects } from "../draw/rect.ts";
 import { ruleLabel } from "../draw/rule.ts";
 import { MIDDLE_TO_BASELINE } from "../draw/shapes.ts";
 import { SYMBOLS, symbolPath } from "../draw/symbols.ts";
-import { HALO_WIDTH, textHalo } from "../draw/text.ts";
 import { parseFont } from "../layout/text.ts";
 import { isLightColor } from "../scale/color.ts";
 import { cssColor } from "../scale/css-color.ts";
+import { gridStrokes } from "../scene/grid.ts";
 import {
+  clipOf,
   type Geometry,
-  LEGEND_SWATCH,
+  type GuideItem,
   type MarkGeometry,
   type PointGeometry,
   type Rect,
-  rampOffsets,
   type Scene,
-  tickLabelGap,
 } from "../scene/scene.ts";
+import type { ResolvedHalo } from "../style/style.ts";
 import { surface, type Theme } from "../theme.ts";
 import { type DocumentInfo, language, literal, num, PdfPage, PdfWriter } from "./pdf-document.ts";
-import type { PdfFontResolver } from "./pdf-font-resolver.ts";
+import type { PdfFontResolver } from "./pdf-font-embed.ts";
 import { encodeText, type PdfFont, standardFont, textWidth } from "./pdf-fonts.ts";
 import { tracePath } from "./svg-path.ts";
 
@@ -250,8 +250,13 @@ interface TextStyle {
   baseline: keyof typeof BASELINE;
   /** Degrees, clockwise, around (x, y). */
   angle?: number;
-  halo?: { color: string; opacity: number } | undefined;
+  /** Slanted, as an oblique face is: the faces PDF draws with have no italics. */
+  italic?: boolean;
+  halo?: ResolvedHalo | undefined;
 }
+
+/** How far oblique glyphs lean: tan(12°), as browsers synthesize obliques. */
+const OBLIQUE = 0.2126;
 
 function textFont(page: PdfPage, family: string, bold: boolean): TextStyle["font"] {
   return page.resolver ? { family, bold } : standardFont(family, bold);
@@ -290,12 +295,14 @@ function text(page: PdfPage, content: string, x: number, y: number, style: TextS
     encoded: run.face.encode(run.glyphs),
     width: run.width,
   })) ?? [{ font: style.font as PdfFont, encoded: literal(encoded), width: 0 }];
+  // Glyph space leans right for oblique text, before the turn.
+  const lean = style.italic ? OBLIQUE : 0;
   const show = (mode: number) => {
     let out = "";
     let offset = 0;
     for (const span of spans) {
       const precision = resolved ? 6 : 2;
-      out += `BT /${page.font(span.font)} ${num(style.size, precision)} Tf ${mode} Tr ${num(cos, precision)} ${num(sin, precision)} ${num(sin, precision)} ${num(-cos, precision)} ${num(ox + offset * cos, precision)} ${num(oy + offset * sin, precision)} Tm ${span.encoded} Tj ET\n`;
+      out += `BT /${page.font(span.font)} ${num(style.size, precision)} Tf ${mode} Tr ${num(cos, precision)} ${num(sin, precision)} ${num(sin + lean * cos, precision)} ${num(lean * sin - cos, precision)} ${num(ox + offset * cos, precision)} ${num(oy + offset * sin, precision)} Tm ${span.encoded} Tj ET\n`;
       offset += span.width * style.size;
     }
     return out;
@@ -310,7 +317,7 @@ function text(page: PdfPage, content: string, x: number, y: number, style: TextS
   // macOS Preview does not) copy and search the label once. Other readers
   // ignore the entry, which leaves the document valid PDF 1.4.
   if (halo)
-    out += ` ${rgb(halo)} RG ${HALO_WIDTH} w 1 j\n/Span << /ActualText () >> BDC ${show(1).trim()} EMC\n`;
+    out += ` ${rgb(halo)} RG ${num(style.halo!.width)} w 1 j\n/Span << /ActualText () >> BDC ${show(1).trim()} EMC\n`;
   else out += "\n";
   page.write(`${out}${show(0)}Q\n`);
 }
@@ -611,7 +618,7 @@ function paintMark(
       return;
     }
     case "text": {
-      const halo = mark.halo ? textHalo(mark.fill, theme) : undefined;
+      const { halo } = mark;
       for (let i = 0; i < mark.count; i++) {
         text(page, mark.labels[i]!, mark.coords[i * 2]!, mark.coords[i * 2 + 1]!, {
           font,
@@ -627,6 +634,101 @@ function paintMark(
     default: {
       const unknown: never = mark;
       throw new Error(`PDF export cannot draw ${(unknown as Geometry).kind} geometry`);
+    }
+  }
+}
+
+/** Draws guides' items, which say where everything goes. */
+function paintItems(page: PdfPage, items: readonly GuideItem[]): void {
+  for (const item of items) paintItem(page, item);
+}
+
+function paintItem(page: PdfPage, item: GuideItem): void {
+  switch (item.type) {
+    case "text": {
+      const { paint: style } = item;
+      if (item.box) {
+        const box = style.background!;
+        const back = new PathBuilder();
+        const { x, y, width, height } = item.box;
+        back.roundedRect(x, y, width, height, box.radius ?? 0);
+        // The box turns with its text, about the text's point.
+        const turn = (item.angle * Math.PI) / 180;
+        const [cos, sin] = [Math.cos(turn), Math.sin(turn)];
+        if (item.angle)
+          page.write(
+            `q ${num(cos, 6)} ${num(sin, 6)} ${num(-sin, 6)} ${num(cos, 6)} ${num(item.x - cos * item.x + sin * item.y)} ${num(item.y - sin * item.x - cos * item.y)} cm\n`,
+          );
+        paint(page, back, {
+          fill: box.fill,
+          ...(box.stroke && { stroke: box.stroke, strokeWidth: box.strokeWidth ?? 1 }),
+        });
+        if (item.angle) page.write("Q\n");
+      }
+      const opacity = style.opacity * (item.opacity ?? 1);
+      text(page, item.text, item.x, item.y, {
+        font: textFont(page, style.font, style.weight >= 600),
+        size: style.size,
+        fill: style.color,
+        ...(opacity !== 1 && { opacity }),
+        anchor: item.anchor,
+        baseline: item.baseline,
+        angle: item.angle,
+        ...(style.italic && { italic: true }),
+        halo: item.halo,
+      });
+      return;
+    }
+    case "segments": {
+      const path = new PathBuilder();
+      const c = item.coords;
+      for (let i = 0; i + 3 < c.length; i += 4) {
+        path.moveTo(c[i]!, c[i + 1]!);
+        path.lineTo(c[i + 2]!, c[i + 3]!);
+      }
+      const { stroke, strokeWidth, dash, opacity } = item.paint;
+      paint(page, path, {
+        stroke,
+        ...(strokeWidth !== 1 && { strokeWidth }),
+        ...(dash.length > 0 && { dash }),
+        ...(opacity !== 1 && { strokeOpacity: opacity }),
+      });
+      return;
+    }
+    case "shape": {
+      const path = new PathBuilder();
+      tracePath(item.d, shifted(path, item.at[0], item.at[1]));
+      const opacity = item.opacity ?? 1;
+      paint(page, path, {
+        fill: item.fill,
+        fillOpacity: (item.fillOpacity ?? 1) * opacity,
+        ...(item.stroke && {
+          stroke: item.stroke,
+          strokeWidth: 1,
+          strokeOpacity: opacity,
+          join: "round",
+        }),
+      });
+      return;
+    }
+    case "rect": {
+      const path = new PathBuilder();
+      path.roundedRect(item.x, item.y, item.width, item.height, item.radius);
+      paint(page, path, { fill: item.fill, fillOpacity: item.opacity ?? 1 });
+      return;
+    }
+    case "ramp": {
+      // Ramps are opaque hex colors (checked when the theme or mark is made).
+      const stops = item.stops.map((stop): [number, number, number] => {
+        const [r, g, b] = color(stop) ?? [0, 0, 0];
+        return [r, g, b];
+      });
+      const y = item.y + item.height / 2;
+      const shading = page.gradient([item.x, y, item.x + item.width, y], stops, item.offsets);
+      const outline = new PathBuilder();
+      outline.roundedRect(item.x, item.y, item.width, item.height, item.radius);
+      page.write(`q\n${outline.operators}W n /${shading} sh Q\n`);
+      return;
     }
   }
 }
@@ -650,8 +752,6 @@ export function drawPdfPage(scene: Scene, page: PdfPage, locale?: string): PdfPa
   const lang = language(locale);
   const { theme, width, height } = scene;
   const regular = textFont(page, theme.font, false);
-  const bold = textFont(page, theme.font, true);
-  const size = theme.fontSize;
 
   page.write("/Artifact BMC\n");
   // Pages are white: a transparent theme with light text gets the dark
@@ -665,160 +765,47 @@ export function drawPdfPage(scene: Scene, page: PdfPage, locale?: string): PdfPa
     paint(page, background, { fill: surface({ ...theme, text: ink }) });
   }
 
-  const grid = new PathBuilder();
-  for (const { plot, grid: lines } of scene.panels) {
-    for (const y of lines.y) {
-      grid.moveTo(plot.x, Math.round(y) + 0.5);
-      grid.lineTo(plot.x + plot.width, Math.round(y) + 0.5);
-    }
-    for (const x of lines.x) {
-      grid.moveTo(Math.round(x) + 0.5, plot.y);
-      grid.lineTo(Math.round(x) + 0.5, plot.y + plot.height);
-    }
+  for (const { plot, frame } of scene.panels) {
+    if (!frame?.fill) continue;
+    const back = new PathBuilder();
+    back.rect(plot.x, plot.y, plot.width, plot.height);
+    paint(page, back, { fill: frame.fill });
   }
-  paint(page, grid, { stroke: theme.grid, dash: theme.gridDash });
+  for (const stroke of gridStrokes(scene.panels, theme)) paintItem(page, stroke);
   // One figure owns the complete chart, including panels, labels, and legends.
   page.write("EMC\n/Figure << /MCID 0 >> BDC\n");
 
   if (lang) page.write(`/Span <<${lang} >> BDC\n`);
 
+  const cut = (box: Rect) =>
+    page.write(`q ${num(box.x)} ${num(box.y)} ${num(box.width)} ${num(box.height)} re W n\n`);
   for (const { plot, marks } of scene.panels) {
-    page.write(`q ${num(plot.x)} ${num(plot.y)} ${num(plot.width)} ${num(plot.height)} re W n\n`);
-    for (const mark of marks) if (!mark.draw.guide) paintGeometry(page, mark, plot, theme, regular);
+    cut(plot);
+    for (const mark of marks)
+      if (!mark.draw.guide && clipOf(mark) === "plot")
+        paintGeometry(page, mark, plot, theme, regular);
     page.write("Q\n");
   }
+  // Then what the plot does not cut: data, then guides, each cut as its mark says.
+  const chart = { x: 0, y: 0, width, height };
   for (const { plot, marks } of scene.panels) {
-    for (const mark of marks) if (mark.draw.guide) paintGeometry(page, mark, plot, theme, regular);
-  }
-
-  const label = { font: regular, size, fill: theme.muted };
-  for (const axis of scene.panels.flatMap((panel) => panel.axes)) {
-    if (axis.orient === "bottom") {
-      const y = Math.round(axis.offset) + 0.5;
-      if (axis.line) {
-        const line = new PathBuilder();
-        line.moveTo(axis.start, y);
-        line.lineTo(axis.end, y);
-        for (const tick of axis.ticks) {
-          line.moveTo(Math.round(tick.position) + 0.5, y);
-          line.lineTo(Math.round(tick.position) + 0.5, y + 5);
-        }
-        paint(page, line, { stroke: theme.axis });
+    for (const guides of [false, true])
+      for (const mark of marks) {
+        const clip = clipOf(mark);
+        if (!!mark.draw.guide !== guides || (clip === "plot" && !guides)) continue;
+        if (clip) cut(clip === "plot" ? plot : chart);
+        paintGeometry(page, mark, plot, theme, regular);
+        if (clip) page.write("Q\n");
       }
-      const below = y + tickLabelGap(theme.fontSize);
-      for (const tick of axis.ticks)
-        text(page, tick.label, tick.position, below, {
-          ...label,
-          anchor: "middle",
-          baseline: "hanging",
-        });
-    } else {
-      // Labels sit outside the plot: left of a left axis, right of a right one.
-      const left = axis.orient === "left";
-      const x = left ? axis.offset - 8 : axis.offset + 8;
-      for (const tick of axis.ticks) {
-        text(page, tick.label, x, tick.position, {
-          ...label,
-          anchor: left ? "end" : "start",
-          baseline: "middle",
-        });
-      }
-    }
-    if (axis.title) {
-      // Vertical titles read bottom to top on the left and top to bottom on the right.
-      text(page, axis.title.text, axis.title.x, axis.title.y, {
-        ...label,
-        fill: theme.text,
-        anchor: "middle",
-        baseline: "middle",
-        angle: axis.orient === "left" ? -90 : axis.orient === "right" ? 90 : 0,
-      });
-    }
   }
-
-  for (const header of scene.headers) {
-    text(page, header.text, header.x, header.y, {
-      ...label,
-      font: bold,
-      fill: theme.text,
-      anchor: header.anchor,
-      baseline: "middle",
-      angle: header.angle,
-    });
+  for (const panel of scene.panels) for (const axis of panel.axes) paintItems(page, axis.items);
+  for (const { plot, frame } of scene.panels) {
+    if (!frame?.stroke) continue;
+    const border = new PathBuilder();
+    border.rect(plot.x, plot.y, plot.width, plot.height);
+    paint(page, border, { stroke: frame.stroke, strokeWidth: frame.strokeWidth });
   }
-  if (scene.title) {
-    text(page, scene.title.text, scene.title.x, scene.title.y, {
-      font: bold,
-      size: theme.titleSize,
-      fill: theme.text,
-      baseline: "middle",
-    });
-  }
-
-  for (const item of scene.legend) {
-    const opacity = item.hidden ? 0.4 : 1;
-    const swatch = new PathBuilder();
-    // Point series show their symbol; others a rounded square.
-    if (item.glyph) tracePath(item.glyph, shifted(swatch, item.x + LEGEND_SWATCH / 2, item.y));
-    else swatch.roundedRect(item.x, item.y - LEGEND_SWATCH / 2, LEGEND_SWATCH, LEGEND_SWATCH, 2);
-    paint(page, swatch, {
-      fill: item.color,
-      fillOpacity: opacity,
-      ...(item.stroke && {
-        stroke: item.stroke,
-        strokeWidth: 1,
-        strokeOpacity: opacity,
-        join: "round",
-      }),
-    });
-    text(page, item.label, item.x + LEGEND_SWATCH + 6, item.y, {
-      ...label,
-      fill: theme.text,
-      opacity,
-      baseline: "middle",
-    });
-  }
-
-  for (const ramp of scene.colorLegends) {
-    const y = ramp.y;
-    text(page, ramp.title.text, ramp.title.x, y, {
-      ...label,
-      fill: theme.text,
-      baseline: "middle",
-    });
-    text(page, ramp.low.text, ramp.low.x, y, { ...label, baseline: "middle" });
-    // Ramps are opaque hex colors (checked when the theme or mark is made).
-    const stops = ramp.stops.map((stop): [number, number, number] => {
-      const [r, g, b] = color(stop) ?? [0, 0, 0];
-      return [r, g, b];
-    });
-    const shading = page.gradient(
-      [ramp.ramp.x, y, ramp.ramp.x + ramp.ramp.width, y],
-      stops,
-      rampOffsets(ramp),
-    );
-    const outline = new PathBuilder();
-    outline.roundedRect(ramp.ramp.x, y - LEGEND_SWATCH / 2, ramp.ramp.width, LEGEND_SWATCH, 2);
-    page.write(`q\n${outline.operators}W n /${shading} sh Q\n`);
-    text(page, ramp.high.text, ramp.high.x, y, { ...label, baseline: "middle" });
-  }
-
-  // Size and shape keys: glyphs in the muted color; color keys: in their colors. Then their labels.
-  for (const { title, entries } of scene.glyphLegends) {
-    text(page, title.text, title.x, title.y, { ...label, fill: theme.text, baseline: "middle" });
-    const glyphs = new PathBuilder();
-    for (const { glyph, x, y, fill } of entries) {
-      if (fill === undefined) tracePath(glyph, shifted(glyphs, x, y));
-      else {
-        const own = new PathBuilder();
-        tracePath(glyph, shifted(own, x, y));
-        paint(page, own, { fill });
-      }
-    }
-    paint(page, glyphs, { fill: theme.muted, fillOpacity: 0.6 });
-    for (const { y, label: entry } of entries)
-      text(page, entry.text, entry.x, y, { ...label, baseline: "middle" });
-  }
+  for (const guide of scene.guides) paintItems(page, guide.items);
 
   if (lang) page.write("EMC\n");
   page.write("EMC\n");

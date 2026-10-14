@@ -2,6 +2,7 @@
 // take their fallbacks, and "auto" is light. Kept out of theme.ts so charts
 // in a page, which read variables from it, do not carry this parser.
 
+import { named } from "../scale/css-color.ts";
 import type { ThemeEnvironment } from "../theme.ts";
 
 /**
@@ -21,7 +22,7 @@ function withFallbacks(value: string, key: string): string {
       const { end, comma } = closing(value, i + 3, key);
       if (comma < 0) {
         throw new TypeError(
-          `theme.${key} is the CSS variable ${value.slice(i, end + 1)}, which only a chart in a page can read; give a fallback, as var(--name, #2a78d6)`,
+          `${key} is the CSS variable ${value.slice(i, end + 1)}, which only a chart in a page can read; give a fallback, as var(--name, #2a78d6)`,
         );
       }
       out += withFallbacks(value.slice(comma + 1, end).trim(), key);
@@ -52,13 +53,20 @@ function closing(value: string, open: number, key: string): { end: number; comma
     else if (c === ")" && --depth === 0) return { end: i, comma };
     else if (c === "," && depth === 1 && comma < 0) comma = i;
   }
-  throw new TypeError(`theme.${key} has unbalanced parentheses: ${value}`);
+  throw new TypeError(`${key} has unbalanced parentheses: ${value}`);
 }
 
 const VARIABLE = /\bvar\(/;
 
-/** The environment of output without a page. */
+/**
+ * The environment of output without a page. Named colors become hex, as a
+ * page computes them, so what reads only hex and `rgb()` (guides' halos)
+ * reads them too.
+ */
 export const NO_PAGE: ThemeEnvironment = {
-  color: (value, key) => (VARIABLE.test(value) ? withFallbacks(value, key) : value),
+  color: (value, key) => {
+    const color = VARIABLE.test(value) ? withFallbacks(value, key) : value;
+    return named(color.trim().toLowerCase()) ?? color;
+  },
   font: (value) => withFallbacks(value, "font"),
 };

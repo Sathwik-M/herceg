@@ -22,6 +22,7 @@ import { chooseInterval, niceTimeDomain, timeTicks } from "../scale/time.ts";
 import type { AreaGeometry, Geometry, LineGeometry, RectGeometry } from "../scene/scene.ts";
 import type {
   BinSpec,
+  Clip,
   Frozen,
   Histogram1DSpec,
   Histogram2DSpec,
@@ -81,6 +82,12 @@ interface HistogramStyle<S extends Schema> {
   label?: string;
   /** Draw all rows in every facet panel instead of counting that panel's rows. */
   facet?: "repeat";
+  /**
+   * What the mark's drawing is cut to: "plot", "chart", or false for
+   * nothing, so markers at the plot's edge show whole. Without it, data is
+   * cut to the plot and labels are drawn whole.
+   */
+  clip?: Clip;
   /** The subplot to draw in, or "*" for every panel. */
   panel?: string;
   /**
@@ -685,7 +692,7 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
       lower,
       baseline: low,
       stroke: outline ? null : s.color,
-      strokeWidth: frame.theme.lineWidth,
+      strokeWidth: frame.theme.style.line.strokeWidth,
     };
     if (!outline) return [area];
     const line: LineGeometry = {
@@ -693,7 +700,7 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
       draw: lineDrawing,
       key: `${s.key}|outline`,
       stroke: s.color,
-      strokeWidth: frame.theme.lineWidth,
+      strokeWidth: frame.theme.style.line.strokeWidth,
       dash: undefined,
       path: outline,
     };
@@ -1211,6 +1218,7 @@ export function histogram<S extends Schema>(
         "label",
         "facet",
         "panel",
+        "clip",
         "id",
       ]),
     } as Histogram2DSpec;
@@ -1241,6 +1249,7 @@ export function histogram<S extends Schema>(
       "axis",
       "facet",
       "panel",
+      "clip",
       "id",
     ]),
   } as unknown as Histogram1DSpec;

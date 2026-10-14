@@ -25,7 +25,7 @@ import type { RasterGeometry, RectGeometry } from "../../src/scene/scene.ts";
 import { MOUSE, modelOf } from "./helpers.ts";
 
 /** Without a background, the canvas holds what marks paint alone. */
-const CLEAR = { background: "transparent" } as const;
+const CLEAR = { tokens: { background: "transparent" } } as const;
 
 let host: HTMLDivElement;
 
@@ -539,7 +539,7 @@ describe("new marks in the browser", () => {
     const chart = createChart(host, {
       marks: [sankey(flows, { source: "from", target: "to", value: "v" })],
       renderer: "canvas",
-      theme: { ...CLEAR, palette: ["#ff0000"] },
+      theme: { tokens: { ...CLEAR.tokens, palette: ["#ff0000"] } },
     });
     const canvas = host.querySelector("canvas")!;
     const ratio = canvas.width / chart.root.clientWidth;
@@ -563,7 +563,7 @@ describe("new marks in the browser", () => {
     const chart = createChart(host, {
       marks: [graph(links, { source: "from", target: "to", value: "v" })],
       renderer: "canvas",
-      theme: { ...CLEAR, palette: ["#ff0000"], muted: "#0000ff" },
+      theme: { tokens: { ...CLEAR.tokens, palette: ["#ff0000"], muted: "#0000ff" } },
     });
     const canvas = host.querySelector("canvas")!;
     const ratio = canvas.width / chart.root.clientWidth;
@@ -1129,7 +1129,7 @@ describe("split violins", () => {
           inner,
           fillOpacity: 1,
         });
-        const options = { marks: [mark], theme: { palette: ["#ff0000", "#0000ff"] } };
+        const options = { marks: [mark], theme: { tokens: { palette: ["#ff0000", "#0000ff"] } } };
         const svg = createChart(host, { ...options, renderer: "svg" });
         const paths = [...svg.root.querySelectorAll('svg [data-kind="area"]')];
         expect(paths).toHaveLength(2);

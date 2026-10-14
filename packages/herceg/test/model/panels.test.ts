@@ -15,6 +15,7 @@ import { panels } from "../../src/model/panels.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { LineGeometry, Panel, RectGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
+import { headersOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -37,7 +38,7 @@ const marks = [
   rule({ x: 2, label: "deploy", panel: "*" }),
 ];
 const kinds = (panel: Panel) => panel.marks.map((m) => m.kind);
-const axis = (panel: Panel, orient: string) => panel.axes.find((a) => a.orient === orient);
+const axis = (panel: Panel, orient: string) => panel.axes.find((a) => a.side === orient);
 
 describe("panels", () => {
   it("draw each mark in the panel it names, sharing x, each with a y scale of its own", () => {
@@ -64,7 +65,7 @@ describe("panels", () => {
     // first panel's y title centered on it.
     expect(axis(top, "bottom")).toBeUndefined();
     expect(axis(bottom, "bottom")).toBeDefined();
-    expect(scene.headers.map((h) => h.text)).toEqual(["Latency", "Requests"]);
+    expect(headersOf(scene).map((h) => h.text)).toEqual(["Latency", "Requests"]);
     const title = axis(top, "left")!.title!;
     expect(title.text).toBe("ms");
     expect(title.y).toBeCloseTo(top.plot.y + top.plot.height / 2);
@@ -111,13 +112,13 @@ describe("panels", () => {
   });
 
   it("share a y scale when asked, if the panels agree on it", () => {
-    const { model } = build({ marks, panels: stacked, resolve: { y: "shared" } });
+    const { model } = build({ marks, panels: stacked, y: { scope: "chart" } });
     const [a, b] = model.panels();
     expect(a!.y.domain).toEqual(b!.y.domain);
     expect(() =>
       build({
         marks,
-        resolve: { y: "shared" },
+        y: { scope: "chart" },
         panels: panels([{ id: "latency", y: { type: "log" } }, { id: "traffic" }]),
       }),
     ).toThrow("panels[1].y: shares a y scale with others");
@@ -125,7 +126,7 @@ describe("panels", () => {
     expect(() =>
       build({
         marks,
-        resolve: { y: "shared" },
+        y: { scope: "chart" },
         panels: panels([
           { id: "latency", y: { tooltipFormat: { style: "unit", unit: "second" } } },
           { id: "traffic", y: { tooltipFormat: { style: "unit", unit: "millisecond" } } },
@@ -195,7 +196,7 @@ describe("panels", () => {
       { id: "latency", y: { type: "log", domain: [1, 1000] } },
       { id: "traffic", y: { type: "log", domain: [1, 1000] } },
     ]);
-    const shared = build({ marks, panels: logs, resolve: { y: "shared" } }).model.panels();
+    const shared = build({ marks, panels: logs, y: { scope: "chart" } }).model.panels();
     expect(shared.map((p) => [p.y.type, p.y.domain])).toEqual([
       ["log", [1, 1000]],
       ["log", [1, 1000]],
@@ -203,11 +204,11 @@ describe("panels", () => {
     // Settings agree when they come out the same, whether set or inherited.
     const inherited = panels([{ id: "latency", y: { type: "log" } }, { id: "traffic" }]);
     expect(() =>
-      build({ marks, panels: inherited, y: { type: "log" }, resolve: { y: "shared" } }),
+      build({ marks, panels: inherited, y: { type: "log", scope: "chart" } }),
     ).not.toThrow();
     // A time panel and a number panel cannot share a scale.
     const mixed = panels([{ id: "latency" }, { id: "traffic", y: { type: "time" } }]);
-    expect(() => build({ marks, panels: mixed, resolve: { y: "shared" } })).toThrow(
+    expect(() => build({ marks, panels: mixed, y: { scope: "chart" } })).toThrow(
       "panels[1].y: shares a y scale",
     );
     // Formats are part of a shared scale.
@@ -215,7 +216,7 @@ describe("panels", () => {
       [{ id: "latency", y: { format: { style: "percent" } } }, { id: "traffic" }],
       { columns: 2 },
     );
-    expect(() => build({ marks, panels: formats, resolve: { y: "rows" } })).toThrow("format");
+    expect(() => build({ marks, panels: formats, y: { scope: "row" } })).toThrow("format");
   });
 
   it("show, grid, and title each panel's y axis as its own settings say", () => {
@@ -226,7 +227,7 @@ describe("panels", () => {
       ],
       { columns: 2 },
     );
-    const { scene } = build({ marks, panels: own, y: { grid: false }, resolve: { y: "rows" } });
+    const { scene } = build({ marks, panels: own, y: { grid: false, scope: "row" } });
     const [left, right] = scene.panels as [Panel, Panel];
     expect(axis(left, "left")).toBeUndefined();
     expect(left.grid.y).toEqual([]);
@@ -293,12 +294,12 @@ describe("panels", () => {
     expect(Math.min(...b!.y.range)).toBeCloseTo(bottom.plot.y);
     // A shared scale keeps one domain over rows of different heights, each
     // row's labels on its own ticks.
-    const shared = build({ marks, panels: tall, resolve: { y: "shared" } });
+    const shared = build({ marks, panels: tall, y: { scope: "chart" } });
     const [s0, s1] = shared.model.panels();
     expect(s1!.y.domain).toEqual(s0!.y.domain);
     for (const result of [scene, shared.scene]) {
       for (const panel of result.panels) {
-        const ticks = panel.axes.find((axis) => axis.orient === "left")!.ticks;
+        const ticks = panel.axes.find((axis) => axis.side === "left")!.ticks;
         expect(ticks.length).toBeGreaterThan(1);
         for (const { position } of ticks) {
           expect(position).toBeGreaterThanOrEqual(panel.plot.y - 0.5);
@@ -318,7 +319,7 @@ describe("panels", () => {
     const { model } = build({
       marks: [dots("latency"), dots("traffic")],
       panels: panels(stacked.list, { rowHeights: [3, 1] }),
-      resolve: { y: "shared" },
+      y: { scope: "chart" },
     });
     for (const { y, plot } of model.panels()) {
       expect(y.map(100) - plot.y).toBeGreaterThanOrEqual(10 - 1e-9);
@@ -396,7 +397,7 @@ describe("panels in weighted columns", () => {
   });
 
   it("keep x labels clear of the next column's y labels", () => {
-    const { scene } = build({ marks, panels: side, resolve: { y: "independent" } }, 500, 300);
+    const { scene } = build({ marks, panels: side, y: { scope: "panel" } }, 500, 300);
     const [left, right] = scene.panels as [Panel, Panel];
     const last = axis(left, "bottom")!.ticks.at(-1)!;
     const end = last.position + estimateText(last.label, scene.theme.font) / 2;
@@ -420,7 +421,7 @@ describe("panels in weighted columns", () => {
           { columns: 2 },
         ),
         x: { format: { useGrouping: false } },
-        theme: { font: "monospace", fontSize: 10 },
+        theme: { style: { text: { font: "monospace", fontSize: 10 } } },
       },
       599,
       600,
@@ -431,7 +432,7 @@ describe("panels in weighted columns", () => {
   });
 
   it("give x scales of their own and category axes each column's width", () => {
-    const { model, scene } = build({ marks, panels: side, resolve: { x: "independent" } });
+    const { model, scene } = build({ marks, panels: side, x: { scope: "panel" } });
     for (const [i, { x }] of model.panels().entries()) {
       const { plot } = scene.panels[i]!;
       expect(x.range).toEqual([plot.x, plot.x + plot.width]);
@@ -489,7 +490,7 @@ describe("panels with x scales of their own", () => {
     latency: [120, 180, 150],
   });
   const histogram = table({ ms: [100, 150, 200], count: [4, 9, 2] });
-  const config = (resolve?: ChartConfig["resolve"]): ChartConfig => ({
+  const config = (scopes?: Pick<ChartConfig, "x">): ChartConfig => ({
     marks: [
       line(series, { x: "time", y: "latency", panel: "series" }),
       bar(histogram, { x: "ms", y: "count", panel: "spread" }),
@@ -501,11 +502,11 @@ describe("panels with x scales of their own", () => {
       ],
       { rowHeights: [2, 1] },
     ),
-    ...(resolve && { resolve }),
+    ...scopes,
   });
 
   it("give each panel its own x type, domain, labels, and title", () => {
-    const { model, scene } = build(config({ x: "independent" }));
+    const { model, scene } = build(config({ x: { scope: "panel" } }));
     const [a, b] = model.panels();
     expect(a!.x.type).toBe("time");
     expect(b!.x.type).toBe("linear");
@@ -559,22 +560,22 @@ describe("panels with x scales of their own", () => {
         ...shared,
         marks: [line(metrics, { x: "t", y: "latency", panel: "series" })],
         panels: panels([{ id: "series" }, { id: "spread", x: { domain: [0, 1] } }]),
-        resolve: { x: "independent" },
+        x: { scope: "panel" },
       }),
     ).not.toThrow();
   });
 
   it("let a panel show the x axis the chart leaves out, and the other way round", () => {
     const { scene } = build({
-      ...config({ x: "independent" }),
-      x: { show: false },
+      ...config(),
+      x: { show: false, scope: "panel" },
       panels: panels([{ id: "series" }, { id: "spread", x: { show: true } }]),
     });
     const [top, bottom] = scene.panels as [Panel, Panel];
     expect(axis(top, "bottom")).toBeUndefined();
     expect(axis(bottom, "bottom")!.ticks.length).toBeGreaterThan(0);
     const hidden = build({
-      ...config({ x: "independent" }),
+      ...config({ x: { scope: "panel" } }),
       panels: panels([{ id: "series", x: { show: false } }, { id: "spread" }]),
     });
     expect(hidden.scene.panels.map((p) => axis(p, "bottom") !== undefined)).toEqual([false, true]);
@@ -588,7 +589,7 @@ describe("panels with x scales of their own", () => {
         list.map((p) => (p.id === "b" ? { ...p, x: { ...p.x, show: false } } : p)),
         { columns: 2 },
       ),
-      resolve: { x: "rows" },
+      x: { scope: "row" },
     });
     const [a, b, c] = scene.panels as [Panel, Panel, Panel];
     // b's labels are left out; the row's title still centers on a and b.
@@ -615,7 +616,8 @@ describe("panels with x scales of their own", () => {
           ],
           { rowHeights: [2, 1] },
         ),
-        resolve: { x: "independent", y: "shared" },
+        y: { scope: "chart" },
+        x: { scope: "panel" },
       },
       400,
       300,
@@ -640,7 +642,7 @@ describe("panels with x scales of their own", () => {
         data: { m: { columns: { t: [0, 1], v: [1, 2] } } },
         marks: [{ type: "line", data: "m", x: "t", y: "v", panel: "a" }],
         panels: [{ id: "a", x: { title: "Seconds", type: "log" } }, { id: "b" }],
-        resolve: { x: "independent" },
+        x: { scope: "panel" },
       },
       [],
     );

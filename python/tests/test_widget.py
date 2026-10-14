@@ -298,22 +298,22 @@ def test_none_resets_every_option_without_sending_nested_nones():
 
 
 def test_live_charts_share_x():
-    chart = hg.Chart(data(), facet="host", resolve_x="independent").line(x="t", y="v")
+    chart = hg.Chart(data(), facet="host", x=hg.Axis(scope="panel")).line(x="t", y="v")
     with pytest.raises(
         ValueError,
-        match='Chart resolve_x: expected "shared" in a live chart',
+        match='Chart x scope: expected "chart" in a live chart',
     ):
         chart.widget()
     widget, browser = live(zoom=True)
     count = len(browser.messages)
     with pytest.raises(
         ValueError,
-        match='Chart resolve_x: expected "shared" in a live chart',
+        match='Chart x scope: expected "chart" in a live chart',
     ):
-        widget.update(resolve_x="rows")
+        widget.update(x=hg.Axis(scope="row"))
     # The refused change changed nothing.
-    widget.update(resolve_x="shared")
-    assert browser.last[0]["options"] == {"resolve": {"x": "shared"}}
+    widget.update(x=hg.Axis(scope="chart"))
+    assert browser.last[0]["options"] == {"x": {"scope": "chart"}}
     assert len(browser.messages) == count + 1
 
 
@@ -491,10 +491,10 @@ def test_giving_panels_y_scales_of_their_own_lets_go_of_the_y_viewport():
     viewports = []
     widget.on_viewport(viewports.append)
     widget.viewport = hg.Viewport(y=(0, 10))
-    widget.update(resolve_y="independent")
+    widget.update(y=hg.Axis(scope="panel"))
     assert widget.viewport == hg.Viewport() and viewports[-1] == hg.Viewport()
     assert browser.last[0]["viewport"]["y"] is None
-    widget.update(resolve_y="shared")
+    widget.update(y=hg.Axis(scope="chart"))
     # The same zoom again is a change.
     widget.viewport = hg.Viewport(y=(0, 10))
     assert len(viewports) == 3 and browser.last[0]["viewport"]["y"] == [0, 10]
@@ -502,7 +502,7 @@ def test_giving_panels_y_scales_of_their_own_lets_go_of_the_y_viewport():
 
 def test_charts_without_one_y_scale_refuse_a_y_viewport():
     widget = (
-        hg.Chart(data(), zoom="x", facet="host", resolve_y="independent")
+        hg.Chart(data(), zoom="x", facet="host", y=hg.Axis(scope="panel"))
         .line(x="t", y="v")
         .widget()
     )
@@ -518,7 +518,7 @@ def test_right_y_scales_of_their_own_refuse_only_a_right_y_viewport():
     widget = chart.line(x="t", y="v", axis="right").widget()
     browser = Browser(widget)
     widget.viewport = hg.Viewport(y=(0, 10), y_right=(0, 100))
-    widget.update(resolve_y_right="independent")
+    widget.update(y_right=hg.Axis(scope="panel"))
     # The left zoom stays; the right one goes, as in the browser.
     assert widget.viewport == hg.Viewport(y=(0, 10))
     assert browser.last[0]["viewport"]["yRight"] is None
@@ -535,21 +535,21 @@ def test_live_updates_refuse_a_y_zoom_over_right_y_scales_of_their_own():
     sent = len(browser.sent)
     with pytest.raises(
         ValueError,
-        match=r"Chart zoom: .* right y scales of their own \(resolve_y_right\) zoom along x only",
+        match=r"Chart zoom: .* right y scales of their own \(y_right scope\) zoom along x only",
     ):
-        widget.update(resolve_y_right="independent")
+        widget.update(y_right=hg.Axis(scope="panel"))
     # Nothing changed or went to the browser; zooming along x only is fine.
-    assert widget._live._settings["resolve_y_right"] is None
+    assert widget._live._settings["y_right"] is None
     assert len(browser.sent) == sent
-    widget.update(zoom="x", resolve_y_right="independent")
+    widget.update(zoom="x", y_right=hg.Axis(scope="panel"))
     with pytest.raises(
         ValueError,
-        match=r"Chart zoom: .* y scales of their own \(resolve_y\) zoom along x",
+        match=r"Chart zoom: .* y scales of their own \(y scope\) zoom along x",
     ):
-        widget.update(zoom="xy", resolve_y="independent")
+        widget.update(zoom="xy", y=hg.Axis(scope="panel"))
     # Rules at an x on the right place no values there.
     ruled = hg.Chart(data(), zoom="xy", facet="host").line(x="t", y="v")
-    ruled.rule(x=T0, axis="right").widget().update(resolve_y_right="independent")
+    ruled.rule(x=T0, axis="right").widget().update(y_right=hg.Axis(scope="panel"))
 
 
 def zoom(browser, seconds, origin, revision):

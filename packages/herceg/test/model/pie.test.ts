@@ -10,6 +10,7 @@ import { renderToPDF } from "../../src/pdf.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { ArcGeometry, Scene, TextGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 const sales = table({
   region: ["North", "South", "East", "West", "North", "Lost"],
@@ -31,7 +32,7 @@ describe("pie", () => {
     const { scene, model } = build({
       marks: [pie(sales, { category: "region", value: "revenue" })],
     });
-    expect(scene.legend.map((entry) => entry.label)).toEqual(["North", "East", "South", "West"]);
+    expect(legendOf(scene).map((entry) => entry.label)).toEqual(["North", "East", "South", "West"]);
     const mark = arcs(scene);
     expect(mark.count).toBe(4);
     // North is 40 of 100: from the top, 40% of the way round.
@@ -48,7 +49,7 @@ describe("pie", () => {
 
   it("keeps the categories' order when asked, and counts rows without a value", () => {
     const { scene } = build({ marks: [pie(sales, { category: "region", sort: "input" })] });
-    expect(scene.legend.map((entry) => entry.label)).toEqual([
+    expect(legendOf(scene).map((entry) => entry.label)).toEqual([
       "North",
       "South",
       "East",
@@ -62,10 +63,10 @@ describe("pie", () => {
 
   it("gives the circle to the slices left when others are hidden", () => {
     const { model } = build({ marks: [pie(sales, { category: "region", value: "revenue" })] });
-    const [north] = model.scene(estimateText).legend;
+    const [north] = legendOf(model.scene(estimateText));
     model.hidden.add(north!.key);
     const scene = model.scene(estimateText);
-    expect(scene.legend.find((entry) => entry.label === "North")!.hidden).toBe(true);
+    expect(legendOf(scene).find((entry) => entry.label === "North")!.hidden).toBe(true);
     const mark = arcs(scene);
     expect(mark.count).toBe(3);
     const [, , , , a0, a1] = sector(mark, 0);
@@ -99,7 +100,7 @@ describe("pie", () => {
     const labels = scene.panels[0]!.marks.filter((m): m is TextGeometry => m.kind === "text");
     expect(labels.flatMap((m) => m.labels).sort()).toEqual(["East", "North", "South", "West"]);
     expect(labels.map((m) => m.anchor).sort()).toEqual(["end", "start"]);
-    const keys = scene.legend.map((entry) => entry.key);
+    const keys = legendOf(scene).map((entry) => entry.key);
     expect(model.stepItem(undefined, 1)).toBe(keys[0]);
     expect(model.stepItem(undefined, -1)).toBe(keys[3]);
     expect(model.stepItem(keys[1], 1)).toBe(keys[2]);
@@ -129,7 +130,7 @@ describe("pie", () => {
     const mark = arcs(scene);
     expect(Array.from(mark.arcs).every(Number.isFinite)).toBe(true);
     // b has no slice; c and d have half the circle each, a next to nothing.
-    expect(scene.legend.map((entry) => entry.label)).toEqual(["c", "d", "a"]);
+    expect(legendOf(scene).map((entry) => entry.label)).toEqual(["c", "d", "a"]);
     const [, , , , a0, a1] = sector(mark, 0);
     expect(a1! - a0!).toBeCloseTo(Math.PI, 5);
     expect(model.layoutSummary()).toMatch(

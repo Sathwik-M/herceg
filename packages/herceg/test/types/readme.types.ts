@@ -163,11 +163,11 @@ createChart(element, {
     line(regionalTraffic, { x: "time", y: "requests", axis: "right" }),
   ],
   facet: facet("region"),
-  resolve: { yRight: "independent" },
-  yRight: { title: "requests/s" },
+
+  yRight: { title: "requests/s", scope: "panel" },
 });
 // @ts-expect-error a right axis is shared, independent, or by rows or columns
-createChart(element, { marks: [], facet: facet("region"), resolve: { yRight: "own" } });
+createChart(element, { marks: [], facet: facet("region"), yRight: { scope: "undefined" } });
 
 // Small multiples
 declare const targets: Float64Array;

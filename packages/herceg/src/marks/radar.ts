@@ -4,7 +4,7 @@ import { SvgPath } from "../draw/markup.ts";
 import { pointDrawing } from "../draw/point.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
 import { symbolPath } from "../draw/symbols.ts";
-import { textDrawing } from "../draw/text.ts";
+import { labelHalo, textDrawing } from "../draw/text.ts";
 import { formatNumber, numberTickLabels } from "../format/format.ts";
 import { fitTickLabels, placeSpokeLabels, type SpokeLabel } from "../layout/radar-labels.ts";
 import { Polyline } from "../lod/polyline.ts";
@@ -20,6 +20,7 @@ import type {
   TextGeometry,
 } from "../scene/scene.ts";
 import type { Frozen, RadarSpec } from "../spec/spec.ts";
+import type { Halo } from "../spec/style.ts";
 import {
   type LayoutFrame,
   type LayoutItem,
@@ -44,8 +45,8 @@ export type RadarOptions<S extends Schema> = (
       value?: never;
     }
 ) & {
-  /** Set false to leave text without its readability outline. */
-  halo?: boolean;
+  /** The outline that keeps text readable: "auto" (the default), false for none, or a color of its own. */
+  halo?: Halo;
   /** Category field: a polygon per value. With `fields`, the polygon takes its last row. */
   series?: CategoryField<S>;
   /** Values at the center and at the rim; from 0 (or the smallest value) to a round number above the largest by default. */
@@ -288,7 +289,7 @@ export class RadarMark implements LayoutMark {
         key: `radar-spokes-${anchor}`,
         fill: theme.text,
         anchor,
-        halo: false,
+        halo: undefined,
         coords: Float32Array.from(placed.flatMap(({ x, y }) => [x, y])),
         labels: placed.map(({ text }) => text),
         count: placed.length,
@@ -416,7 +417,7 @@ export class RadarMark implements LayoutMark {
       key: "radar-grid",
       stroke: theme.grid,
       strokeWidth: 1,
-      dash: theme.gridDash.length > 0 ? theme.gridDash : undefined,
+      dash: theme.style.grid.dash.length > 0 ? theme.style.grid.dash : undefined,
       path,
     };
   }
@@ -480,7 +481,7 @@ export class RadarMark implements LayoutMark {
         draw: lineDrawing,
         key: `radar-line-${s}`,
         stroke: colors[s]!,
-        strokeWidth: theme.lineWidth,
+        strokeWidth: theme.style.line.strokeWidth,
         dash: undefined,
         path,
       });
@@ -540,7 +541,7 @@ export class RadarMark implements LayoutMark {
       key: "radar-ticks",
       fill: frame.theme.muted,
       anchor: "start",
-      halo: this.spec.halo !== false,
+      halo: labelHalo(this.spec.halo, frame.theme.muted, frame),
       coords: Float32Array.from(fitted.flatMap(({ x, y }) => [x, y])),
       labels: fitted.map(({ text }) => text),
       count: fitted.length,

@@ -1,3 +1,4 @@
+import { rampsOf } from "../helpers/guides.ts";
 // Interaction with layout marks in facet panels and subplots: facet panels
 // share one drill root, one view of a map's or network's plane, and one set
 // of moved nodes; each subplot has its own. Maps and networks draw in panels
@@ -258,7 +259,7 @@ describe("maps in facet panels", () => {
     expect(changes).toHaveLength(1);
     expect(changes[0]![1]).not.toHaveProperty("panels");
     // One color legend for the panels' scale.
-    expect(model.scene(estimateText).colorLegends).toHaveLength(1);
+    expect(rampsOf(model.scene(estimateText))).toHaveLength(1);
   });
 
   it("draw a repeated base layer in every panel, under the layer that splits", () => {
@@ -544,11 +545,11 @@ describe("layout marks in panels refuse", () => {
     expect(() =>
       build({ marks: [shares], facet: facet("year"), interaction: { drag: true } }),
     ).toThrow("pie drag: no nodes to drag; drop interaction.drag");
+    expect(() => build({ marks: [shares], facet: facet("year"), x: { scope: "panel" } })).toThrow(
+      "pie x.scope: its panels have no scales to share; drop scope",
+    );
     expect(() =>
-      build({ marks: [shares], facet: facet("year"), resolve: { x: "independent" } }),
-    ).toThrow("pie resolve: its panels have no scales to resolve; drop resolve");
-    expect(() =>
-      build({ marks: [shares], facet: facet("year"), resolve: { y: "shared" } }),
+      build({ marks: [shares], facet: facet("year"), y: { scope: "chart" } }),
     ).not.toThrow();
     expect(() =>
       build({ marks: [tree()], facet: facet("year"), interaction: { zoom: "x" } }),

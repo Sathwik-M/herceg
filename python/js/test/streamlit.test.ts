@@ -670,7 +670,8 @@ describe("Streamlit component", () => {
     // On the app's own background, which the chart shows through, also
     // where the app gives no theme.
     const surface = (root: HTMLElement) =>
-      root.querySelector("svg > rect")?.getAttribute("fill") ?? "none";
+      root.querySelector("svg > g:first-of-type > rect:first-child")?.getAttribute("fill") ??
+      "none";
     expect(surface(other)).toBe("none");
     expect(surface(parent)).toBe("none");
     const plain = host();
@@ -721,7 +722,7 @@ describe("Streamlit component with panels' own x scales", () => {
         },
         marks: [{ type: "line", x: "x", y: "y", data: "data" }],
         facet: { field: "g", columns: 2 },
-        resolve: { x: "independent" },
+        x: { scope: "panel" },
       },
       [
         new Float64Array([0, 1, 2, 100, 101, 102]),
@@ -824,7 +825,7 @@ describe("Streamlit component with panels' own x scales", () => {
           ],
           panels: [{ id: "spread" }, { id: "series" }],
           grid: { columns: 2 },
-          resolve: { x: "independent" },
+          x: { scope: "panel" },
         },
         [
           new Float64Array([day, day + 60_000, day + 120_000]),

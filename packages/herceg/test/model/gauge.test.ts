@@ -15,6 +15,7 @@ import type {
   TextShape,
 } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig, width = 400, height = 300) {
   const model = new ChartModel({ locale: "en-US", ...config });
@@ -55,7 +56,7 @@ describe("gauge", () => {
     // Centered in the room, with no legend.
     expect(cx).toBeCloseTo(200, 5);
     expect(cy).toBeGreaterThan(150);
-    expect(scene.legend).toEqual([]);
+    expect(legendOf(scene)).toEqual([]);
     expect(valueText(scene)).toBe("73");
     expect(labels(scene)).toEqual(["cpu", "0", "100"]);
     expect(model.layoutSummary()).toBe("Gauge of cpu: 73, from 0 to 100.");

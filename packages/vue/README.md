@@ -26,7 +26,7 @@ The chart's text alternative describes its overview and current x range,
 and its control of every panel's x when there are several.
 
 `<Chart>` accepts every chart option as a prop (`title`, `x`, `y`, `legend`,
-`tooltip`, `interaction`, `renderer`, `theme`, `width`, `height`, ...). Its
+`padding`, `tooltip`, `interaction`, `renderer`, `theme`, `fonts`, `width`, `height`, ...). Its
 slot holds mark components: `<Line>`, `<Area>`, `<Bar>`, `<Point>`,
 `<Heatmap>`, `<Contour>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`,
 `<BoxPlot>`, `<Boxen>`, `<Violin>`, `<Treemap>`, `<Sunburst>`, `<Gauge>`, `<Funnel>`,
@@ -130,9 +130,11 @@ that changes, never a node per data point.
 ```
 
 Text halos on `<Text>`, `<Region>`, `<Bar>`, `<Funnel>`, `<Radar>`, `<Sankey>`,
-and `<Graph>` accept `:halo="false"`; graph node and link labels share it.
-Halos use the background at 3:1 text contrast or higher, then the light/dark
-fallback. The chart's navigator accepts `{ halo: false }` too. Isolated line
+and `<Graph>` take `halo`: `"auto"` (the default: the surface under the text at
+3:1 text contrast or higher, else white or black), `:halo="false"` for none, or
+`{ color, width, opacity }`; graph node and link labels share it, and the
+chart's navigator takes it too. Marks on the chart's scales take `clip`
+(`"plot"`, `"chart"`, or `false`). Isolated line
 and area rows draw stroke-sized round dots, including step curves and lines
 along y. Bars whose `series` names their category field keep full bands,
 category colors and legends, and value labels. Time axes choose intervals

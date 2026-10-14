@@ -46,6 +46,7 @@ export function clustermap(): ChartConfig {
       ],
       { columns: 2, rowHeights: [1, 4], columnWidths: [1, 4] },
     ),
-    resolve: { x: "columns", y: "rows" },
+    y: { scope: "row" },
+    x: { scope: "column" },
   };
 }

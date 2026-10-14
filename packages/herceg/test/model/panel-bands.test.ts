@@ -13,7 +13,7 @@ import { panels } from "../../src/model/panels.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { RectGeometry, Scene, SegmentGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
-import type { ScaleResolution } from "../../src/spec/spec.ts";
+import type { ScaleScope } from "../../src/spec/spec.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -102,14 +102,14 @@ const categories = (model: ChartModel, axis: "x" | "y" = "x") =>
   model.panels().map((panel) => panel[axis].categories);
 
 const ticks = (scene: Scene, panel: number, orient: "bottom" | "left") =>
-  scene.panels[panel]!.axes.find((a) => a.orient === orient)?.ticks.map((t) => t.label);
+  scene.panels[panel]!.axes.find((a) => a.side === orient)?.ticks.map((t) => t.label);
 
 describe("categories resolved per panel", () => {
   it("give each panel the categories its rows hold, in the chart's order", () => {
     const { model, scene } = build({
       marks: [bar(sales(), { x: "product", y: "units" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(categories(model)).toEqual([
       ["b", "d"],
@@ -153,7 +153,7 @@ describe("categories resolved per panel", () => {
 
   it.each([
     [
-      "rows",
+      "row",
       [
         ["b", "a", "c", "d"],
         ["b", "a", "c", "d"],
@@ -161,7 +161,7 @@ describe("categories resolved per panel", () => {
       ],
     ],
     [
-      "columns",
+      "column",
       [
         ["b", "c", "d"],
         ["a", "c"],
@@ -169,7 +169,7 @@ describe("categories resolved per panel", () => {
       ],
     ],
     [
-      "independent",
+      "panel",
       [
         ["b", "d"],
         ["a", "c"],
@@ -180,7 +180,7 @@ describe("categories resolved per panel", () => {
     const { model, scene } = build({
       marks: [bar(sales(), { x: "product", y: "units" })],
       facet: facet("region", { columns: 2 }),
-      resolve: { x: x as ScaleResolution },
+      x: { scope: x as ScaleScope },
     });
     expect(categories(model)).toEqual(expected);
     // Panels sharing a scale share one list, and only they do.
@@ -196,7 +196,7 @@ describe("categories resolved per panel", () => {
     const { model, scene } = build({
       marks: [bar(data, { x: "product", y: "units" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     // E's first band is c (row 2), which is S's second.
     const e = scene.panels[2]!;
@@ -222,7 +222,7 @@ describe("categories resolved per panel", () => {
     const { model, scene } = build({
       marks: [bar(sales(), { x: "units", y: "product", series: "kind", stack: true })],
       facet: facet("region"),
-      resolve: { y: "independent" },
+      y: { scope: "panel" },
     });
     expect(categories(model, "y")).toEqual([
       ["b", "d"],
@@ -250,13 +250,13 @@ describe("categories resolved per panel", () => {
     ]);
   });
 
-  it.each(["shared", "independent"] as const)(
+  it.each(["chart", "panel"] as const)(
     "stack bars within their panel, by category and sign (%s categories)",
     (x) => {
       const { model, scene } = build({
         marks: [bar(sales(), { x: "product", y: "units", series: "kind", stack: true })],
         facet: facet("region"),
-        resolve: { x },
+        x: { scope: x },
       });
       const stacks = [0, 1, 2].map((i) =>
         barsOf(model, scene, i).map(({ key, category, from, to }) => [key, category, from, to]),
@@ -289,7 +289,7 @@ describe("categories resolved per panel", () => {
     },
   );
 
-  it.each(["shared", "independent"] as const)(
+  it.each(["chart", "panel"] as const)(
     "inspect horizontal stacks by their ends, which need not ascend as lengths do (%s)",
     (y) => {
       // One panel: its categories are the chart's, at their own places.
@@ -297,7 +297,7 @@ describe("categories resolved per panel", () => {
       const { model } = build({
         marks: [bar(data, { x: ["u", "v"], y: "category", stack: true })],
         facet: facet("region"),
-        resolve: { y },
+        y: { scope: y },
       });
       const { x, y: scale } = model.panels()[0]!;
       for (const mode of ["nearest", "nearest-x"] as const) {
@@ -317,7 +317,7 @@ describe("categories resolved per panel", () => {
     const { model, scene } = build({
       marks: [bar(wide, { x: "product", y: ["x", "y"], stack: true })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(barsOf(model, scene, 0).map((b) => [b.key, b.from, b.to])).toEqual([
       ['[0,"x"]', 0, 1],
@@ -335,7 +335,7 @@ describe("categories resolved per panel", () => {
     const config: ChartConfig = {
       marks: [bar(sales(), { x: "product", y: "units", series: "kind" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     };
     const { model, scene } = build(config);
     // N's d has only q, which keeps its slot to the right of p's.
@@ -363,7 +363,7 @@ describe("categories resolved per panel", () => {
     const { model } = build({
       marks: [bar(sales(), { x: "product", y: "units", series: "kind", stack: true })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     model.hidden.add('[0,"p"]');
     const scene = model.scene(estimateText);
@@ -378,7 +378,7 @@ describe("categories resolved per panel", () => {
     const { model, scene } = build({
       marks: [bar(sales(), { x: "product", y: "units" })],
       facet: facet({ row: "region", column: "kind" }),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(model.panels().map((p) => p.key)).toEqual([
       '["N","p"]',
@@ -404,7 +404,7 @@ describe("categories resolved per panel", () => {
         rule({ y: 4 }),
       ],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(categories(model)).toEqual([
       ["b", "a", "d", "e"],
@@ -427,7 +427,7 @@ describe("categories resolved per panel", () => {
     const { model, scene } = build({
       marks: [bar(first, { x: "product", y: "v" }), bar(second, { x: "product", y: "v" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(categories(model)).toEqual([["c", "z"], ["a"]]);
     expect(barsOf(model, scene, 0).map((b) => [b.key, b.category, b.to])).toEqual([
@@ -446,7 +446,7 @@ describe("categories resolved per panel", () => {
     const { model, scene } = build({
       marks: [bar(partial, { x: "product", y: "v" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     // b's only row has no region: no panel shows it.
     expect(categories(model)).toEqual([["a"], ["c"]]);
@@ -463,7 +463,7 @@ describe("categories resolved per panel", () => {
     const { model } = build({
       marks: [bar(data, { x: "product", y: ["units", "cost"] })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     const [base] = model.series();
     for (const { key } of model.panels()) {
@@ -491,7 +491,7 @@ describe("categories resolved per panel", () => {
       {
         marks: [bar(table({ region, product, units }), { x: "product", y: "units" })],
         facet: facet("region", { columns: 4 }),
-        resolve: { x: "independent" },
+        x: { scope: "panel" },
       },
       900,
       600,
@@ -519,7 +519,7 @@ describe("categories resolved per panel", () => {
     const { model, scene } = build({
       marks: [bar(table({ region, product, units }), { x: "product", y: "units" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(categories(model)[0]).toEqual(["c0", `c${count - 1}`]);
     expect(categories(model)[1]).toHaveLength(count - 2);
@@ -541,7 +541,7 @@ describe("categories resolved per panel", () => {
     const { model } = build({
       marks: [bar(data, { x: "product", y: "units" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     const panel = (key: string) => model.panels().find((p) => p.key === key)!;
     expect(categories(model)).toEqual([["a", "c"], ["b"]]);
@@ -589,7 +589,7 @@ describe("categories resolved per panel", () => {
       {
         marks: [bar(data, { x: "product", y: "units" })],
         facet: facet({ row: "region", column: "kind" }),
-        resolve: { x: "rows" },
+        x: { scope: "row" },
       },
       600,
       500,
@@ -612,7 +612,7 @@ describe("categories resolved per panel", () => {
 
   it("draw a mark shared by two charts in each as its chart resolves it", () => {
     const mark = bar(sales(), { x: "product", y: "units", series: "kind", stack: true });
-    const faceted = build({ marks: [mark], facet: facet("region"), resolve: { x: "independent" } });
+    const faceted = build({ marks: [mark], facet: facet("region"), x: { scope: "panel" } });
     const whole = build({ marks: [mark] });
     expect(categories(faceted.model)[2]).toEqual(["c", "d"]);
     expect(categories(whole.model)[0]).toEqual(["b", "a", "c", "d"]);
@@ -638,7 +638,7 @@ describe("categories resolved per panel", () => {
         bar(cars, { x: "name", y: "v", panel: "cars" }),
       ],
       panels: layout,
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(categories(model)).toEqual([
       ["apple", "pear"],
@@ -669,7 +669,7 @@ describe("categories resolved per panel", () => {
         bar(cars, { x: "v", y: "name", panel: "cars" }),
       ],
       panels: layout,
-      resolve: { y: "shared" },
+      y: { scope: "chart" },
     });
     expect(categories(shared.model, "y")[0]).toEqual(["apple", "pear", "vw", "bmw", "audi"]);
   });
@@ -683,7 +683,7 @@ describe("categories resolved per panel", () => {
         bar(all, { x: "name", y: "v", panel: "*" }),
       ],
       panels: panels([{ id: "a" }, { id: "b" }]),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(categories(model)).toEqual([
       ["apple", "pear", "kiwi"],
@@ -696,7 +696,7 @@ describe("categories resolved per panel", () => {
     const { model, scene } = build({
       marks: [errorBar(intervals(), { x: "product", y1: "low", y2: "high" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(categories(model)).toEqual([
       ["b", "d"],
@@ -766,7 +766,7 @@ describe("categories resolved per panel", () => {
         }),
       ],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(categories(model)).toEqual([
       ["mon", "wed"],
@@ -798,17 +798,17 @@ describe("categories resolved per panel", () => {
       build({
         marks: [bar(data, { x: "product", y: "units" })],
         facet: facet("region"),
-        resolve: { x: "independent" },
+        x: { scope: "panel" },
         interaction: { sync: "dashboard" },
       }),
     ).toThrow(
-      "chart interaction.sync: panels with categories of their own (resolve.x) cannot sync yet",
+      'chart interaction.sync: panels with categories of their own (x.scope "panel") cannot sync yet',
     );
     expect(() =>
       build({
         marks: [bar(data, { x: "units", y: "product" })],
         facet: facet("region"),
-        resolve: { y: "columns" },
+        y: { scope: "column" },
         interaction: { brush: "xy" },
       }),
     ).toThrow("brush along x only");
@@ -817,7 +817,7 @@ describe("categories resolved per panel", () => {
       build({
         marks: [bar(data, { x: "product", y: "units" })],
         facet: facet("region"),
-        resolve: { x: "independent" },
+        x: { scope: "panel" },
         interaction: { brush: "x" },
       }),
     ).not.toThrow();
@@ -836,7 +836,7 @@ describe("categories resolved per panel", () => {
       },
       marks: [{ type: "bar" as const, data: "sales", x: "product", y: "units", stack: true }],
       facet: { field: "region" },
-      resolve: { x: "independent" as const },
+      x: { scope: "panel" as const },
       width: 600,
       height: 300,
     };

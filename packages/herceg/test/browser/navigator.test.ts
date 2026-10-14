@@ -726,7 +726,7 @@ describe("a navigator's sliders", () => {
     const [from, to, further] = [at(1.5), at(1.6), at(1.8)];
     const stop = chart.on("viewport", () => {
       stop();
-      chart.update({ navigator: undefined, facet: facet("k"), resolve: { x: "independent" } });
+      chart.update({ navigator: undefined, facet: facet("k"), x: { scope: "panel" } });
     });
     pointer(chart, target, "pointerdown", from, y);
     expect(() => {
@@ -775,7 +775,7 @@ describe("a navigator's sliders", () => {
       const middle = sliders(chart)[1]!;
       const stop = chart.on("render", () => {
         stop();
-        chart.update({ navigator: undefined, facet: facet("k"), resolve: { x: "independent" } });
+        chart.update({ navigator: undefined, facet: facet("k"), x: { scope: "panel" } });
         chart.render();
       });
       if (input === "mouse") {
@@ -963,7 +963,7 @@ describe("a navigator's sliders", () => {
         marks: [bar(data, { x: "t", y: ["a", "b"], stack: true })],
         x: { show: false },
         y: { show: false, domain: reversed ? [20, -20] : [-20, 20] },
-        theme: { palette: ["#ff0000", "#0000ff"] },
+        theme: { tokens: { palette: ["#ff0000", "#0000ff"] } },
         legend: false,
       });
       chart.setViewport([1000, 1500]);
@@ -1181,8 +1181,8 @@ describe("a navigator under panels", () => {
 
   it("refuse panels x scales of their own as the chart updates", async () => {
     const chart = await subplots();
-    expect(() => chart.update({ resolve: { x: "independent" } })).toThrow(
-      'navigator: needs one x scale shared by every panel, and resolve.x is "independent"',
+    expect(() => chart.update({ x: { scope: "panel" } })).toThrow(
+      'navigator: needs one x scale shared by every panel, and x.scope is "panel"',
     );
   });
 });

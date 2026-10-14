@@ -26,7 +26,7 @@ const styles = [
 ] as const;
 
 function build(marks: readonly ChartMark[], lineWidth = 2) {
-  const model = new ChartModel({ marks, theme: { lineWidth } });
+  const model = new ChartModel({ marks, theme: { style: { line: { strokeWidth: lineWidth } } } });
   model.setSize(400, 200, 1);
   return model.scene(estimateText).panels[0]!.marks;
 }

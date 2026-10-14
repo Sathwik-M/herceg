@@ -63,7 +63,7 @@ def test_what_the_renderer_refuses_raises_its_message():
     family = "No\n\n    at family"
     with pytest.raises(ValueError) as refused:
         unicode_chart().to_pdf(fonts=unicode_fonts(), fallback=[family])
-    assert str(refused.value) == f"PDF fallback family {family.lower()} is not registered"
+    assert str(refused.value) == f"fallback family {family.lower()} is not registered"
 
 
 def test_svg_matches_the_typescript_renderer(tmp_path):
@@ -137,9 +137,9 @@ def test_pdf_export(tmp_path):
 
 
 def unicode_chart(title=UNICODE_TEXT):
-    return hg.Chart(DATA, title=title, width=400, height=200, theme={"font": "Fixture"}).line(
-        x="t", y="v"
-    )
+    return hg.Chart(
+        DATA, title=title, width=400, height=200, theme={"style": {"text": {"font": "Fixture"}}}
+    ).line(x="t", y="v")
 
 
 def unicode_fonts():
@@ -187,18 +187,18 @@ def test_unicode_pdf_accepts_paths_and_bytes_and_matches_typescript(tmp_path):
         pytest.skip("node is needed to compare with the TypeScript renderer")
     spec, buffers = unicode_chart().to_spec()
     loader = (ROOT / "packages/herceg/src/from-spec.ts").as_uri()
-    pdf_loader = (ROOT / "packages/herceg/src/pdf.ts").as_uri()
+    fonts_loader = (ROOT / "packages/herceg/src/fonts.ts").as_uri()
     entry = tmp_path / "unicode.mts"
     entry.write_text(
         f"const {{ specToPDF }} = await import({json.dumps(loader)});\n"
-        f"const {{ pdfFonts }} = await import({json.dumps(pdf_loader)});\n"
+        f"const {{ prepareFonts }} = await import({json.dumps(fonts_loader)});\n"
         "import { readFileSync } from 'node:fs';\n"
         "const input = JSON.parse(readFileSync(0, 'utf8'));\n"
         "const decode = b => Buffer.from(b, 'base64');\n"
         "const { fonts, ...options } = input.options;\n"
-        "const prepared = pdfFonts(fonts.map(f => ({...f, data: decode(f.data)})), options);\n"
+        "const prepared = prepareFonts(fonts.map(f => ({...f, data: decode(f.data)})));\n"
         "const output = specToPDF({spec: input.spec, buffers: input.buffers.map(decode)},\n"
-        "  {fonts: prepared});\n"
+        "  {fonts: prepared, ...options});\n"
         "process.stdout.write(output);\n",
         encoding="utf-8",
     )
@@ -267,7 +267,7 @@ def test_unicode_pdf_segmentation_with_and_without_intl():
         for text, expected in zip(titles, native, strict=True):
             assert unicode_chart(text).to_pdf(fonts=unicode_fonts(), missing_glyph="?") == expected
         for text in ["a\u200dB", "★\ufe0f", "👍🏽"]:
-            with pytest.raises(Exception, match="SVG/PNG"):
+            with pytest.raises(Exception, match="leave fonts out"):
                 unicode_chart(text).to_pdf(fonts=unicode_fonts(), missing_glyph="?")
     finally:
         engine.eval(
@@ -276,7 +276,7 @@ def test_unicode_pdf_segmentation_with_and_without_intl():
 
 
 def test_unicode_pdf_rejects_malformed_fonts_and_html_font_options(tmp_path):
-    with pytest.raises(Exception, match="Malformed PDF font"):
+    with pytest.raises(Exception, match="Malformed font"):
         chart().to_pdf(fonts={"Fixture": b"bad"}, fallback=["Fixture"])
     with pytest.raises(ValueError, match="save fonts: an option of SVG, PNG, or PDF export"):
         chart().save(str(tmp_path / "chart.html"), fonts=unicode_fonts())
@@ -377,7 +377,10 @@ def test_png_export(tmp_path):
 def font_collision_chart():
     labels = [f"{'t' * 20}{i}" for i in range(8)]
     return hg.Chart(
-        {"x": labels, "y": range(8)}, width=280, height=200, theme={"font": "Fixture"}
+        {"x": labels, "y": range(8)},
+        width=280,
+        height=200,
+        theme={"style": {"text": {"font": "Fixture"}}},
     ).bar(x="x", y="y")
 
 
@@ -431,7 +434,11 @@ def test_png_renders_supplied_font_pixels_with_paths_bytes_and_aliases(tmp_path,
 
     image = pytest.importorskip("PIL.Image")
     rendered = hg.Chart(
-        DATA, title="tttttttt latency", width=400, height=200, theme={"font": family}
+        DATA,
+        title="tttttttt latency",
+        width=400,
+        height=200,
+        theme={"style": {"text": {"font": family}}},
     ).line(x="t", y="v")
     fonts = (
         {family: unicode_fonts()["Fixture"]}
@@ -490,14 +497,14 @@ def test_png_removes_temporary_font_files_even_when_rasterization_fails(monkeypa
 @pytest.mark.parametrize("method", ["to_svg", "to_png"])
 def test_svg_and_png_validate_fonts_in_the_callers_spelling(method, tmp_path):
     export = getattr(unicode_chart("Font"), method)
-    with pytest.raises(ValueError, match=f"{method} fonts:.*Malformed PDF font"):
+    with pytest.raises(ValueError, match=f"{method} fonts:.*Malformed font"):
         export(fonts={"Fixture": b"bad"})
     with pytest.raises(ValueError, match=f'{method} fonts: expected weights "normal" or "bold"'):
         export(fonts={"Fixture": {"regular": b"bad"}})
     with pytest.raises(ValueError, match=f"{method} fonts:.*is not registered"):
         export(fonts={"Other": FONT_FIXTURES / "sans.ttf"})
     suffix = ".svg" if method == "to_svg" else ".png"
-    with pytest.raises(ValueError, match="save fonts:.*Malformed PDF font"):
+    with pytest.raises(ValueError, match="save fonts:.*Malformed font"):
         hg.save(unicode_chart("Font"), tmp_path / f"bad{suffix}", fonts={"Fixture": b"bad"})
     assert not (tmp_path / f"bad{suffix}").exists()
 
@@ -726,9 +733,9 @@ def test_pdf_summary_language_uses_catalog_not_chart_locale(
 ):
     import zlib
 
-    item = hg.Chart({"x": [0, 1], "y": [2, 3]}, locale=locale, theme={"font": "Fixture"}).line(
-        x="x", y="y"
-    )
+    item = hg.Chart(
+        {"x": [0, 1], "y": [2, 3]}, locale=locale, theme={"style": {"text": {"font": "Fixture"}}}
+    ).line(x="x", y="y")
     charts = {
         "single": item,
         "list": [item],

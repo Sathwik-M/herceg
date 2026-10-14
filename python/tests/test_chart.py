@@ -364,12 +364,12 @@ def test_facets_split_marks_into_panels():
 
 def test_right_axes_in_facets_and_panels():
     chart = (
-        hg.Chart(DATA, facet="host", resolve_y_right="independent", width=400, height=200)
+        hg.Chart(DATA, facet="host", y_right=hg.Axis(scope="panel"), width=400, height=200)
         .line(x="t", y="p50")
         .line(x="t", y="p99", axis="right")
     )
     spec, _ = chart.to_spec()
-    assert spec["resolve"] == {"yRight": "independent"}
+    assert spec["yRight"] == {"scope": "panel"}
     assert spec["marks"][1]["axis"] == "right"
     assert chart.to_svg().count("<svg") == 1
     subplots = (
@@ -382,17 +382,20 @@ def test_right_axes_in_facets_and_panels():
     assert spec["panels"][0] == {"id": "a", "yRight": {"title": "p99", "type": "log"}}
     assert ">p99</text>" in subplots.to_svg()
     with pytest.raises(
-        ValueError, match='Chart resolve_y_right: expected "shared", .*; received "free"'
+        ValueError,
+        match='Axis scope: expected "chart", "panel", "row", or "column"; received "free"',
     ):
-        hg.Chart(DATA, facet="host", resolve_y_right="free")  # type: ignore[arg-type]
+        hg.Axis(scope="free")  # type: ignore[arg-type]
+    # A scope in a chart of one panel has one instance to give.
+    assert "<svg" in hg.Chart(DATA, y_right=hg.Axis(scope="panel")).line(x="t", y="p50").to_svg()
     with pytest.raises(
-        ValueError, match="Chart resolve_y_right: resolves the scales of facets or panels"
+        ValueError, match="Panel y scope: only the chart's x, y, and y_right take a scope"
     ):
-        hg.Chart(DATA, resolve_y_right="independent")
-    zoomed = hg.Chart(DATA, facet="host", zoom="xy", resolve_y_right="independent")
+        hg.Chart(DATA, panels=[hg.Panel("a", y=hg.Axis(scope="panel"))]).to_spec()
+    zoomed = hg.Chart(DATA, facet="host", zoom="xy", y_right=hg.Axis(scope="panel"))
     with pytest.raises(
         ValueError,
-        match=r"Chart zoom: .* right y scales of their own \(resolve_y_right\) zoom along x only",
+        match=r"Chart zoom: .* right y scales of their own \(y_right scope\) zoom along x only",
     ):
         zoomed.line(x="t", y="p99", axis="right")
     # A rule at an x places no value on the right axis, so it has no scale to zoom.
@@ -423,35 +426,29 @@ def test_facets_lay_panels_out_by_row_and_column():
 
 def test_facet_panels_can_have_y_scales_of_their_own():
     data = {**DATA, "zone": ["x", "y"]}
-    chart = hg.Chart(data, facet_column="zone", resolve_y="independent").line(x="t", y="p50")
+    chart = hg.Chart(data, facet_column="zone", y=hg.Axis(scope="panel")).line(x="t", y="p50")
     spec, _ = chart.to_spec()
-    assert spec["resolve"] == {"y": "independent"}
+    assert spec["y"] == {"scope": "panel"}
     assert "<svg" in chart.to_svg()
-    with pytest.raises(ValueError, match='Chart resolve_y: expected "shared", .*; received "free"'):
-        hg.Chart(data, facet="host", resolve_y="free")
-    with pytest.raises(
-        ValueError, match="Chart resolve_y: resolves the scales of facets or panels"
-    ):
-        hg.Chart(data, resolve_y="rows")
     with pytest.raises(
         ValueError,
-        match=r"Chart zoom: .* y scales of their own \(resolve_y\) zoom along x",
+        match=r"Chart zoom: .* y scales of their own \(y scope\) zoom along x",
     ):
-        hg.Chart(data, facet="host", resolve_y="independent", zoom="xy")
+        hg.Chart(data, facet="host", y=hg.Axis(scope="panel"), zoom="xy")
 
 
 def test_panels_can_have_x_scales_of_their_own():
     data = {**DATA, "zone": ["x", "y"]}
-    chart = hg.Chart(data, facet_column="zone", resolve_x="independent", resolve_y="rows")
+    chart = hg.Chart(data, facet_column="zone", x=hg.Axis(scope="panel"), y=hg.Axis(scope="row"))
     spec, _ = chart.line(x="t", y="p50").to_spec()
-    assert spec["resolve"] == {"x": "independent", "y": "rows"}
+    assert (spec["x"], spec["y"]) == ({"scope": "panel"}, {"scope": "row"})
     assert "<svg" in chart.to_svg()
     subplots = (
         hg.Chart(
             DATA,
             panels=[hg.Panel("a", x=hg.Axis(title="Time")), hg.Panel("b", x={"type": "log"})],
             panel_row_heights=[2, 1],
-            resolve_x="independent",
+            x=hg.Axis(scope="panel"),
         )
         .line(x="t", y="p50", panel="a")
         .line(x="p50", y="p99", panel="b")
@@ -461,14 +458,8 @@ def test_panels_can_have_x_scales_of_their_own():
         {"id": "a", "x": {"title": "Time"}},
         {"id": "b", "x": {"type": "log"}},
     ]
-    assert spec["resolve"] == {"x": "independent"}
+    assert spec["x"] == {"scope": "panel"}
     assert ">Time</text>" in subplots.to_svg()
-    with pytest.raises(ValueError, match='Chart resolve_x: expected "shared", .*; received "free"'):
-        hg.Chart(data, facet="host", resolve_x="free")
-    with pytest.raises(
-        ValueError, match="Chart resolve_x: resolves the scales of facets or panels"
-    ):
-        hg.Chart(data, resolve_x="rows")
 
 
 def test_panels_can_have_categories_of_their_own():
@@ -478,11 +469,11 @@ def test_panels_can_have_categories_of_their_own():
         "kind": ["p", "p", "q", "q", "q"],
         "units": [1, 2, 3, 4, 5],
     }
-    chart = hg.Chart(sales, facet="region", resolve_x="independent", width=500, height=250).bar(
+    chart = hg.Chart(sales, facet="region", x=hg.Axis(scope="panel"), width=500, height=250).bar(
         x="product", y="units", series="kind", stack=True
     )
     spec, _ = chart.to_spec()
-    assert spec["resolve"] == {"x": "independent"}
+    assert spec["x"]["scope"] == "panel"
     assert spec["marks"][0]["stack"] is True
     svg = chart.to_svg()
     # Each panel labels its own categories: N's b and d, S's a and c, E's c.
@@ -495,22 +486,24 @@ def test_panels_can_have_categories_of_their_own():
     assert ">audi</text>" in subplots.to_svg()
     # Error bars and candlesticks draw on each panel's own categories too.
     intervals = (
-        hg.Chart(sales, facet="region", resolve_x="independent", width=500, height=250)
+        hg.Chart(sales, facet="region", x=hg.Axis(scope="panel"), width=500, height=250)
         .error_bar(x="product", y="units", y_error="units")
         .candlestick(x="product", open="units", high="units", low="units", close="units")
     )
-    assert intervals.to_spec()[0]["resolve"] == {"x": "independent"}
+    assert intervals.to_spec()[0]["x"]["scope"] == "panel"
     assert all(f">{label}</text>" in intervals.to_svg() for label in "abcd")
     with pytest.raises(
         ValueError,
-        match=r"Chart sync: panels with categories of their own \(resolve_x\) cannot sync yet",
+        match=r'Chart sync: panels with categories of their own \(x scope "row"\) cannot sync yet',
     ):
-        hg.Chart(sales, facet="region", resolve_x="rows", sync="board").bar(x="product", y="units")
+        hg.Chart(sales, facet="region", x=hg.Axis(scope="row"), sync="board").bar(
+            x="product", y="units"
+        )
     with pytest.raises(
         ValueError,
         match="Chart brush: panels with y categories of their own brush along x only",
     ):
-        hg.Chart(sales, facet="region", resolve_y="independent", brush="xy").bar(
+        hg.Chart(sales, facet="region", y=hg.Axis(scope="panel"), brush="xy").bar(
             x="units", y="product"
         )
     # Shared, as before, the same marks are fine.
@@ -527,20 +520,20 @@ def test_heatmaps_and_points_have_categories_of_their_own():
     cells = hg.Chart(
         load,
         facet="region",
-        resolve_x="independent",
-        resolve_y="independent",
+        x=hg.Axis(scope="panel"),
+        y=hg.Axis(scope="panel"),
         width=500,
         height=250,
     ).heatmap(x="hour", y="host", color="cpu")
     spec, _ = cells.to_spec()
-    assert spec["resolve"] == {"x": "independent", "y": "independent"}
+    assert (spec["x"]["scope"], spec["y"]["scope"]) == ("panel", "panel")
     assert spec["marks"][0]["type"] == "heatmap"
     assert "facet" not in spec["marks"][0]
     svg = cells.to_svg()
     # One image of cells per panel, each panel labeling its own categories.
     assert svg.count("<image ") == 2
     assert all(f">{label}</text>" in svg for label in ("a", "b", "d", "p", "q"))
-    strip = hg.Chart(load, facet="region", resolve_x="independent", width=500, height=250).point(
+    strip = hg.Chart(load, facet="region", x=hg.Axis(scope="panel"), width=500, height=250).point(
         x="hour", y="cpu"
     )
     spec, _ = strip.to_spec()
@@ -557,11 +550,11 @@ def test_histograms_and_box_plots_split_by_facets():
         "host": ["p", "p", "q", "q", "r", "r"],
         "ms": [1.0, 2.0, 3.0, 110.0, 120.0, 190.0],
     }
-    binned = hg.Chart(load, facet="region", resolve_x="independent", width=500, height=250)
+    binned = hg.Chart(load, facet="region", x=hg.Axis(scope="panel"), width=500, height=250)
     binned = binned.histogram(x="ms", bins={"step": 10})
     spec, _ = binned.to_spec()
     assert spec["facet"] == {"field": "region"}
-    assert spec["resolve"] == {"x": "independent"}
+    assert spec["x"]["scope"] == "panel"
     assert spec["marks"][0] == {
         "type": "histogram",
         "data": "data",
@@ -573,15 +566,15 @@ def test_histograms_and_box_plots_split_by_facets():
     # Each panel's bins span its own rows: N's 0 to 10, with ticks 0, 5, 10;
     # S's 110 to 190, with ticks 120 to 180.
     assert ">5</text>" in svg and ">180</text>" in svg
-    boxes = hg.Chart(load, facet="region", resolve_x="independent", width=500, height=250)
+    boxes = hg.Chart(load, facet="region", x=hg.Axis(scope="panel"), width=500, height=250)
     boxes = boxes.boxplot(x="host", y="ms")
     spec, _ = boxes.to_spec()
     assert spec["marks"][0] == {"type": "boxplot", "data": "data", "x": "host", "y": "ms"}
     svg = boxes.to_svg()
     # N's p and q, S's q and r, each panel labeling its own.
     assert all(f">{label}</text>" in svg for label in ("p", "q", "r"))
-    sideways = hg.Chart(load, facet="region", resolve_y="independent").violin(x="ms", y="host")
-    assert sideways.to_spec()[0]["resolve"] == {"y": "independent"}
+    sideways = hg.Chart(load, facet="region", y=hg.Axis(scope="panel")).violin(x="ms", y="host")
+    assert sideways.to_spec()[0]["y"]["scope"] == "panel"
     labeled = hg.Chart(load, facet="region", width=500, height=250).text(
         x="ms", y="ms", text_field="host"
     )
@@ -829,13 +822,13 @@ def test_heatmaps_along_number_axes_have_no_categories_to_resolve():
         "cpu": np.array([1.0, 2.0, 3.0, 4.0]),
     }
     # x scales of their own sync as any number axis does; banded hours are categories.
-    hg.Chart(load, facet="region", resolve_x="independent", sync="board").heatmap(
+    hg.Chart(load, facet="region", x=hg.Axis(scope="panel"), sync="board").heatmap(
         x="hour", y="host", color="cpu"
     ).to_spec()
     with pytest.raises(
-        ValueError, match=r"Chart sync: panels with categories of their own \(resolve_x\)"
+        ValueError, match=r"Chart sync: panels with categories of their own \(x scope"
     ):
-        hg.Chart(load, facet="region", resolve_x="independent", sync="board").heatmap(
+        hg.Chart(load, facet="region", x=hg.Axis(scope="panel"), sync="board").heatmap(
             x="hour", y="host", color="cpu", x_banded=True
         )
 
@@ -877,12 +870,12 @@ def test_calendar_heatmaps_lay_out_days():
         hg.heatmap({"day": ["2026-01-01"], "commits": [1]}, date="day", color="commits")
     # Weekdays are categories, so panels with weekdays of their own cannot sync.
     with pytest.raises(
-        ValueError, match=r"Chart sync: panels with categories of their own \(resolve_y\)"
+        ValueError, match=r"Chart sync: panels with categories of their own \(y scope"
     ):
         hg.Chart(
             {**days, "team": ["a", "b"] * 6 + ["a"]},
             facet="team",
-            resolve_y="independent",
+            y=hg.Axis(scope="panel"),
             sync="board",
         ).heatmap(date="day", color="commits")
 
@@ -931,26 +924,144 @@ def test_scheme_and_symbol_names_match_typescript():
     assert tuple(re.findall(r'^  "([\w-]+)",$', order, re.MULTILINE)) == hg.SYMBOLS
 
 
-def test_theme_keys_and_names_match_typescript():
+def test_theme_builders_match_typescript():
+    from dataclasses import fields
     from typing import get_args
 
-    from herceg._chart import _THEME_KEYS, _THEME_WORDS, ThemeName
+    from herceg._style import _camel
 
-    theme = {"extends": "high-contrast", "bar_radius": 0, "tooltip_border": "#000"}
+    theme = hg.Theme(
+        extends="high-contrast",
+        tokens=hg.Tokens(palette=["#000"]),
+        style=hg.Style(
+            title=hg.TextStyle(font_size=18, align="center"),
+            bar={"radius": 0},
+            tooltip=hg.TooltipStyle(stroke="#000"),
+        ),
+    )
     spec, _ = hg.Chart(DATA, theme=theme).line(x="t", y="p50").to_spec()
-    assert spec["theme"] == {"extends": "high-contrast", "barRadius": 0, "tooltipBorder": "#000"}
+    assert spec["theme"] == {
+        "extends": "high-contrast",
+        "tokens": {"palette": ["#000"]},
+        "style": {
+            "title": {"fontSize": 18, "align": "center"},
+            "bar": {"radius": 0},
+            "tooltip": {"stroke": "#000"},
+        },
+    }
+    # Dicts of the same names work wherever builders do.
+    as_dicts, _ = (
+        hg.Chart(DATA, theme={"style": {"tick_label": {"color": "#555", "font_weight": 600}}})
+        .line(x="t", y="p50")
+        .to_spec()
+    )
+    assert as_dicts["theme"] == {"style": {"tickLabel": {"color": "#555", "fontWeight": 600}}}
     root = Path(__file__).resolve().parents[2] / "packages" / "herceg" / "src"
     if not root.exists():
         pytest.skip("needs a source checkout")
     source = (root / "spec" / "spec.ts").read_text()
     names = re.search(r"export type ThemeName =([^;]+);", source)[1]
-    assert tuple(re.findall(r'"([\w-]+)"', names)) == get_args(ThemeName)
-    body = source[source.index("export interface ThemeSpec") :]
-    keys = re.findall(r"^  (\w+)\?:", body[: body.index("\n}")], re.MULTILINE)
-    assert {key for key in keys if not key.islower()} == set(_THEME_KEYS.values())
-    assert {key for key in keys if key.islower()} == _THEME_WORDS
-    with pytest.raises(ValueError, match='Chart theme: unknown key "fontsize"'):
-        hg.Chart(DATA, theme={"fontsize": 12})
+    assert tuple(re.findall(r'"([\w-]+)"', names)) == get_args(hg._style.ThemeName)
+    style = (root / "spec" / "style.ts").read_text()
+
+    def keys(interface: str) -> set[str]:
+        body = style[style.index(f"export interface {interface}") :]
+        return set(re.findall(r"^  (\w+)\?:", body[: body.index("\n}")], re.MULTILINE))
+
+    for builder, interface in [
+        (hg.TextStyle, "TextStyle"),
+        (hg.PlotStyle, "PlotStyle"),
+        (hg.Style, "StyleRoles"),
+        (hg.Tokens, "ThemeTokens"),
+    ]:
+        assert {_camel(f.name) for f in fields(builder)} == keys(interface), interface
+    assert {_camel(f.name) for f in fields(hg.StrokeStyle)} == keys("StrokeStyle")
+    with pytest.raises(ValueError, match='Theme style: unknown key "fontsize"'):
+        hg.Chart(DATA, theme={"style": {"fontsize": 12}})
+    with pytest.raises(ValueError, match="TextStyle font_weight: expected a whole number"):
+        hg.TextStyle(font_weight=1200)
+    with pytest.raises(ValueError, match='Axis style: styles "axis_line", "tick", "tick_label"'):
+        hg.Chart(DATA, y=hg.Axis(style=hg.Style(plot=hg.PlotStyle(fill="#eee")))).to_spec()
+
+
+def test_titles_legends_and_padding_reach_the_spec():
+    chart = hg.Chart(
+        DATA,
+        title=hg.Title("Weekly", place=hg.Place(side="bottom"), style={"align": "center"}),
+        legend=hg.Legend(place=hg.Place(side="right")),
+        padding={"top": 4, "left": 0},
+        panels=[hg.Panel("a", title=hg.Title("A", style=hg.TextStyle(color="#c00")))],
+        y=hg.Axis(style=hg.Style(tick_label=hg.TextStyle(color="#c00"))),
+    ).line(x="t", y="p50", panel="a")
+    spec, _ = chart.to_spec()
+    assert spec["title"] == {
+        "text": "Weekly",
+        "place": {"side": "bottom"},
+        "style": {"align": "center"},
+    }
+    assert spec["legend"] == {"place": {"side": "right"}}
+    assert spec["padding"] == {"top": 4, "left": 0}
+    assert spec["panels"][0]["title"] == {"text": "A", "style": {"color": "#c00"}}
+    assert spec["y"] == {"style": {"tickLabel": {"color": "#c00"}}}
+    assert "<svg" in chart.to_svg()
+    with pytest.raises(ValueError, match="Panel title place: a panel's title goes above it"):
+        hg.Panel("a", title=hg.Title("A", place=hg.Place(side="bottom")))._spec()
+    with pytest.raises(ValueError, match="Place: give a side or inside, one of them"):
+        hg.Place()
+    with pytest.raises(ValueError, match='Title place: expected side "top" or "bottom"'):
+        hg.Title("T", place=hg.Place(side="left"))
+    assert hg.Chart(DATA, legend={"place": {"inside": "top-right"}}).to_spec()[0]["legend"] == {
+        "place": {"inside": "top-right"}
+    }
+
+
+def test_marks_say_what_they_are_cut_to():
+    chart = (
+        hg.Chart(DATA, padding=0)
+        .line(x="t", y="p50", clip=False)
+        .point(x="t", y="p50", clip="chart")
+        .text(x="t", y="p50", text_field="host", clip="plot")
+    )
+    spec, _ = chart.to_spec()
+    assert [mark.get("clip") for mark in spec["marks"]] == [False, "chart", "plot"]
+    boxes = hg.Chart(DATA).boxplot(x="host", y="p50", clip=False)
+    assert boxes.to_spec()[0]["marks"][0]["clip"] is False
+    assert "clip" not in hg.Chart(DATA).line(x="t", y="p50").to_spec()[0]["marks"][0]
+    assert "-clip-chart" in chart.to_svg()
+    assert hg.line(DATA, x="t", y="p50", clip=False).to_spec()[0]["marks"][0]["clip"] is False
+    with pytest.raises(
+        ValueError, match='line clip: expected "plot", "chart", or False; received 0'
+    ):
+        hg.Chart(DATA).line(x="t", y="p50", clip=0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="received True"):
+        hg.Chart(DATA).rule(y=1, clip=True)  # type: ignore[arg-type]
+
+
+def test_svg_sizes_to_its_container_when_fluid(tmp_path):
+    chart = hg.Chart(DATA, width=140, height=48, padding=0).line(x="t", y="p50")
+    fixed = chart.to_svg()
+    assert 'width="140" height="48" viewBox="0 0 140 48"' in fixed
+    fluid = chart.to_svg(sizing="fluid", preserve_aspect_ratio="none", stroke_scaling="fixed")
+    assert re.match(
+        r'<svg xmlns="http://www.w3.org/2000/svg" id="[^"]+" viewBox="0 0 140 48" '
+        r'preserveAspectRatio="none"',
+        fluid,
+    )
+    assert "vector-effect:non-scaling-stroke" in fluid
+    chart.save(tmp_path / "chart.svg", sizing="fluid")
+    assert (
+        (tmp_path / "chart.svg")
+        .read_text()
+        .startswith('<svg xmlns="http://www.w3.org/2000/svg" viewBox=')
+    )
+    with pytest.raises(ValueError, match="save sizing: an option of SVG export"):
+        chart.save(tmp_path / "chart.png", sizing="fluid")
+    with pytest.raises(ValueError, match='to_svg sizing: expected "fixed" or "fluid"'):
+        chart.to_svg(sizing="auto")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="to_svg preserve_aspect_ratio: expected"):
+        chart.to_svg(preserve_aspect_ratio="stretch")
+    with pytest.raises(ValueError, match='to_svg stroke_scaling: expected "scale" or "fixed"'):
+        chart.to_svg(stroke_scaling="none")  # type: ignore[arg-type]
 
 
 def test_format_options_match_typescript():
@@ -2169,7 +2280,7 @@ def test_split_violin_exports_and_facets(horizontal, inner):
         "v": [1, 3, 2, 4, 5, 7],
     }
     chart = hg.Chart(
-        data, facet="p", **{"resolve_y" if horizontal else "resolve_x": "independent"}
+        data, facet="p", **{"y" if horizontal else "x": hg.Axis(scope="panel")}
     ).violin(
         "v" if horizontal else "g", "g" if horizontal else "v", series="s", split=True, inner=inner
     )
@@ -2318,8 +2429,16 @@ def test_nonnegative_stack_validation_and_gaps(stack):
         hg.area(data, x="t", y="v", stack_order="inside-out")
 
 
-@pytest.mark.parametrize("halo", [False, True])
-def test_halo_option_is_shared_by_all_text_drawing_marks(halo):
+@pytest.mark.parametrize(
+    ("halo", "spec"),
+    [
+        (False, False),
+        ("auto", "auto"),
+        (hg.Halo("#fafafa", width=4), {"color": "#fafafa", "width": 4}),
+        ({"color": "#000", "opacity": 0.5}, {"color": "#000", "opacity": 0.5}),
+    ],
+)
+def test_halo_option_is_shared_by_all_text_drawing_marks(halo, spec):
     values = {"category": ["A", "B", "C"], "value": [10, 20, 30]}
     links = {"source": ["A", "B"], "target": ["B", "C"], "value": [10, 5]}
     charts = [
@@ -2332,28 +2451,36 @@ def test_halo_option_is_shared_by_all_text_drawing_marks(halo):
         hg.graph(links, source="source", target="target", halo=halo),
     ]
     for chart in charts:
-        spec, _ = chart.to_spec()
-        assert spec["marks"][0]["halo"] is halo
+        mark = chart.to_spec()[0]["marks"][0]
+        assert mark["halo"] == spec
+        assert "<svg" in chart.to_svg()
     chart = hg.line(DATA, x="t", y="p50", navigator=hg.Navigator(halo=halo))
-    spec, _ = chart.to_spec()
-    assert spec["navigator"] == {"halo": halo}
+    assert chart.to_spec()[0]["navigator"] == {"halo": spec}
 
 
-def test_halo_rejects_non_boolean_with_python_option_names():
-    with pytest.raises(ValueError, match="text halo: expected a boolean; use False"):
-        hg.Chart().text(x=1, y=1, label="note", halo="no")
-    with pytest.raises(ValueError, match="Navigator halo: expected a boolean; use False"):
-        hg.line(DATA, x="t", y="p50", navigator=hg.Navigator(halo=0))
+def test_halo_rejects_other_values_with_python_option_names():
+    with pytest.raises(ValueError, match='text halo: expected "auto", False, or an hg.Halo'):
+        hg.Chart().text(x=1, y=1, label="note", halo="no")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="received True"):
+        hg.Chart().text(x=1, y=1, label="note", halo=True)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="Navigator halo: expected an hg.Halo"):
+        hg.line(DATA, x="t", y="p50", navigator=hg.Navigator(halo=0))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="Halo width: expected a number of at least 0"):
+        hg.Halo("#fff", width=-1)
 
 
 def test_text_surface_halo_and_opt_out_in_static_exports():
-    for halo in (True, False):
+    for halo in ("auto", False):
         chart = hg.Chart(width=300, height=150).text(
             x=1, y=1, label="note", fill="#e06600", halo=halo
         )
         svg = chart.to_svg()
-        assert ('stroke="#ffffff" stroke-opacity="1"' in svg) is halo
+        assert ('stroke="#ffffff" stroke-opacity="1"' in svg) is (halo == "auto")
         assert chart.to_pdf().startswith(b"%PDF")
+    wide = hg.Chart(width=300, height=150).text(
+        x=1, y=1, label="note", halo=hg.Halo("#123456", width=5, opacity=0.5)
+    )
+    assert 'stroke="#123456" stroke-opacity="0.5" stroke-width="5"' in wide.to_svg()
 
 
 def test_static_isolated_rows_have_round_dots():
@@ -2361,3 +2488,23 @@ def test_static_isolated_rows_have_round_dots():
     svg = chart.to_svg()
     assert len(re.findall(r"M([\d.-]+ [\d.-]+)L\1(?=[ML\"])", svg)) == 3
     assert 'stroke-linecap="round"' in svg
+
+
+def test_style_builders_check_their_values_in_python_names():
+    cases = [
+        (lambda: hg.TextStyle(opacity=2), "TextStyle opacity: expected a number from 0 to 1"),
+        (lambda: hg.Halo("#fff", opacity=2), "Halo opacity: expected a number from 0 to 1"),
+        (lambda: hg.PlotStyle(stroke_width=-1), "PlotStyle stroke_width: expected a number"),
+        (lambda: hg.LineStyle(stroke_width=0), "LineStyle stroke_width: expected a positive"),
+        (lambda: hg.TextStyle(color=3), "TextStyle color: expected a CSS color"),
+        (lambda: hg.TextBox(fill="#fff", radius=-2), "TextBox radius: expected a number"),
+        (lambda: hg.StrokeStyle(dash=[2, -1]), r"StrokeStyle dash\[1\]: expected a number"),
+        (
+            lambda: hg.Title("T", place=hg.Place(side="top", offset=20)),
+            "Title place: a title takes only side",
+        ),
+        (lambda: hg.Place(side="right", scope="panel"), "Place scope: a place on a side"),
+    ]
+    for make, message in cases:
+        with pytest.raises((ValueError, TypeError), match=message):
+            make()

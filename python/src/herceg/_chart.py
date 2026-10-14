@@ -21,6 +21,22 @@ from . import _geo, _render
 from ._data import Column, Matrix, Table, listed, shown
 from ._derive import BinSpec, Derived, Expr, _fields_of, bin_spec
 from ._rows import RowSelection, SelectionBinding, bindings
+from ._style import (
+    AXIS_ROLES,
+    PANEL_ROLES,
+    HaloOption,
+    Legend,
+    Style,
+    Theme,
+    ThemeName,
+    Title,
+    halo_spec,
+    insets,
+    legend_spec,
+    style_spec,
+    theme_spec,
+    title_spec,
+)
 
 # Annotations read at runtime (typing.get_type_hints) need Unpack too.
 if sys.version_info >= (3, 11):
@@ -39,6 +55,8 @@ BarStack = bool | Literal["fill"]
 AreaStack = bool | Literal["fill", "center", "wiggle"]
 StackOrder = Literal["input", "inside-out"]
 Orient = Literal["x", "y"]
+# What a mark's drawing is cut to: its plot, the whole chart, or nothing.
+Clip = Literal["plot", "chart", False]
 HistogramNormalize = Literal["count", "frequency", "probability", "percent", "density"]
 HistogramElement = Literal["bars", "step", "poly"]
 #: How rows sharing a heatmap's cell combine into its value.
@@ -51,8 +69,6 @@ class HeatmapSampling(TypedDict, total=False):
 
     reduce: Literal["mean", "max", "min"]
 
-
-ThemeName = Literal["light", "dark", "high-contrast", "high-contrast-dark", "auto"]
 
 _NUMERIC = ("number", "time")
 
@@ -238,6 +254,11 @@ def _check_format(format: dict[str, Any] | None, role: str, known: frozenset[str
         raise ValueError(f"{role}: {shown(unknown[0])} is not an Intl format option")
 
 
+#: Which panels share one instance of a scale (``Axis.scope``).
+Scope = Literal["chart", "panel", "row", "column"]
+SCOPES = ("chart", "panel", "row", "column")
+
+
 @dataclass
 class Axis:
     """Scale and axis options for x or y. Unset options use herceg's defaults.
@@ -254,6 +275,14 @@ class Axis:
     announcements, and crosshair labels only, such as ``{"weekday": "short",
     "month": "short", "day": "numeric"}`` or ``{"style": "unit", "unit":
     "millisecond"}``.
+
+    ``scope``, on the chart's ``x``, ``y``, and ``y_right`` only, says which
+    facet panels or subplots share one instance of the axis' scale:
+    ``"chart"`` (every panel), ``"panel"`` (each its own), ``"row"``, or
+    ``"column"``. By default x is the chart's, y is each subplot's own and the
+    chart's in facets, and y_right is as y. A scale panels do not share takes
+    its type from the marks of its own panels, so one subplot can show
+    categories along y while another shows numbers.
     """
 
     type: Literal["linear", "log", "time"] | None = None
@@ -268,10 +297,14 @@ class Axis:
     show: bool | None = None
     breaks: Sequence[Break | dict[str, Any]] | None = None
     seams: bool | dict[str, float] | None = None
+    scope: Scope | None = None
+    style: Style | dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         _check_format(self.format, "Axis format", _NUMBER_FORMAT | _TIME_FORMAT)
         _check_format(self.tooltip_format, "Axis tooltip_format", _NUMBER_FORMAT | _TIME_FORMAT)
+        if self.scope is not None and self.scope not in SCOPES:
+            raise ValueError(f"Axis scope: expected {listed(SCOPES)}; received {shown(self.scope)}")
 
     def _spec(self) -> dict[str, Any]:
         seams = self.seams
@@ -311,6 +344,8 @@ class Axis:
             "show": self.show,
             "breaks": [_break(rule) for rule in self.breaks] if self.breaks is not None else None,
             "seams": seams,
+            "scope": self.scope,
+            "style": style_spec(self.style, "Axis style", AXIS_ROLES),
         }
         return {key: value for key, value in spec.items() if value is not None}
 
@@ -517,12 +552,12 @@ class Navigator:
     line, area, scatter, bar, and candlestick mark). ``navigator=True`` is
     ``Navigator()``. The chart needs a number or time x axis; with facets or
     panels, the strip goes under all of them, draws every panel's marks, and
-    moves the x range they share, so ``resolve_x`` must be ``"shared"``.
+    moves the x range they share, so the x axis' scope must be ``"chart"``.
     """
 
     height: float | None = None
     marks: Sequence[str] | None = None
-    halo: bool | None = None
+    halo: HaloOption | None = None
 
     def _spec(self) -> dict[str, Any]:
         spec: dict[str, Any] = {}
@@ -629,16 +664,18 @@ class Panel:
     """
 
     id: str
-    title: str | None = None
+    title: str | Title | dict[str, Any] | None = None
     y: Axis | dict[str, Any] | None = None
     x: Axis | dict[str, Any] | None = None
     y_right: Axis | dict[str, Any] | None = None
     camera: Camera | dict[str, Any] | None = None
+    style: Style | dict[str, Any] | None = None
 
     def _spec(self) -> dict[str, Any]:
         spec = {
             "id": self.id,
-            "title": self.title,
+            "title": title_spec(self.title, "Panel title", placed=False),
+            "style": style_spec(self.style, "Panel style", PANEL_ROLES),
             "x": _axis(self.x, "Panel x"),
             "y": _axis(self.y, "Panel y"),
             "yRight": _axis(self.y_right, "Panel y_right"),
@@ -648,22 +685,20 @@ class Panel:
 
 
 class _SharedOptions(TypedDict, total=False):
-    title: str | None
+    title: str | Title | dict[str, Any] | None
     description: str | None
     width: int | None
     height: int | None
     y_right: Axis | dict[str, Any] | None
-    legend: bool | None
+    legend: bool | Legend | dict[str, Any] | None
+    padding: float | dict[str, float] | None
     tooltip: bool | TooltipMode | Tooltip | None
     zoom: bool | Literal["x", "y", "xy"] | None
     brush: Literal["x", "y", "xy", "lasso"] | None
     sync: str | None
     animation: bool | float | Animation | None
-    resolve_x: Literal["shared", "independent", "rows", "columns"] | None
-    resolve_y: Literal["shared", "independent", "rows", "columns"] | None
-    resolve_y_right: Literal["shared", "independent", "rows", "columns"] | None
     renderer: Literal["auto", "svg", "canvas"] | None
-    theme: ThemeName | dict[str, Any] | None
+    theme: ThemeName | Theme | dict[str, Any] | None
     locale: str | None
     time_zone: str | None
     projection: ProjectionName | Projection | dict[str, Any] | None
@@ -795,7 +830,7 @@ class Chart:
         self,
         data: Any = None,
         *,
-        title: str | None = None,
+        title: str | Title | dict[str, Any] | None = None,
         description: str | None = None,
         width: int | None = None,
         height: int | None = None,
@@ -806,21 +841,19 @@ class Chart:
         facet_columns: int | None = None,
         facet_row: str | None = None,
         facet_column: str | None = None,
-        resolve_x: Literal["shared", "independent", "rows", "columns"] | None = None,
-        resolve_y: Literal["shared", "independent", "rows", "columns"] | None = None,
-        resolve_y_right: Literal["shared", "independent", "rows", "columns"] | None = None,
         panels: Sequence[Panel | str] | None = None,
         panel_columns: int | None = None,
         panel_row_heights: Sequence[float] | None = None,
         panel_column_widths: Sequence[float] | None = None,
-        legend: bool | None = None,
+        legend: bool | Legend | dict[str, Any] | None = None,
+        padding: float | dict[str, float] | None = None,
         tooltip: bool | TooltipMode | Tooltip | None = True,
         zoom: bool | Literal["x", "y", "xy"] | None = False,
         brush: Literal["x", "y", "xy", "lasso"] | None = None,
         sync: str | None = None,
         animation: bool | float | Animation | None = False,
         renderer: Literal["auto", "svg", "canvas"] | None = None,
-        theme: ThemeName | dict[str, Any] | None = None,
+        theme: ThemeName | Theme | dict[str, Any] | None = None,
         locale: str | None = None,
         time_zone: str | None = None,
         projection: ProjectionName | Projection | dict[str, Any] | None = None,
@@ -884,30 +917,15 @@ class Chart:
             raise ValueError("Chart panels: facets or panels, not both; drop one")
         if panel_list:
             _check_subplot_ranges({"zoom": zoom, "brush": brush})
-        for name, resolution in (
-            ("resolve_x", resolve_x),
-            ("resolve_y", resolve_y),
-            ("resolve_y_right", resolve_y_right),
-        ):
-            choices = ("shared", "independent", "rows", "columns")
-            if resolution is not None and resolution not in choices:
-                raise ValueError(
-                    f"Chart {name}: expected {listed(choices)}; received {shown(resolution)}"
-                )
-            if resolution not in (None, "shared") and not (
-                facet is not None or facet_row is not None or facet_column is not None or panel_list
-            ):
-                raise ValueError(
-                    f"Chart {name}: resolves the scales of facets or panels, and the chart has "
-                    "none; give facet, facet_row, facet_column, or panels"
-                )
+        axes = {"x": x, "y": y, "y_right": y_right}
         # One window shows one x range, so every panel must share it.
-        if _navigator(navigator) is not None and resolve_x not in (None, "shared"):
+        x_scope = axis_scope(axes, "x")
+        if _navigator(navigator) is not None and x_scope not in (None, "chart"):
             raise ValueError(
-                "Chart navigator: needs one x scale shared by every panel, and resolve_x is "
-                f'{shown(resolve_x)}; set resolve_x="shared" or drop navigator'
+                "Chart navigator: needs one x scale shared by every panel, and x's scope is "
+                f'{shown(x_scope)}; give x scope "chart" or drop navigator'
             )
-        check_y_zoom({"zoom": zoom, "resolve_y": resolve_y, "resolve_y_right": None}, right=False)
+        check_y_zoom({"zoom": zoom, **axes}, right=False, subplots=bool(panel_list))
         _animation(animation)
         if facet_row is not None and facet_row == facet_column:
             raise ValueError(
@@ -953,10 +971,8 @@ class Chart:
             "y": y,
             "y_right": y_right,
             "legend": legend,
+            "padding": padding,
             "tooltip": tooltip,
-            "resolve_x": resolve_x,
-            "resolve_y": resolve_y,
-            "resolve_y_right": resolve_y_right,
             "zoom": zoom,
             "brush": brush,
             "sync": sync,
@@ -998,6 +1014,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        clip: Clip | None = None,
         tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
@@ -1035,6 +1052,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "line"),
                 "panel": panel,
+                "clip": _clip(clip, "line"),
                 "tooltip": self._mark_tooltip(table, tooltip, "line"),
                 "id": id,
             },
@@ -1069,6 +1087,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        clip: Clip | None = None,
         tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
@@ -1203,6 +1222,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "area"),
                 "panel": panel,
+                "clip": _clip(clip, "area"),
                 "tooltip": self._mark_tooltip(table, tooltip, "area"),
                 "id": id,
             },
@@ -1226,8 +1246,9 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        clip: Clip | None = None,
         tooltip: Tooltip | None = None,
-        halo: bool | None = None,
+        halo: HaloOption | None = None,
         id: str | None = None,
     ) -> Chart:
         """Bars: one band per category of x, or bars centered on number or time x.
@@ -1281,6 +1302,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "bar"),
                 "panel": panel,
+                "clip": _clip(clip, "bar"),
                 "tooltip": self._mark_tooltip(table, tooltip, "bar"),
                 "id": id,
             },
@@ -1304,6 +1326,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        clip: Clip | None = None,
         tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
@@ -1353,6 +1376,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "rug"),
                 "panel": panel,
+                "clip": _clip(clip, "rug"),
                 "tooltip": self._mark_tooltip(table, tooltip, "rug"),
                 "id": id,
             },
@@ -1382,6 +1406,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        clip: Clip | None = None,
         tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
@@ -1468,6 +1493,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "error_bar"),
                 "panel": panel,
+                "clip": _clip(clip, "error_bar"),
                 "tooltip": self._mark_tooltip(table, tooltip, "error_bar"),
                 "id": id,
             },
@@ -1504,6 +1530,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        clip: Clip | None = None,
         tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
@@ -1610,6 +1637,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "point"),
                 "panel": panel,
+                "clip": _clip(clip, "point"),
                 "tooltip": self._mark_tooltip(table, tooltip, "point"),
                 "id": id,
             },
@@ -1642,6 +1670,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        clip: Clip | None = None,
         id: str | None = None,
     ) -> Chart:
         """Counts of a number or time field in bins: of ``x`` (vertical bars) or
@@ -1721,6 +1750,7 @@ class Chart:
                     "label": label,
                     "facet": _mark_facet(facet, "histogram"),
                     "panel": panel,
+                    "clip": _clip(clip, "histogram"),
                     "id": id,
                 },
                 table,
@@ -1803,6 +1833,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "histogram"),
                 "panel": panel,
+                "clip": _clip(clip, "histogram"),
                 "id": id,
             },
             table,
@@ -1826,6 +1857,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        clip: Clip | None = None,
         tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
@@ -1860,6 +1892,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "candlestick"),
                 "panel": panel,
+                "clip": _clip(clip, "candlestick"),
                 "tooltip": self._mark_tooltip(table, tooltip, "candlestick"),
                 "id": id,
             },
@@ -1976,7 +2009,7 @@ class Chart:
         sort: Literal["input", "value"] | None = None,
         labels: bool | None = None,
         panel: str | None = None,
-        halo: bool | None = None,
+        halo: HaloOption | None = None,
         id: str | None = None,
     ) -> Chart:
         """A funnel: a centered bar per value of ``category``, top to bottom,
@@ -2032,6 +2065,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        clip: Clip | None = None,
         id: str | None = None,
     ) -> Chart:
         """Box plots of a number column's values per category.
@@ -2110,6 +2144,7 @@ class Chart:
                 "notch": notch,
                 "outliers": outliers,
                 "legendGroup": _legend_group(legend_group, "boxplot"),
+                "clip": _clip(clip, "boxplot"),
             },
             x,
             y,
@@ -2143,6 +2178,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        clip: Clip | None = None,
         id: str | None = None,
     ) -> Chart:
         """Letter-value ("boxen") plots of a number column's values per category.
@@ -2199,6 +2235,7 @@ class Chart:
                 "widthMethod": width_method,
                 "outliers": outliers,
                 "legendGroup": _legend_group(legend_group, "boxen"),
+                "clip": _clip(clip, "boxen"),
             },
             x,
             y,
@@ -2230,6 +2267,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        clip: Clip | None = None,
         id: str | None = None,
     ) -> Chart:
         """Violins of a number column's values per category.
@@ -2273,6 +2311,7 @@ class Chart:
                 "split": split,
                 "inner": inner,
                 "legendGroup": _legend_group(legend_group, "violin"),
+                "clip": _clip(clip, "violin"),
             },
             x,
             y,
@@ -2449,7 +2488,7 @@ class Chart:
         points: bool | None = None,
         label: str | None = None,
         panel: str | None = None,
-        halo: bool | None = None,
+        halo: HaloOption | None = None,
         id: str | None = None,
     ) -> Chart:
         """A radar: spokes from a center, clockwise from the top, and a polygon
@@ -2537,7 +2576,7 @@ class Chart:
         node_width: float | None = None,
         sort: Literal["input", "value"] | None = None,
         panel: str | None = None,
-        halo: bool | None = None,
+        halo: HaloOption | None = None,
         id: str | None = None,
     ) -> Chart:
         """A Sankey diagram: a row per flow, from the node named in ``source``
@@ -2602,7 +2641,7 @@ class Chart:
         link_label_field: str | None = None,
         layout: Literal["force", "circular", "layered"] | Mapping[str, Any] | None = None,
         panel: str | None = None,
-        halo: bool | None = None,
+        halo: HaloOption | None = None,
         id: str | None = None,
     ) -> Chart:
         """A network: a row per link between the nodes named in ``source`` and
@@ -3202,6 +3241,7 @@ class Chart:
         label: str | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        clip: Clip | None = None,
         tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
@@ -3278,6 +3318,7 @@ class Chart:
             "label": label,
             "facet": _mark_facet(facet, "heatmap"),
             "panel": panel,
+            "clip": _clip(clip, "heatmap"),
             "tooltip": self._mark_tooltip(table, tooltip, "heatmap"),
             "id": id,
         }
@@ -3420,6 +3461,7 @@ class Chart:
         label: str | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        clip: Clip | None = None,
         id: str | None = None,
     ) -> Chart:
         """Contours of a field sampled on a grid: lines where it crosses each
@@ -3504,6 +3546,7 @@ class Chart:
                 "label": label,
                 "facet": _mark_facet(facet, "contour"),
                 "panel": panel,
+                "clip": _clip(clip, "contour"),
                 "id": id,
             },
             table,
@@ -3524,6 +3567,7 @@ class Chart:
         label: str | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        clip: Clip | None = None,
         id: str | None = None,
     ) -> Chart:
         """A SciPy-layout linkage tree with leaves on category bands.
@@ -3607,6 +3651,7 @@ class Chart:
                 "label": label,
                 "facet": _mark_facet(facet, "dendrogram"),
                 "panel": panel,
+                "clip": _clip(clip, "dendrogram"),
                 "id": id,
             },
             table,
@@ -3627,6 +3672,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        clip: Clip | None = None,
         id: str | None = None,
     ) -> Chart:
         """Reference lines: horizontal at ``y`` or vertical at ``x``.
@@ -3651,6 +3697,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "rule"),
                 "panel": panel,
+                "clip": _clip(clip, "rule"),
                 "id": id,
             },
             table,
@@ -3672,7 +3719,8 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
-        halo: bool | None = None,
+        clip: Clip | None = None,
+        halo: HaloOption | None = None,
         id: str | None = None,
     ) -> Chart:
         """Shaded regions: from ``x1`` to ``x2``, from ``y1`` to ``y2``, or both.
@@ -3705,6 +3753,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "region"),
                 "panel": panel,
+                "clip": _clip(clip, "region"),
                 "id": id,
             },
             table,
@@ -3727,7 +3776,8 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
-        halo: bool | None = None,
+        clip: Clip | None = None,
+        halo: HaloOption | None = None,
         id: str | None = None,
     ) -> Chart:
         """Text at ``(x, y)``: ``label`` for constant text, or ``text_field`` naming a column.
@@ -3762,6 +3812,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "text"),
                 "panel": panel,
+                "clip": _clip(clip, "text"),
                 "id": id,
             },
             table,
@@ -3823,7 +3874,7 @@ class Chart:
     def widget(self) -> ChartWidget:
         """A live notebook widget of this chart: Python can update it after display,
         and it reports zooming, brushing, hovering, and clicks back. It reports
-        one x range, so its panels share x (``resolve_x`` is ``"shared"``).
+        one x range, so its panels share x (x's scope is ``"chart"``).
 
         Needs the ``notebook`` extra (``pip install 'herceg[notebook]'``).
         """
@@ -3835,12 +3886,31 @@ class Chart:
         """Self-contained HTML that renders the chart, with herceg and the data embedded."""
         return _render.html(*self.to_spec(), full_page=full_page)
 
-    def to_svg(self, *, fonts: _render.Fonts | None = None) -> str:
+    def to_svg(
+        self,
+        *,
+        fonts: _render.Fonts | None = None,
+        sizing: _render.SvgSizing | None = None,
+        preserve_aspect_ratio: str | None = None,
+        stroke_scaling: _render.StrokeScaling | None = None,
+    ) -> str:
         """Standalone SVG, measured with supplied fonts and referencing their families.
 
         Requires the ``export`` extra. Font files are not embedded in the SVG.
+        ``sizing="fluid"`` leaves out the width and height, so CSS or the
+        container sizes the SVG and its viewBox scales the chart;
+        ``preserve_aspect_ratio`` says how it fits a box of another shape
+        (``"none"`` stretches it), and ``stroke_scaling="fixed"`` keeps lines
+        their width in pixels however it scales. Scaling an SVG scales its
+        text and geometry as laid out at the chart's size.
         """
-        return _render.svg(*self.to_spec(), fonts=fonts)
+        return _render.svg(
+            *self.to_spec(),
+            fonts=fonts,
+            sizing=sizing,
+            preserve_aspect_ratio=preserve_aspect_ratio,
+            stroke_scaling=stroke_scaling,
+        )
 
     def to_png(self, *, scale: float = 2, fonts: _render.Fonts | None = None) -> bytes:
         """PNG at ``scale`` times the chart size (requires the ``export`` extra)."""
@@ -3879,6 +3949,9 @@ class Chart:
         *,
         scale: float = 2,
         fonts: _render.Fonts | None = None,
+        sizing: _render.SvgSizing | None = None,
+        preserve_aspect_ratio: str | None = None,
+        stroke_scaling: _render.StrokeScaling | None = None,
         fallback: Sequence[str] = (),
         missing_glyph: str | None = None,
         page_size: _render.PdfPageSize | None = None,
@@ -3905,6 +3978,16 @@ class Chart:
             raise ValueError(
                 f"save {option}: an option of PDF export; save to a .pdf path or drop {option}"
             )
+        svg_options = {
+            "sizing": sizing,
+            "preserve_aspect_ratio": preserve_aspect_ratio,
+            "stroke_scaling": stroke_scaling,
+        }
+        option = next((key for key, value in svg_options.items() if value is not None), None)
+        if not lower.endswith(".svg") and option is not None:
+            raise ValueError(
+                f"save {option}: an option of SVG export; save to a .svg path or drop {option}"
+            )
         if fonts is not None and lower.endswith(".html"):
             raise ValueError(
                 "save fonts: an option of SVG, PNG, or PDF export; "
@@ -3914,7 +3997,12 @@ class Chart:
             content: str | bytes = self.to_html()
         elif lower.endswith(".svg"):
             try:
-                content = self.to_svg(fonts=fonts)
+                content = self.to_svg(
+                    fonts=fonts,
+                    sizing=sizing,
+                    preserve_aspect_ratio=preserve_aspect_ratio,
+                    stroke_scaling=stroke_scaling,
+                )
             except (ValueError, TypeError) as error:
                 raise type(error)(str(error).replace("to_svg", "save")) from None
         elif lower.endswith(".png"):
@@ -4521,14 +4609,13 @@ class Chart:
 
     def _check_categories(self, spec: dict[str, Any], table: int | None) -> None:
         """Refuses, as the browser would, what panels with categories of their own
-        (``resolve_x`` or ``resolve_y`` other than ``"shared"`` on a category axis)
-        cannot do yet: sync, and brush along a y axis of such categories."""
+        (an x or y scope other than ``"chart"`` on a category axis) cannot do
+        yet: sync, and brush along a y axis of such categories."""
         if table is None or not (self._facets or self._panels):
             return
         kind = spec["type"]
         for axis in ("x", "y"):
-            default = "independent" if axis == "y" and self._panels else "shared"
-            resolution = self._settings[f"resolve_{axis}"] or default
+            scope = scope_of(self._settings, axis, subplots=bool(self._panels))
             field = spec.get(axis)
             # Calendars band days of the week, and in months days of the month too.
             calendar = kind == "heatmap" and spec.get("date") is not None
@@ -4539,12 +4626,12 @@ class Chart:
                 or (calendar and (axis == "y" or spec.get("calendar") == "months"))
                 or (isinstance(field, str) and self._kind(table, field) == "category")
             )
-            if resolution == "shared" or not banded:
+            if scope == "chart" or not banded:
                 continue
             if self._settings["sync"] is not None:
                 raise ValueError(
-                    f"Chart sync: panels with categories of their own (resolve_{axis}) "
-                    f"cannot sync yet; drop sync or resolve_{axis}"
+                    f"Chart sync: panels with categories of their own ({axis} scope "
+                    f'{shown(scope)}) cannot sync yet; drop sync or give {axis} scope "chart"'
                 )
             if axis == "y" and self._settings["brush"] not in (None, "x"):
                 raise ValueError(
@@ -4753,8 +4840,9 @@ _NODE_FIELDS = ("node", "color", "size")
 #: Chart options a live chart can change after display: all but data and facets,
 #: which decide the columns sent.
 OPTIONS = (
-    *("title", "description", "width", "height", "x", "y", "y_right", "legend", "tooltip"),
-    *("zoom", "brush", "sync", "animation", "resolve_x", "resolve_y", "resolve_y_right"),
+    *("title", "description", "width", "height", "x", "y", "y_right", "legend", "padding"),
+    "tooltip",
+    *("zoom", "brush", "sync", "animation"),
     *("renderer", "theme"),
     *("locale", "time_zone", "projection", "z", "camera", "box_aspect", "rotate", "navigator"),
     "drag",
@@ -4780,7 +4868,7 @@ def check_layout_options(
     interaction options, as the browser does: in a chart of their own or facet
     panels, each kind its own; among ``subplots`` subplots, what panels with
     axes take beside them, or what they take when no panel has axes. Panels
-    without axes have no scales to resolve."""
+    without axes have no scales to share."""
     if settings.get("drag") and not any(mark["type"] == "graph" for mark in layouts):
         raise ValueError(
             "Chart drag: moves a network's nodes, and the chart has no graph; drop drag"
@@ -4808,18 +4896,18 @@ def check_layout_options(
     else:
         _check_subplots(settings, layouts)
     # Layout marks have a subplot each, and facet panels draw the same marks.
-    resolved = next(
+    scoped = next(
         (
-            name
-            for name in ("resolve_x", "resolve_y", "resolve_y_right")
-            if settings.get(name) not in (None, "shared")
+            axis
+            for axis in ("x", "y", "y_right")
+            if axis_scope(settings, axis) not in (None, "chart")
         ),
         None,
     )
-    if resolved is not None:
+    if scoped is not None:
         raise ValueError(
-            f"Chart {resolved}: every panel draws a {_method(layouts[0]['type'])} or another "
-            f"mark without axes, so the panels have no scales to resolve; drop {resolved}"
+            f"Chart {scoped} scope: every panel draws a {_method(layouts[0]['type'])} or another "
+            f"mark without axes, so the panels have no scales to share; drop {scoped}'s scope"
         )
 
 
@@ -4911,22 +4999,23 @@ def _x_option(settings: Mapping[str, Any], options: Sequence[str]) -> str | None
     return used or ("x seams" if seams not in (None, False) else None)
 
 
-def check_y_zoom(settings: Mapping[str, Any], *, right: bool) -> None:
+def check_y_zoom(settings: Mapping[str, Any], *, right: bool, subplots: bool = False) -> None:
     """Refuses, as the browser does, zooming along y in charts whose facet panels
-    have y scales of their own (``resolve_y``), or with marks on the right axis
-    (``right``), right y scales of their own (``resolve_y_right``): a y zoom moves
-    both axes through the same pixels, in every panel."""
-    if settings["zoom"] not in ("y", "xy"):
+    have y scales of their own (y's scope), or with marks on the right axis
+    (``right``), right y scales of their own (y_right's scope): a y zoom moves
+    both axes through the same pixels, in every panel. Subplots refuse y zoom
+    on their own (see `_check_subplot_ranges`)."""
+    if settings["zoom"] not in ("y", "xy") or subplots:
         return
-    if settings["resolve_y"] not in (None, "shared"):
+    if scope_of(settings, "y", subplots=False) != "chart":
         raise ValueError(
-            "Chart zoom: charts whose panels have y scales of their own (resolve_y) zoom "
+            "Chart zoom: charts whose panels have y scales of their own (y scope) zoom "
             f"along x only; received {shown(settings['zoom'])}"
         )
-    if right and settings["resolve_y_right"] not in (None, "shared"):
+    if right and scope_of(settings, "y_right", subplots=False) != "chart":
         raise ValueError(
             "Chart zoom: charts whose panels have right y scales of their own "
-            f"(resolve_y_right) zoom along x only; received {shown(settings['zoom'])}"
+            f"(y_right scope) zoom along x only; received {shown(settings['zoom'])}"
         )
 
 
@@ -4950,14 +5039,15 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
     if settings.get("drag"):
         interaction["drag"] = True
     options = {
-        "title": settings["title"],
+        "title": title_spec(settings["title"], "Chart title", placed=True),
         "description": settings["description"],
         "width": settings["width"],
         "height": settings["height"],
         "x": _axis(settings["x"]),
         "y": _axis(settings["y"], "Chart y"),
         "yRight": _axis(settings["y_right"], "Chart y_right"),
-        "legend": settings["legend"],
+        "legend": legend_spec(settings["legend"]),
+        "padding": insets(settings.get("padding"), "Chart padding"),
         "tooltip": tooltip
         if tooltip is None or isinstance(tooltip, bool)
         else tooltip._spec()
@@ -4965,18 +5055,8 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
         else {"mode": tooltip},
         "interaction": interaction or None,
         "animation": _animation(animation),
-        "resolve": {
-            axis: settings[name]
-            for axis, name in (
-                ("x", "resolve_x"),
-                ("y", "resolve_y"),
-                ("yRight", "resolve_y_right"),
-            )
-            if settings[name]
-        }
-        or None,
         "renderer": settings["renderer"],
-        "theme": _theme(settings["theme"]),
+        "theme": theme_spec(settings["theme"]),
         "locale": settings["locale"],
         "timeZone": settings["time_zone"],
         "projection": _projection(settings.get("projection")),
@@ -5086,6 +5166,13 @@ def _left_along_y(mark: str, along: Orient, axis: str | None) -> None:
         )
 
 
+def _clip(clip: Clip | None, mark: str) -> Clip | None:
+    """A mark's ``clip``: what its drawing is cut to."""
+    if not (clip is None or clip is False or clip in ("plot", "chart")):
+        raise ValueError(f'{mark} clip: expected "plot", "chart", or False; received {shown(clip)}')
+    return clip
+
+
 def _mark_facet(facet: str | None, mark: str) -> str | None:
     """A mark's ``facet``: None, or ``"repeat"`` to draw all its rows in every
     facet panel instead of splitting them by the facet fields."""
@@ -5180,23 +5267,32 @@ def _axis(axis: Axis | dict[str, Any] | None, role: str = "Chart x") -> dict[str
         raise ValueError(f"{role} breaks: only the chart's x axis takes breaks; drop them")
     if role != "Chart x" and axis.seams is not None:
         raise ValueError(f"{role} seams: only the chart's x axis takes seams; drop them")
+    if role == "Chart z" and axis.style is not None:
+        raise ValueError("Chart z style: a 3D chart's axes take the theme's styles; drop style")
+    if role not in ("Chart x", "Chart y", "Chart y_right") and axis.scope is not None:
+        raise ValueError(
+            f"{role} scope: only the chart's x, y, and y_right take a scope; move it there"
+        )
     return axis._spec() or None
 
 
-_THEME_KEYS = {
-    "font_size": "fontSize",
-    "title_size": "titleSize",
-    "grid_dash": "gridDash",
-    "line_width": "lineWidth",
-    "bar_radius": "barRadius",
-    "tooltip_background": "tooltipBackground",
-    "tooltip_border": "tooltipBorder",
-}
-#: Theme keys that are one word, the same in Python and in the spec.
-_THEME_WORDS = frozenset(
-    ("extends", "background", "text", "muted", "grid", "axis", "font")
-    + ("palette", "sequential", "diverging", "rise", "fall")
-)
+def axis_scope(settings: Mapping[str, Any], axis: str) -> str | None:
+    """The scope the chart's ``x``, ``y``, or ``y_right`` (``axis``) sets, if any."""
+    given = settings.get(axis)
+    if given is None:
+        return None
+    scope = given.get("scope") if isinstance(given, Mapping) else given.scope
+    return scope if isinstance(scope, str) else None
+
+
+def scope_of(settings: Mapping[str, Any], axis: str, *, subplots: bool) -> str:
+    """Which panels share the chart's ``x``, ``y``, or ``y_right`` scale: its
+    own scope, or by default the whole chart for x, each subplot's own or the
+    whole chart in facets for y, and y's for y_right."""
+    if axis == "x":
+        return axis_scope(settings, "x") or "chart"
+    y = axis_scope(settings, "y") or ("panel" if subplots else "chart")
+    return y if axis == "y" else axis_scope(settings, "y_right") or y
 
 
 def _projection(projection: Any) -> Any:
@@ -5445,17 +5541,6 @@ def _take(column: Column, rows: np.ndarray) -> Column:
         values = np.where(missing, -1, picked).astype("<i4")
         return Column(column.kind, values, column.dictionary, column.shapes)
     return Column(column.kind, np.where(missing, np.nan, picked).astype(column.values.dtype))
-
-
-def _theme(theme: str | dict[str, Any] | None) -> Any:
-    if theme is None or isinstance(theme, str):
-        return theme
-    known = _THEME_WORDS | _THEME_KEYS.keys() | set(_THEME_KEYS.values())
-    unknown = [key for key in theme if key not in known]
-    if unknown:
-        names = listed(sorted(_THEME_WORDS | _THEME_KEYS.keys()))
-        raise ValueError(f"Chart theme: unknown key {shown(unknown[0])}; name one of {names}")
-    return {_THEME_KEYS.get(key, key): value for key, value in theme.items()}
 
 
 def _colors(colors: str | Sequence[str] | None, role: str) -> str | list[str] | None:
@@ -5735,6 +5820,7 @@ def line(
     legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
+    clip: Clip | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -5755,6 +5841,7 @@ def line(
         legend_group=legend_group,
         axis=axis,
         panel=panel,
+        clip=clip,
         tooltip=tooltip,
         id=id,
     )
@@ -5786,6 +5873,7 @@ def area(
     legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
+    clip: Clip | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -5821,6 +5909,7 @@ def area(
         legend_group=legend_group,
         axis=axis,
         panel=panel,
+        clip=clip,
         tooltip=tooltip,
         id=id,
     )
@@ -5841,7 +5930,8 @@ def bar(
     labels: bool | dict[str, Any] = False,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
-    halo: bool | None = None,
+    clip: Clip | None = None,
+    halo: HaloOption | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -5859,6 +5949,7 @@ def bar(
         labels=labels,
         axis=axis,
         panel=panel,
+        clip=clip,
         tooltip=tooltip,
         halo=halo,
         id=id,
@@ -5893,6 +5984,7 @@ def scatter(
     legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
+    clip: Clip | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -5924,6 +6016,7 @@ def scatter(
         legend_group=legend_group,
         axis=axis,
         panel=panel,
+        clip=clip,
         tooltip=tooltip,
         id=id,
     )
@@ -6078,6 +6171,7 @@ def heatmap(
     y_banded: bool = False,
     label: str | None = None,
     panel: str | None = None,
+    clip: Clip | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -6106,6 +6200,7 @@ def heatmap(
         y_banded=y_banded,
         label=label,
         panel=panel,
+        clip=clip,
         tooltip=tooltip,
         id=id,
     )
@@ -6128,6 +6223,7 @@ def contour(
     fill_opacity: float | None = None,
     label: str | None = None,
     panel: str | None = None,
+    clip: Clip | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -6147,6 +6243,7 @@ def contour(
         fill_opacity=fill_opacity,
         label=label,
         panel=panel,
+        clip=clip,
         id=id,
     )
 
@@ -6252,6 +6349,7 @@ def histogram(
     legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
+    clip: Clip | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -6278,6 +6376,7 @@ def histogram(
         legend_group=legend_group,
         axis=axis,
         panel=panel,
+        clip=clip,
         id=id,
     )
 
@@ -6343,7 +6442,7 @@ def funnel(
     sort: Literal["input", "value"] | None = None,
     labels: bool | None = None,
     panel: str | None = None,
-    halo: bool | None = None,
+    halo: HaloOption | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -6381,6 +6480,7 @@ def boxplot(
     legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
+    clip: Clip | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -6404,6 +6504,7 @@ def boxplot(
         legend_group=legend_group,
         axis=axis,
         panel=panel,
+        clip=clip,
         id=id,
     )
 
@@ -6426,6 +6527,7 @@ def boxen(
     legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
+    clip: Clip | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -6445,6 +6547,7 @@ def boxen(
         legend_group=legend_group,
         axis=axis,
         panel=panel,
+        clip=clip,
         id=id,
     )
 
@@ -6465,6 +6568,7 @@ def violin(
     legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
+    clip: Clip | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -6482,6 +6586,7 @@ def violin(
         legend_group=legend_group,
         axis=axis,
         panel=panel,
+        clip=clip,
         id=id,
     )
 
@@ -6549,7 +6654,7 @@ def radar(
     points: bool | None = None,
     label: str | None = None,
     panel: str | None = None,
-    halo: bool | None = None,
+    halo: HaloOption | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -6580,7 +6685,7 @@ def sankey(
     node_width: float | None = None,
     sort: Literal["input", "value"] | None = None,
     panel: str | None = None,
-    halo: bool | None = None,
+    halo: HaloOption | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -6614,7 +6719,7 @@ def graph(
     link_label_field: str | None = None,
     layout: Literal["force", "circular", "layered"] | Mapping[str, Any] | None = None,
     panel: str | None = None,
-    halo: bool | None = None,
+    halo: HaloOption | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -6753,6 +6858,7 @@ def candlestick(
     legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
+    clip: Clip | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -6772,12 +6878,11 @@ def candlestick(
         legend_group=legend_group,
         axis=axis,
         panel=panel,
+        clip=clip,
         tooltip=tooltip,
         id=id,
     )
 
 
-def _halo(value: bool | None, location: str) -> bool | None:
-    if value is not None and not isinstance(value, bool):
-        raise ValueError(f"{location} halo: expected a boolean; use False to disable halos")
-    return value
+def _halo(value: HaloOption | None, location: str) -> Any:
+    return halo_spec(value, location)

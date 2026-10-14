@@ -8,7 +8,7 @@ import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { panels } from "../../src/model/panels.ts";
 import type { AreaGeometry, RectGeometry } from "../../src/scene/scene.ts";
-import type { ScaleResolution } from "../../src/spec/spec.ts";
+import type { ScaleScope } from "../../src/spec/spec.ts";
 import legacy from "./fixtures/histogram-legacy.json";
 
 function build(config: ChartConfig) {
@@ -309,7 +309,7 @@ describe("histogram options", () => {
     },
   );
 
-  it.each(["shared", "independent", "rows", "columns"] as ScaleResolution[])(
+  it.each(["chart", "panel", "row", "column"] as ScaleScope[])(
     "chooses facet bins per y group (%s) independently of x grouping",
     (resolution) => {
       const data = table({
@@ -320,22 +320,23 @@ describe("histogram options", () => {
       const { model } = build({
         marks: [histogram(data, { y: "v", bins: { step: 10 } })],
         facet: facet({ row: "r", column: "c" }),
-        resolve: { x: "independent", y: resolution },
+        x: { scope: "panel" },
+        y: { scope: resolution },
       });
       const centers = model.panels().map((p) => [...model.panelSeries(p.key)[0]!.y]);
-      if (resolution === "shared")
+      if (resolution === "chart")
         expect(centers.every((c) => JSON.stringify(c) === JSON.stringify(centers[0]))).toBe(true);
-      if (resolution === "rows") {
+      if (resolution === "row") {
         expect(centers[0]).toEqual(centers[1]);
         expect(centers[2]).toEqual(centers[3]);
         expect(centers[0]).not.toEqual(centers[2]);
       }
-      if (resolution === "columns") {
+      if (resolution === "column") {
         expect(centers[0]).toEqual(centers[2]);
         expect(centers[1]).toEqual(centers[3]);
         expect(centers[0]).not.toEqual(centers[1]);
       }
-      if (resolution === "independent")
+      if (resolution === "panel")
         expect(new Set(centers.map((c) => JSON.stringify(c))).size).toBe(4);
     },
   );
@@ -358,7 +359,7 @@ describe("histogram options", () => {
         }),
       ],
       facet: facet("f"),
-      resolve: { y: "independent" },
+      y: { scope: "panel" },
     });
     expect(model.panelSeries("p").map((s) => [...s.values])).toEqual([
       [0.5, 0],
@@ -374,14 +375,14 @@ describe("histogram options", () => {
     expect([...model.panelSeries("p")[0]!.values]).toEqual([0.5, 0]);
   });
 
-  it.each(["shared", "independent", "rows", "columns"] as ScaleResolution[])(
+  it.each(["chart", "panel", "row", "column"] as ScaleScope[])(
     "renders horizontal histograms in subplots with %s y scales",
     (resolution) => {
       const data = table({ v: [0, 1, 2] });
       const { model } = build({
         marks: [histogram(data, { y: "v", bins: [0, 1, 3], panel: "*" })],
         panels: panels([{ id: "p" }, { id: "q" }], { columns: 2 }),
-        resolve: { y: resolution },
+        y: { scope: resolution },
       });
       for (const panel of model.panels()) {
         expect([...model.panelSeries(panel.key)[0]!.y]).toEqual([0.5, 2]);

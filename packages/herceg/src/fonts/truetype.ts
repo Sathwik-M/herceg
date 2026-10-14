@@ -1,6 +1,6 @@
-import { FontReader, fontError } from "./pdf-font-binary.ts";
+import { FontReader, fontError } from "./binary.ts";
 
-/** A validated static TrueType face. All state is owned by one export. */
+/** A validated static TrueType face, read-only once parsed, so exports and charts share it. */
 export interface TrueTypeFont {
   data: Uint8Array;
   tables: ReadonlyMap<string, Uint8Array>;
@@ -18,18 +18,20 @@ export interface TrueTypeFont {
   italicAngle: number;
   fixedPitch: boolean;
   noSubset: boolean;
+  /** OS/2 embedding permissions, which PDF export checks before embedding the face. */
+  fsType: number;
   glyph(code: number): number;
   characterCodes(): Iterable<number>;
 }
 
 export function parseTrueType(data: Uint8Array): TrueTypeFont {
-  if (!(data instanceof Uint8Array)) throw new TypeError("PDF font data must be a Uint8Array");
-  if (data.length > 32 * 1024 * 1024) throw new Error("PDF font exceeds the 32 MiB limit");
+  if (!(data instanceof Uint8Array)) throw new TypeError("font data must be a Uint8Array");
+  if (data.length > 32 * 1024 * 1024) throw new Error("font exceeds the 32 MiB limit");
   const input = new FontReader(data);
   const signature = input.u32(0);
   if (signature !== 0x00010000 && signature !== 0x74727565 && signature !== 0x4f54544f)
     throw new Error(
-      "PDF fonts must be single sfnt TrueType fonts; WOFF and collections are unsupported",
+      "fonts must be single sfnt TrueType fonts; WOFF and collections are unsupported",
     );
   const count = input.u16(4);
   if (count < 1 || count > 128) fontError("invalid table count");
@@ -50,11 +52,9 @@ export function parseTrueType(data: Uint8Array): TrueTypeFont {
   for (let i = 1; i < ranges.length; i++)
     if (ranges[i]!.start < ranges[i - 1]!.end) fontError("overlapping tables");
   if (tables.has("CFF ") || tables.has("CFF2"))
-    throw new Error(
-      "PDF export does not support OpenType CFF outlines; supply a TrueType (glyf) font",
-    );
+    throw new Error("OpenType CFF outlines are unsupported; supply a TrueType (glyf) font");
   if (tables.has("fvar"))
-    throw new Error("PDF export needs a static TrueType font; instantiate variable fonts first");
+    throw new Error("variable fonts are unsupported; instantiate a static TrueType font first");
   const table = (tag: string, minimum: number) => {
     const bytes = tables.get(tag);
     if (!bytes || bytes.length < minimum) fontError(`missing or truncated ${tag} table`);
@@ -149,9 +149,6 @@ export function parseTrueType(data: Uint8Array): TrueTypeFont {
   table("OS/2", minimum);
   // Bits 4–15 were unassigned in versions 0–1 and must be ignored.
   const fsType = os2.u16(8) & (version < 2 ? 0x000f : 0xffff);
-  if (fsType & 0x0002)
-    throw new Error("PDF font OS/2 fsType forbids embedding (restricted license)");
-  if (fsType & 0x0200) throw new Error("PDF font OS/2 fsType allows bitmap embedding only");
   const post = tables.get("post");
   const postReader = post && post.length >= 16 ? new FontReader(post) : undefined;
   return {
@@ -170,6 +167,7 @@ export function parseTrueType(data: Uint8Array): TrueTypeFont {
     italicAngle: postReader ? postReader.view.getInt32(4) / 65536 : 0,
     fixedPitch: !!postReader?.u32(12),
     noSubset: !!(fsType & 0x0100),
+    fsType,
     ...readCmap(table("cmap", 4), glyphCount),
   };
 }

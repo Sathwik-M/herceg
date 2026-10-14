@@ -1,3 +1,4 @@
+import { legendOf } from "../helpers/guides.ts";
 // Where networks' nodes go: positions kept by node as the data changes,
 // nodes settling around a moved node, circular and layered layouts, and
 // layouts spread over frames.
@@ -650,7 +651,7 @@ describe("moving nodes of hidden groups", () => {
     const model = build({
       marks: [graph(links, { source: "from", target: "to", nodes, node: "name", color: "team" })],
     });
-    const legend = model.scene(estimateText).legend;
+    const legend = legendOf(model.scene(estimateText));
     model.hidden.add(legend.find(({ label }) => label === "x")!.key);
     model.scene(estimateText);
     expect(model.items!.setItemPosition(key("a"), { x: 7, y: 8 })).toEqual({

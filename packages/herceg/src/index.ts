@@ -178,6 +178,7 @@ export {
   type SelectionBinding,
 } from "./model/row-selection.ts";
 export { renderToSVG, type StaticOptions } from "./render/static.ts";
+export type { SvgAlign, SvgSizing } from "./render/svg.ts";
 export { type TimeBreaks, timeBreaks } from "./scale/breaks.ts";
 export * from "./scale/schemes.ts";
 export type { PlotRect } from "./scene/scene.ts";

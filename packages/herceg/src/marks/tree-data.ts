@@ -457,7 +457,7 @@ export class TreeData {
       key,
       fill,
       anchor: "start",
-      halo: false,
+      halo: undefined,
       coords: Float32Array.from(labels.flatMap(([at]) => [at, y])),
       labels: labels.map(([, label]) => label),
       count: labels.length,

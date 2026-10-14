@@ -774,12 +774,7 @@ stay in view; on a category axis, a constant position is a band index (0 is
 the first band, -0.5 its edge). Regions are drawn in mark order (list them first to shade
 underneath the data); rules and text are drawn above the data, as SVG even
 when the data is on a canvas. Text and region labels have halos to stay
-readable over lines. A halo uses the background at full opacity when its
-contrast with the text is at least 3:1; otherwise it uses the existing
-light/dark fallback. `halo: false` disables it on `text`, `region`, `bar`,
-`funnel`, `radar`, `sankey`, and `graph` (both node and link labels), and on
-`rangeNavigator({ halo: false })`. Marks that choose halos only where needed
-keep that choice by default. These rules also apply to static SVG and PDF.
+readable over lines (see Text halos).
 Annotations outside the view are left out. Text labels that would
 cover an earlier label of the same mark, in row order, are drawn anyway by
 default. With `overlap: "hide"` they are left out. With `overlap: "move"`,
@@ -1099,8 +1094,8 @@ position; the pointer finds, and keyboard reading anchors on, each dodged
 bar where it is drawn. A bin whose center is out of view has no tooltip.
 
 With facets, each panel counts its own rows. Automatic/fixed bins are chosen
-from rows in panels sharing the binned axis (`resolve.x` for vertical,
-`resolve.y` for horizontal), per panel, row, or column when requested. Rows
+from rows in panels sharing the binned axis (`x.scope` for vertical,
+`y.scope` for horizontal), per panel, row, or column when requested. Rows
 without a facet value widen no bins. Normalization and common normalization
 are local to each panel, and a series absent from a panel has no bars there
 but keeps its dodge slot, so a series stands in the same place in every
@@ -1384,7 +1379,8 @@ createChart(element, {
     { id: "left", x: { show: false } },
     { id: "matrix" },
   ], { columns: 2, rowHeights: [1, 4], columnWidths: [1, 4] }),
-  resolve: { x: "columns", y: "rows" },
+  x: { scope: "column" },
+  y: { scope: "row" },
 });
 ```
 
@@ -1461,8 +1457,13 @@ the notes), — not yet (refused with an error), · not applicable.
   Canvas (for data marks), and static SVG/PDF export.
 - Line and area gaps preserve isolated finite rows as stroke-sized dots on
   every renderer and export. Bars colored by their own category keep full
-  bands, labels, and category legends. Text halos can be disabled on every
-  mark that draws them; time tick labels are unique in their axis format.
+  bands, labels, and category legends. Text halos take a color or turn off
+  on every mark that draws them; time tick labels are unique in their axis format.
+- Every mark on the chart's scales takes `clip`: what
+  its drawing is cut to, `"plot"` (data's default), `"chart"`, or `false`
+  (the default of rules and text, which leave out what lies outside the
+  plot). With `false` or `"chart"`, markers at the plot's edge show whole;
+  the chart does not grow, so what passes its edges is still cut there.
 - Every built-in mark exports through `renderToPDF`; each chart is one page and
   one Figure, including its facets or subplots.
 - Selected rows and Highlight are what charts bound to a selection store do
@@ -1523,8 +1524,8 @@ the notes), — not yet (refused with an error), · not applicable.
   layers each split their rows or repeat, and a network's panels share one
   layout), or fill a subplot of their own beside panels with axes (see
   [Layout marks in panels](#layout-marks-in-panels)). Their panels have no
-  axes, so they neither zoom along axes, brush ranges, sync, nor resolve
-  scales (`resolve` other than "shared"); trees
+  axes, so they neither zoom along axes, brush ranges, sync, nor scope
+  scales (a `scope` other than "chart"); trees
   drill, maps and networks pan, zoom, and lasso, and networks move nodes
   there as in a chart of their own. 3D marks draw in subplots with a camera
   per panel; 3D facets are refused.
@@ -2290,8 +2291,8 @@ heights that mean different things; for unrelated measures, two charts
 sharing x through `interaction: { sync }` are often easier to read.
 
 In charts with facets or subplots, every panel drawing marks on the right
-axis has one. Its scale is shared as the left one's is (`resolve.y`), unless
-`resolve.yRight` says otherwise:
+axis has one. Its scale is shared as the left one's is (`y.scope`), unless
+`yRight.scope` says otherwise:
 
 ```ts
 createChart(element, {
@@ -2300,8 +2301,7 @@ createChart(element, {
     line(traffic, { x: "time", y: "requests", axis: "right" }),
   ],
   facet: facet("region"),
-  resolve: { yRight: "independent" }, // each region's requests on a scale of its own
-  yRight: { title: "requests/s" },
+  yRight: { title: "requests/s", scope: "panel" }, // each region's requests on a scale of its own
 });
 ```
 
@@ -2376,7 +2376,7 @@ transitions work in time shown; a pixel on a seam reads as the session that
 opens there, and a synced cursor at a time this chart leaves out is not
 drawn. A view entirely inside a break widens to the hour shown on either
 side of it; a fixed `domain` like that is refused. Breaks need a time x
-axis; with x scales of their own (`resolve.x`), every panel's time scale
+axis; with x scales of their own (`x.scope`), every panel's time scale
 leaves them out, and panels over numbers have none. Rules, regions, and
 text inside a break are drawn at its seam.
 
@@ -2462,7 +2462,7 @@ stay comparable in the strip, while panels with y scales of their own (a
 price panel over a volume panel) each fill it on their own scale, the right
 axis apart from the left. A mark drawn whole in several panels sharing a y
 scale (`facet: "repeat"`, `panel: "*"`) is drawn once. The panels must
-share x: `resolve.x` other than `"shared"` is refused, as one window shows
+share x: an `x.scope` other than `"chart"` is refused, as one window shows
 one x range. Wheel zoom and panning in any panel move the window, and its
 changes are one `viewport` event each (without `panels`, as for any change
 to a shared x), synced with other charts by x value whatever their panels.
@@ -2517,7 +2517,7 @@ In a spec, `navigator` is
 
 `facet` draws the chart once per value of a category field, wrapped into
 rows of panels, or once per pair of values of two fields, in a grid; panels
-share their x and y scales unless `resolve` says otherwise:
+share their x and y scales unless the scales' `scope` says otherwise:
 
 ```ts
 import { facet } from "herceg";
@@ -2537,15 +2537,14 @@ createChart(element, {
 createChart(element, {
   marks: [line(sales, { x: "week", y: "units" })],
   facet: facet({ row: "region", column: "product" }), // in a spec: { row: "region", column: "product" }
-  resolve: { y: "rows" }, // each row of panels gets a y scale of its own
+  y: { scope: "row" }, // each row of panels gets a y scale of its own
 });
 
 // Each region measured over its own weeks: an x scale per panel.
 createChart(element, {
   marks: [line(trials, { x: "week", y: "response" })],
   facet: facet("site", { columns: 3 }),
-  resolve: { x: "independent" },
-  x: { title: "Week" },
+  x: { title: "Week", scope: "panel" },
   interaction: { zoom: true },
 });
 
@@ -2553,14 +2552,15 @@ createChart(element, {
 createChart(element, {
   marks: [bar(sales, { x: "product", y: "units", series: "channel", stack: true })],
   facet: facet("region"),
-  resolve: { x: "independent" }, // in a spec: "resolve": { "x": "independent" }
+  x: { scope: "panel" }, // in a spec: "x": { "scope": "panel" }
 });
 
 // A heatmap per region, each over the hours and hosts its own rows hold.
 createChart(element, {
   marks: [heatmap(load, { x: "hour", y: "host", color: "cpu" })],
   facet: facet("region"),
-  resolve: { x: "independent", y: "independent" },
+  x: { scope: "panel" },
+  y: { scope: "panel" },
 });
 ```
 
@@ -2576,9 +2576,9 @@ over a table split its rows by the fields, which the table must have, unless
 they have `facet: "repeat"`; marks without a table repeat. A layout mark (a
 pie) is a faceted chart's only mark, and splits its rows too (see [Layout
 marks in panels](#layout-marks-in-panels)). Panels share
-their x and y scales; `resolve: { y }` gives each panel a y scale of its own
-fitting what it draws (`"independent"`), or one per row (`"rows"`) or per
-column (`"columns"`), and `resolve: { x }` does the same for x. x labels go
+their x and y scales (`scope: "chart"`); `y: { scope }` gives each panel a y
+scale of its own fitting what it draws (`"panel"`), or one per row (`"row"`)
+or per column (`"column"`), and `x: { scope }` does the same for x. x labels go
 under the lowest panel of each column, or under every panel when a column's
 panels have different x scales, with the x title once under each scale's
 lowest labels; y labels go
@@ -2643,7 +2643,7 @@ or brushed along a y axis of categories.
 ### Subplots
 
 `panels` draws different marks in different panels of one chart, sharing x
-unless `resolve.x` says otherwise:
+unless `x.scope` says otherwise:
 
 ```ts
 import { panels } from "herceg";
@@ -2674,14 +2674,15 @@ ticks for its size). They share the x axis, labeled under
 the lowest panel of each column, and each has a y scale of its own, from its
 marks (on a category y axis, of horizontal bars, box plots, violins,
 heatmaps, or points, its own categories, as in Small multiples);
-`resolve: { y: "shared" }` (or `"rows"`, `"columns"`) shares it
+`y: { scope: "chart" }` (or `"row"`, `"column"`) shares it
 instead, when the panels sharing it agree on its type, domain, `zero`, and
 `nice`. A panel's `y` takes the place of the chart's `y` settings for its
 own axis, so one panel can be logarithmic or show times while another is
-linear; a panel's y title is centered beside it. `resolve: { x:
-"independent" }` (or `"rows"`, `"columns"`) gives panels x scales of their
-own in the same way, each from its panels' marks (a time axis when they
-place times) and its first panel's `x` settings, with labels and a title
+linear; a panel's y title is centered beside it. `x: { scope: "panel" }`
+(or `"row"`, `"column"`) gives panels x scales of their own in the same
+way, each from its panels' marks (a time axis when they place times, a
+category axis when they place categories, whatever other panels' scales
+hold) and its first panel's `x` settings, with labels and a title
 under its panels as in Small multiples; panels sharing an x scale must agree
 on its settings, title included, and a panel's `x: { show }` shows or leaves
 out its own labels. A time series over a time axis can then sit above a distribution
@@ -2697,7 +2698,7 @@ createChart(element, {
     { id: "series", x: { title: "Time" }, y: { title: "ms" } },
     { id: "spread", x: { title: "Latency (ms)" } },
   ]),
-  resolve: { x: "independent" }, // in a spec: "resolve": { "x": "independent" }
+  x: { scope: "panel" }, // in a spec: "x": { "scope": "panel" }
 });
 ```
 
@@ -2885,22 +2886,23 @@ is internal, and charts take only marks the mark functions make.
 | Option | Description |
 | --- | --- |
 | `marks` | Marks to draw, bottom to top (rules are drawn on top). |
-| `title`, `description` | Accessible name and description; the title is drawn. |
+| `title`, `description` | Accessible name and description; the title is drawn: a string, or `{ text, place?: { side: "top" \| "bottom" }, style? }` (see Titles, legends, and padding). |
+| `padding` | Pixels of whitespace around what the chart draws, one number or `{ top?, right?, bottom?, left? }`; `0` lets a chart without axes fill its size. Left out, spacing is automatic. |
 | `width`, `height` | Fixed size; omitted dimensions follow the container (a block one in Firefox, where a chart in a `<span>` keeps its first width). |
-| `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `title`, `grid`, `ticks`, `format` (Intl options, for tick labels and tooltips), `tooltipFormat` (Intl options for tooltips, the keyboard, and crosshair labels only; see Tooltips), `show`; on a time x axis, `breaks: timeBreaks([...])` and `seams: true` or `{ minSpacing?: number }` (see Financial charts). |
-| `yRight` | The right y axis for marks with `axis: "right"`, with the same options as `y`. |
+| `x`, `y` | The scales named "x" and "y" and their axes: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `scope` (`"chart"`, `"panel"`, `"row"`, or `"column"`: which facet panels or subplots share one instance of the scale; x the chart's by default, y each subplot's own and the chart's in facets), `title`, `grid`, `ticks`, `format` (Intl options, for tick labels and tooltips), `tooltipFormat` (Intl options for tooltips, the keyboard, and crosshair labels only; see Tooltips), `show`, `style` (the axis' `tickLabel`, `axisTitle`, `axisLine`, `tick`, and `grid` styles; see Styles); on a time x axis, `breaks: timeBreaks([...])` and `seams: true` or `{ minSpacing?: number }` (see Financial charts). |
+| `yRight` | The scale "yRight" and its axis on the right, for marks with `axis: "right"`, with the same options as `y` (its `scope` as `y`'s unless given). |
 | `facet` | `facet(field, { columns? })`: a panel per value of a category field, wrapped; or `facet({ row?, column? })`: a grid by two fields (see Small multiples). |
-| `resolve` | `{ x?, y?, yRight? }`, each `"shared" \| "independent" \| "rows" \| "columns"`: which panels share an x, y, or right y scale (`yRight` as `y` unless given; see Small multiples, Subplots, and A second y axis). |
-| `panels` | `panels([{ id, title?, x?, y? }, ...], { columns?, rowHeights?, columnWidths? })`: subplots whose marks name them in `panel` (see Subplots). |
+| `panels` | `panels([{ id, title?, x?, y?, style? }, ...], { columns?, rowHeights?, columnWidths? })`: subplots whose marks name them in `panel` (see Subplots); a subplot's `title` is a string or `{ text, style? }`, and its `style` sets its own roles (`plot`, `panelTitle`, and the axes' roles). |
 | `navigator` | `rangeNavigator({ height?, marks? })`: a strip under the plot (under every panel, with facets or subplots) over the whole x axis, whose window shows and moves the x range in view (see Range navigator). |
-| `legend` | Shown by default for two or more series; legend entries toggle series. |
+| `legend` | Shown by default for two or more series; `true` or `{ place?, style? }` shows it for one, `false` hides it. Entries toggle series. `place` puts it on a side or inside a plot (see Titles, legends, and padding); `style` sets its `legendLabel`, `legendTitle`, and `tickLabel` styles. |
 | `tooltip` | `true` (default), `false`, or `{ mode?: "nearest-x" \| "nearest-y" \| "nearest", axisLabels?: true }`; `axisLabels` labels the crosshair on the axes. Marks take `tooltip: { fields }` for data of their rows (see Tooltips). |
 | `renderTooltip` | JavaScript only: the tooltip's content of your own, text or a node, in the built-in box (see Tooltips). |
 | `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom); maps and networks pan and zoom both ways (`true` or `"xy"`), and treemaps and sunbursts drill into nodes (`true`). `drag: true` moves a network's nodes. `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom), unless it selects rows for `rowSelection`. `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. `rotate: false` stops dragging from turning 3D charts, whose `zoom` is `true` or `false`. Maps and networks take a `"lasso"` brush and no other. |
 | `rowSelection` | `rowSelection({ store, channel, events?, effect? }, ...)`: channels of selection stores, one per table, that brushes, lassos, and clicks write rows to and the chart highlights (see Selected rows). |
 | `animation` | `true` or `{ duration?, values? }`: the axes move gradually to views asked for, and with `values: true`, bars, pie slices, points, small lines and areas, and the axes with them, to changed values (see Animation). Off by default. |
 | `renderer` | `"auto"` (default), `"svg"`, or `"canvas"`. |
-| `theme` | A theme name or an object overriding a theme's tokens (see Themes). |
+| `theme` | A theme name, or `{ extends?, tokens?, style? }`: a built-in theme with tokens and role styles of your own (see Themes and Styles). |
+| `fonts` | JavaScript only: fonts from `prepareFonts` (`herceg/fonts`) to measure text with and draw it in, in the browser and every export (see Fonts). |
 | `locale`, `timeZone` | Label locale and time zone (`"local"`, `"UTC"`, or an IANA name). |
 | `projection` | How maps are projected: a projection's name or `{ type, centralMeridian?, parallels?, fit? }` (see Maps). |
 | `z`, `camera`, `boxAspect` | 3D charts' vertical axis (options as for `x` and `y`), where they are seen from at first (`{ azimuth?, elevation?, zoom?, perspective? }`), and their box's side lengths (see 3D charts). |
@@ -2925,8 +2927,8 @@ for an x range), `selection` and `selectionPanels` (see Small multiples for
 `toPixel`, `fromPixel`, `formatValue`, and `inspect` (see Panels and pixels),
 `getLegend()`, `getHiddenKeys()`, `setHiddenKeys(keys)`, and
 `setVisibility(keys, visible)` (see Hiding series), `on(event, listener)`,
-`render()`, `toSVG()` and `toPNG()` (see Export), `destroy()`, and `loading`
-(a promise while the GPU painter for large point series, the animation
+`render()`, `toSVG(sizing?)` and `toPNG()` (see Export), `destroy()`, and `loading`
+(a promise while the chart's `fonts` load, the GPU painter for large point series, the animation
 code, the controls of a 3D chart, a map, a tree, or a network, the brush, a
 navigator's sliders, or what reads tooltip fields and draws
 `renderTooltip`'s content load, otherwise undefined). The brush loads when a chart can brush
@@ -3114,22 +3116,29 @@ on, and transparent, showing that surface: the background colors around it
 the user's `prefers-color-scheme` when the page's `color-scheme` allows dark.
 It switches when that changes. A chart in a frame judges the frame's own
 page; give it a theme or background when the page around the frame is dark.
-Any theme shows the page instead with `background: "transparent"`, as for a
-chart in a tinted card. The categorical palettes keep adjacent series apart
-for the common forms of color blindness, and every color reaches 3:1 against
-its theme's surface (the high-contrast palettes 4.5:1).
+Any theme shows the page instead with `tokens: { background: "transparent" }`,
+as for a chart in a tinted card. The categorical palettes keep adjacent
+series apart for the common forms of color blindness, and every color
+reaches 3:1 against its theme's surface (the high-contrast palettes 4.5:1).
 
-An object overrides any of a theme's tokens, starting from `extends` (light
-by default):
+An object starts from `extends` (light by default) and changes its tokens,
+the colors its styles are made of, and its role styles (see Styles):
 
 ```ts
 createChart(element, {
   theme: {
     extends: "auto",
-    background: "transparent",
-    text: "var(--ink, #1c2333)",
-    palette: ["var(--brand)", "#ec6a2c", "#109e7f"],
-    barRadius: 0,
+    tokens: {
+      background: "transparent",
+      text: "var(--ink, #1c2333)",
+      palette: ["var(--brand)", "#ec6a2c", "#109e7f"],
+    },
+    style: {
+      text: { font: "Inter, sans-serif" },
+      title: { align: "center" },
+      grid: { dash: [2, 3] },
+      bar: { radius: 0 },
+    },
   },
   marks: [bar(sales, { x: "region", y: "total" })],
 });
@@ -3137,17 +3146,12 @@ createChart(element, {
 
 | Token | Description |
 | --- | --- |
-| `background`, `text`, `muted`, `grid`, `axis` | Chart surface, titles and legend text, tick labels, grid lines, axis lines. |
-| `font`, `fontSize`, `titleSize` | Font family, label size, and title size in px. |
-| `gridDash` | Grid line dash pattern, such as `[2, 3]`; `[]` for solid lines. |
-| `lineWidth` | Width of lines and area outlines that set none. |
-| `barRadius` | Corner radius at the value end of unstacked bars; `0` for square bars. |
-| `tooltipBackground`, `tooltipBorder` | Tooltip surface and border. |
+| `background`, `text`, `muted`, `grid`, `axis` | Chart surface, titles and legend text, tick labels, grid lines, axis lines and ticks. Roles without a color of their own take these. |
 | `palette` | Series colors, assigned in order. |
 | `sequential`, `diverging` | Hex ramps for color scales, low to high. |
 | `rise`, `fall` | Candlestick colors. |
 
-Colors and the font may use CSS variables. Charts in a page read them, and
+Colors and fonts may use CSS variables. Charts in a page read them, and
 colors in any CSS syntax, from the page; they read the page again when the
 class, style, or data attributes of its root or body element change (call
 `update({})` after other theme changes). Static output (`renderToSVG`, PNG,
@@ -3156,6 +3160,88 @@ PDF output reads hex, `rgb()`, `hsl()`, and named colors. PDF pages are
 white: a transparent theme with light text (a dark theme without its
 background, or `"auto"` on a dark page) gets the dark surface it was meant
 for.
+
+### Styles
+
+Each kind of text and line a chart draws is a role with a style. The theme
+gives every role's (`theme.style`); an axis' `style`, the legend's, the
+title's, and a subplot's `style` change their own, property by property, so
+the most specific setting wins: the theme, then the chart's axis, title, or
+legend, then the subplot, then the subplot's own axis.
+
+| Role | Kind | What it styles |
+| --- | --- | --- |
+| `text` | text | The base every other text role starts from: its font, size, color. |
+| `title`, `panelTitle` | text | The chart's title; subplots' titles and facet headers. |
+| `axisTitle`, `tickLabel` | text | Axis titles; tick labels (and the values color legends write). |
+| `legendLabel`, `legendTitle` | text | Series entries' labels; the titles of color and size legends. |
+| `grid`, `axisLine`, `tick` | line | Grid lines, axis lines, and tick marks. |
+| `plot` | plot | `fill` behind the plot (under the grid) and `stroke`, `strokeWidth` around it. |
+| `line`, `bar`, `tooltip` | marks | Lines' default `strokeWidth`, bars' corner `radius`, the tooltip's `fill` and `stroke`. |
+
+A text style sets `font`, `fontSize`, `fontWeight` (100 to 900), `fontStyle`,
+`color`, `opacity`, `lineHeight` (a multiple of the size), `align` (`"start"`,
+`"center"`, or `"end"` of the span the text is placed in: the chart's width
+for its title, the plot's for a subplot's title), `halo` (see Text halos),
+`background` (`{ fill, stroke?, strokeWidth?, radius? }`, a box behind the
+text) with `padding` around the text, in pixels: the box goes where the text
+would go without one, and the text moves in by the padding. A line style
+sets `stroke`, `strokeWidth`, `dash` (pixels, or `"-"`, `"--"`, `":"`,
+`"-."`), and `opacity`. Text is colored by `color`, never `fill`; marks
+keep their own `stroke`, `fill`, and `strokeWidth`, which win over the
+theme's `line` and `bar` defaults.
+
+```ts
+createChart(element, {
+  title: { text: "Latency\nby service", style: { align: "center" } },
+  y: { title: "ms", style: { tickLabel: { color: "#3266d6" } } }, // match the series it measures
+  yRight: { title: "req/s", style: { tickLabel: { color: "#ec6a2c" } } },
+  theme: { style: { plot: { fill: "#f6f8fb" }, grid: { stroke: "#ffffff", strokeWidth: 2 } } },
+  marks: [/* ... */],
+});
+```
+
+### Titles, legends, and padding
+
+A chart's title goes at the top (the default) or with `place: { side:
+"bottom" }` below the plots; its style's `align` puts it at the start,
+center, or end of the chart's width, and `"\n"` breaks it into lines, each
+taking a line of room. A legend's `place` is a side, `{ side, align?, offset? }`
+(rows that wrap above or below the plots, a column beside them; `align`
+along the side, `offset` pixels of extra room), or a place inside a plot,
+`{ inside, inset?, scope?, panel? }`: a corner or the middle of an edge
+(`"top-left"`, `"top"`, ..., `"left"`) `inset` pixels in (8 by default),
+inside the plot of subplot or facet `panel` (the first by default), or with
+`scope: "chart"` inside the area every panel shares. A legend inside takes
+no room from the plots.
+
+```ts
+createChart(element, {
+  legend: { place: { inside: "top-right" }, style: { legendLabel: { fontSize: 11 } } },
+  padding: { top: 4, right: 12 },
+  marks: [/* ... */],
+});
+```
+
+Without `padding`, spacing is automatic: a few pixels at each edge, more
+where labels reach past the plot. With it (`0` included), `padding` is the
+whitespace outside everything the chart draws: tick labels, titles, and
+legends keep their room. A sparkline sets `padding: 0`, hides its axes
+(`show: false`), and gives its axes exact domains (`nice: false`).
+
+### Text halos
+
+Text drawn over data has a halo, an outline in the color of what it is
+drawn on, so it stays readable over lines: `halo: "auto"` (the default)
+takes that surface (the plot's `fill`, or the chart's background) where the
+text contrasts with it at 3:1 or more, else white behind dark text and
+black behind light text. `false` draws none, and `{ color, width?, opacity? }`
+(3 pixels wide by default) draws one of your own. `text`, `region`, `bar`,
+`funnel`, `radar`, `sankey`, `graph` (node and link labels), and
+`rangeNavigator` take `halo`; marks that draw halos only where needed (bar
+labels inside bars that cannot be read against them) keep that choice. Guide
+text (tick labels, titles, legends) takes a style's `halo`, off by default.
+Halos are the same in static SVG and PDF.
 
 ## Events
 
@@ -3378,6 +3464,26 @@ const svg = renderToSVG(options); // standalone SVG document
 const pdf = renderToPDF(options); // Uint8Array: a one-page vector PDF
 ```
 
+An SVG is the chart's size by default. `sizing: "fluid"` leaves out its
+width and height, so CSS or its container sizes it and its viewBox scales
+the chart (as wide as its container, by default);
+`preserveAspectRatio` (`"none"` stretches it, or an alignment such as
+`"xMidYMid meet"`) says how it fits a box of another shape; and
+`strokeScaling: "fixed"` keeps lines their width in pixels however it
+scales. `renderToSVG` takes them with the chart's options, `specToSVG` in
+its options, and `chart.toSVG(sizing)` as its argument. Stretching an SVG
+scales its text and geometry as they were laid out; a live chart lays itself
+out again at a new size.
+
+```ts
+const sparkline = renderToSVG({
+  width: 140, height: 48, padding: 0, legend: false,
+  x: { show: false, nice: false }, y: { show: false, nice: false },
+  marks: [line(metrics, { x: "time", y: "p99", clip: false })],
+  sizing: "fluid", preserveAspectRatio: "none", strokeScaling: "fixed",
+});
+```
+
 `renderToPDF` accepts one mounted chart, static options, or a nonempty list.
 `specToPDF` accepts one spec, a `{ spec, buffers }` entry, or a nonempty list:
 
@@ -3423,8 +3529,8 @@ Each chart's visible content has a nested `/Span` with its locale's `/Lang`,
 while the Figure alternative uses English when its generated summary needs
 an override. Supply `fonts` once for the document: each used face has one
 font object and a subset of the glyphs used across all pages. Without document
-fonts, one shared `PdfFonts` object on chart options is inherited by every
-page; conflicting objects are refused. Explicit document fonts take precedence.
+fonts, the one `fonts` that chart options share is used for every page;
+different ones are refused. Explicit document fonts take precedence.
 
 The synchronous one-or-list exports share the page writer, fitting, and
 orchestration code. Normal tree shaking retains list handling and paper sizing
@@ -3433,9 +3539,9 @@ They remain outside chart bundles that do not import PDF. The
 `herceg-spec-pdf` size entry measures one buffered spec, and
 `herceg-pdf-document` measures an actual report, beside the line PDF entries.
 
-PDF export is a separate entry point, `herceg/pdf`. Import `pdfFonts` to
-include the optional TrueType parser, subsetter, and embedded-font writer;
-plain PDF exports bundle none of them. The `herceg-pdf` and
+PDF export is a separate entry point, `herceg/pdf`. Fonts from
+`herceg/fonts` bring the optional TrueType parser, subsetter, and
+embedded-font writer; plain PDF exports bundle none of them. The `herceg-pdf` and
 `herceg-pdf-fonts` size benchmarks include scene compilation and a line
 mark, without and with embedded-font support respectively (about 46 and
 53 KiB gzip, excluding supplied font bytes). The page is the chart's size
@@ -3447,42 +3553,63 @@ content and a parent tree, and catalog `/Lang` from the document language.
 The generated summary is English; the Figure has `/Lang (en)` unless it
 inherits an English locale from the catalog.
 
-Without `fonts`, text uses Helvetica, Times, or Courier (regular/bold),
-with the existing Windows-1252 encoding; uncovered characters print as "?".
-For Unicode, supply static TrueType fonts with families matching `theme.font`:
+### Fonts
+
+Without `fonts`, a browser chart measures text with its canvas and draws it
+in the page's fonts; static SVG estimates widths from Helvetica's; and PDF
+uses Helvetica, Times, or Courier (regular/bold) with the Windows-1252
+encoding, uncovered characters printing as "?". For the same layout in
+every output, and Unicode in PDF, prepare static TrueType fonts with
+families matching the theme's font, and give them to the chart and its
+exports as `fonts`:
 
 ```ts
-import { pdfFonts } from "herceg/pdf";
+import { prepareFonts } from "herceg/fonts";
+import { renderToPDF } from "herceg/pdf";
 import { specToPDF } from "herceg/spec";
 
-const fonts = pdfFonts(
-  [
-    { family: "Inter", data: regularBytes }, // Uint8Array; Node Buffer also works
-    { family: "Inter", weight: "bold", data: boldBytes },
-    { family: "Symbols", data: symbolBytes },
-  ],
-  { fallback: ["Symbols"] },
-);
-const pdf = renderToPDF({
-  ...options,
-  theme: { font: '"Inter", sans-serif' },
-  fonts,
-});
+const fonts = prepareFonts([
+  { family: "Inter", data: regularBytes }, // Uint8Array; Node Buffer also works
+  { family: "Inter", weight: "bold", data: boldBytes },
+  { family: "Symbols", data: symbolBytes },
+]);
+const theme = { style: { text: { font: '"Inter", Symbols, sans-serif' } } };
+const chart = createChart(element, { ...options, theme, fonts }); // measured with them, drawn in them
+const svg = renderToSVG({ ...options, width: 640, height: 320, theme, fonts }); // names their families
+const pdf = renderToPDF(chart); // embeds subsets of the chart's fonts
 // Export settings are the second argument; sidecars travel in { spec, buffers } entries:
-const fromSpec = specToPDF({ spec, buffers }, { fonts });
+const fromSpec = specToPDF({ spec, buffers }, { fonts, missingGlyph: "?" });
 ```
 
-Both exporters take a prepared `PdfFonts` object, and reject a plain array
-with guidance to wrap it in `pdfFonts(...)`. `fallback` and `missingGlyph`
-belong to the second argument of `pdfFonts`, not the export options. The
-prepared object can be reused: every export parses its own faces and owns
-its glyph usage and subsets. Font descriptors and fallback lists are copied;
-font byte buffers are borrowed read-only for the duration of each export.
+Text is set in the faces of its font's family list, in order, as browsers
+and resvg set it, glyph after glyph: charts and exports with fonts draw it
+unkerned and without ligatures, so it is as wide as it was measured. A PDF,
+which has no fallback fonts of its own, can also set text the family list
+does not cover: in the families its `fallback` lists (fonts it has), and
+otherwise as its `missingGlyph`; both are export settings of `renderToPDF`
+and `specToPDF`.
+
+A browser chart measures with the fonts where they cover the text (and
+with its canvas, in the browser's fallback fonts, where they do not) and
+registers their faces with its document once, for every chart using them;
+`chart.loading` is pending until they load, and the chart measures and
+redraws then. A page has one face of each family and weight: charts on it
+that give one family different files are refused. `renderToPDF(chart)`
+embeds a mounted chart's own fonts.
+`chart.toPNG()` puts the faces in the SVG it draws, which sees none of the
+page's fonts. Static SVG names the fonts' families and does not embed them:
+viewers need the fonts. PDF embeds subsets of the faces used. Exports
+refuse text the fonts do not cover and text that needs shaping (see below),
+where a live chart falls back to the browser.
+
+Charts and exporters take prepared fonts and reject a plain array with
+guidance to wrap it in `prepareFonts(...)`. Prepared fonts parse their faces
+once and are reused: every PDF export owns its glyph usage and subsets. Font descriptors and fallback lists are copied; font byte
+buffers are read, not copied, so they must not change afterward.
 
 The [Python package](../../python/README.md) accepts a family-to-path/bytes
-`fonts=` mapping for SVG, PNG, and PDF. All three use this resolver for text
-measurement. PNG loads the supplied faces into resvg; SVG references the
-families and requires the viewer to provide their fonts.
+`fonts=` mapping for SVG, PNG, and PDF, measured the same way. PNG loads the
+supplied faces into resvg; SVG references the families.
 
 `weight` is `"normal"` (default) or `"bold"`. A missing weight uses the other
 registered face of that family, without synthetic bold. Families are matched
@@ -3501,15 +3628,16 @@ characters. Subsets contain only drawn glyphs, `.notdef`, and composite
 components; layout's unused candidates do not enlarge them. Layout and PDF
 widths use identical advances (six decimal places in 1/1000 em), without
 kerning or shaping. Hanging and middle anchors use the faces' cap heights.
-OS/2 embedding restrictions are enforced; no-subsetting faces embed whole.
+OS/2 embedding restrictions are enforced when a PDF embeds a face (such
+fonts still measure); no-subsetting faces embed whole.
 Fonts larger than 32 MiB and registries larger than 64 faces are refused.
 Input font checksums are intentionally unchecked because real fonts often have
 incorrect checksums; generated subsets receive fresh checksums.
 
 - Missing embedded-font coverage throws an error naming the Unicode scalar.
-  Add a covering fallback family or explicitly set `missingGlyph: "?"` in
-  the options passed to `pdfFonts` (one covered standalone scalar, replacing
-  each uncovered grapheme cluster).
+  Add a covering family to the theme's font, a `fallback` family to the PDF
+  export, or explicitly set its `missingGlyph: "?"` (one covered standalone
+  scalar, replacing each uncovered grapheme cluster).
 - Embedded text admits Latin, Greek, Cyrillic, Armenian, Georgian, Han,
   hiragana, katakana, precomposed Hangul syllables, and selected Common/Inherited
   punctuation, digits, symbols, and composable accents. Shared characters must
@@ -3518,7 +3646,8 @@ incorrect checksums; generated subsets receive fresh checksums.
   private-use characters, controls, and default-ignorable characters throw an
   error naming the code point before fallback or replacement. Emoji modifier,
   flag, tag, and ZWJ sequences are refused before fallback or replacement.
-  Joiners and variation sequences are also unsupported. Use SVG/PNG for these labels. CFF outlines, WOFF,
+  Joiners and variation sequences are also unsupported. Export these labels without
+  `fonts` (SVG and PNG then draw them with system fonts). CFF outlines, WOFF,
   font collections, and uninstantiated variable fonts are refused.
 - Font fallback selects one face per extended grapheme cluster. `Intl.Segmenter`
   supplies the boundaries when available. Otherwise conservative grouping joins

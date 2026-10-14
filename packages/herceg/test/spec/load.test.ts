@@ -255,14 +255,14 @@ describe("loadSpec", () => {
     const json = {
       data: { t: { columns: { x: [0, 1], y: [1, 2] } } },
       marks: [{ type: "line", x: "x", y: "y", strokeWidht: 3 }],
-      theme: { fontSize: 12, fontsize: 12 },
+      theme: { extend: "dark", style: { text: { fontSize: 12 } } },
       y: { title: "ms", lable: "ms" },
     };
     const spec = json as ChartSpec;
-    const paths = ["marks[0].strokeWidht", "spec.y.lable", "spec.theme.fontsize"];
+    const paths = ["marks[0].strokeWidht", "spec.y.lable", "spec.theme.extend"];
     // Refused by default, naming the property each likely meant.
     expect(() => loadSpec(spec)).toThrow(
-      'marks[0].strokeWidht: not a property of herceg\'s spec format; did you mean "strokeWidth"? (also unknown: spec.y.lable, spec.theme.fontsize (did you mean "fontSize"?))',
+      'marks[0].strokeWidht: not a property of herceg\'s spec format; did you mean "strokeWidth"? (also unknown: spec.y.lable, spec.theme.extend (did you mean "extends"?))',
     );
     expect(() => validateSpec(spec)).toThrow(/marks\[0\]\.strokeWidht: not a property/);
     expect(checkSpec(spec).sort()).toEqual([...paths].sort());

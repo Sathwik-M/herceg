@@ -10,6 +10,7 @@ export default defineConfig({
     alias: [
       { find: /^herceg$/, replacement: source("herceg/src/index.ts") },
       { find: /^herceg\/pdf$/, replacement: source("herceg/src/pdf.ts") },
+      { find: /^herceg\/fonts$/, replacement: source("herceg/src/fonts.ts") },
       { find: /^@herceg\/react$/, replacement: source("react/src/index.ts") },
     ],
   },

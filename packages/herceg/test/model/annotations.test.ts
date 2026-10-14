@@ -441,7 +441,7 @@ describe("text", () => {
       marks: [text(pair, { x: "at", y: "v", textField: "name", overlap: "hide" })],
       x: { domain: [0, 9] },
       y: { domain: [0, 10] },
-      theme: { font: "Georgia, serif" },
+      theme: { style: { text: { font: "Georgia, serif" } } },
       locale: "en-US",
     });
     model.setSize(240, 200, 1);

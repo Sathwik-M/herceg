@@ -3,11 +3,12 @@ import { build } from "esbuild";
 import { expect, it } from "vitest";
 
 const fontModules = [
-  "pdf-font-resolver.ts",
-  "pdf-truetype.ts",
-  "pdf-font-subset.ts",
-  "pdf-font-binary.ts",
-  "pdf-text.ts",
+  "fonts/registry.ts",
+  "fonts/truetype.ts",
+  "fonts/binary.ts",
+  "fonts/clusters.ts",
+  "render/pdf-font-embed.ts",
+  "render/pdf-font-subset.ts",
 ];
 
 it.each(["pdf.ts", "from-spec.ts"])(
@@ -40,12 +41,13 @@ it.each(["pdf.ts", "from-spec.ts"])(
   },
 );
 
-it("pdfFonts includes the parser and subsetter when embedded fonts are requested", async () => {
+it("prepareFonts includes the parser and subsetter when embedded fonts are requested", async () => {
   const path = resolve(import.meta.dirname, "../../src/pdf.ts");
+  const fonts = resolve(import.meta.dirname, "../../src/fonts.ts");
   const result = await build({
     stdin: {
       resolveDir: import.meta.dirname,
-      contents: `export { pdfFonts, renderToPDF } from ${JSON.stringify(path)};`,
+      contents: `export { renderToPDF } from ${JSON.stringify(path)}; export { prepareFonts } from ${JSON.stringify(fonts)};`,
     },
     bundle: true,
     format: "esm",

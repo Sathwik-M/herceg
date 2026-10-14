@@ -241,8 +241,8 @@ describe("charts with time axis breaks", () => {
         bar(buckets, { x: "ms", y: "count", panel: "spread" }),
       ],
       panels: panels([{ id: "series" }, { id: "spread" }]),
-      resolve: { x: "independent" },
-      x: { breaks: weekend() },
+
+      x: { breaks: weekend(), scope: "panel" },
     });
     const [series, spread] = model.panels();
     expect(series!.x.breaks).toBeDefined();
@@ -400,8 +400,8 @@ describe("breaks with more than one x scale, and nearest points", () => {
         { type: "line", data: "buckets", x: "ms", y: "n", panel: "spread" },
       ],
       panels: [{ id: "series", x: { type: "time" } }, { id: "spread" }],
-      resolve: { x: "independent" },
-      x: { type: "linear", breaks: [{ weekdays: ["sat", "sun"] }] },
+
+      x: { type: "linear", breaks: [{ weekdays: ["sat", "sun"] }], scope: "panel" },
       timeZone: "UTC",
     });
     const { model } = build(config);

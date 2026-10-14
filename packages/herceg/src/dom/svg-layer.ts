@@ -1,6 +1,13 @@
 import { canvasRasterUrl } from "../render/canvas.ts";
-import { axisElements, gridPath, headerElements, titleElement } from "../render/svg.ts";
-import type { Geometry, Panel, Scene, SvgContext, SvgElement } from "../scene/scene.ts";
+import { cutToChart, guidesMarkup, underMarkup } from "../render/svg.ts";
+import {
+  clipOf,
+  type Geometry,
+  type Panel,
+  type Scene,
+  type SvgContext,
+  type SvgElement,
+} from "../scene/scene.ts";
 
 const NS = "http://www.w3.org/2000/svg";
 
@@ -56,7 +63,10 @@ interface PanelNodes {
   clipRect: SVGRectElement;
   /** Data, clipped to the panel's plot. */
   marks: SVGGElement;
-  /** Rules and text, above the data and unclipped. */
+  /**
+   * Above the data: data its marks do not cut to the plot, then rules and
+   * text, each cut as its mark says.
+   */
   annotations: SVGGElement;
   markNodes: Map<string, Retained>;
   annotationNodes: Map<string, Retained>;
@@ -73,15 +83,20 @@ export class SvgLayer {
   readonly overlay: SVGGElement;
   readonly #document: Document;
   readonly #defs: SVGDefsElement;
-  readonly #background: SVGRectElement;
-  /** Followed by each panel's data group, then each panel's annotation group. */
-  readonly #grid: SVGPathElement;
+  /**
+   * The chart's and plots' backgrounds and the grid lines; followed by each
+   * panel's data group, then each panel's annotation group.
+   */
+  readonly #under: SVGGElement;
+  #underMarkup = "";
   /** Axes, title, and color legend. */
   readonly #guides: SVGGElement;
   readonly #panels = new Map<string, PanelNodes>();
   readonly #id: string;
   /** Clip paths made so far, for unique ids. */
   #clips = 0;
+  /** The chart's own clip, for marks cut to the chart; made when first needed. */
+  #chartClip: SVGRectElement | undefined;
   #guideMarkup = "";
 
   constructor(document: Document, id: string) {
@@ -90,11 +105,10 @@ export class SvgLayer {
     this.svg = element(document, "svg", { "aria-hidden": "true" });
     this.svg.style.cssText = "position:absolute;left:0;top:0;overflow:visible";
     this.#defs = element(document, "defs");
-    this.#background = element(document, "rect", { fill: "none" });
-    this.#grid = element(document, "path", { fill: "none" });
+    this.#under = element(document, "g");
     this.#guides = element(document, "g");
     this.overlay = element(document, "g", { "pointer-events": "none" });
-    this.svg.append(this.#defs, this.#background, this.#grid, this.#guides, this.overlay);
+    this.svg.append(this.#defs, this.#under, this.#guides, this.overlay);
   }
 
   #panelNodes(key: string): PanelNodes {
@@ -102,12 +116,9 @@ export class SvgLayer {
     if (nodes) return nodes;
     const document = this.#document;
     const id = `${this.#id}-clip-${this.#clips++}`;
-    const clip = element(document, "clipPath", { id });
-    const clipRect = element(document, "rect");
-    clip.append(clipRect);
-    this.#defs.append(clip);
+    const clipRect = this.#clipPath(id);
     nodes = {
-      clip,
+      clip: clipRect.parentNode as SVGClipPathElement,
       clipRect,
       marks: element(document, "g", { "clip-path": `url(#${id})` }),
       annotations: element(document, "g"),
@@ -129,13 +140,12 @@ export class SvgLayer {
     set(svg, "font-size", String(theme.fontSize));
     set(svg, "fill", theme.muted);
 
-    const background = options.marks && theme.background !== "transparent";
-    set(this.#background, "width", background ? String(width) : "0");
-    set(this.#background, "height", background ? String(height) : "0");
-    set(this.#background, "fill", background ? theme.background : "none");
-    set(this.#grid, "d", options.marks ? scene.panels.map(gridPath).join("") : "");
-    set(this.#grid, "stroke", theme.grid);
-    set(this.#grid, "stroke-dasharray", theme.gridDash.join(" "));
+    // Backgrounds and grid lines are the canvas' when it draws the marks.
+    const under = options.marks ? underMarkup(scene) : "";
+    if (under !== this.#underMarkup) {
+      this.#under.innerHTML = under;
+      this.#underMarkup = under;
+    }
 
     const document = this.#document;
     const context: SvgContext = {
@@ -143,6 +153,11 @@ export class SvgLayer {
       encodeRaster: (raster) => canvasRasterUrl(raster, document),
     };
     const seen = new Set<string>();
+    if (cutToChart(scene)) {
+      this.#chartClip ??= this.#clipPath(`${this.#id}-clip-chart`);
+      set(this.#chartClip, "width", String(width));
+      set(this.#chartClip, "height", String(height));
+    }
     const panels = scene.panels.map((panel) => {
       seen.add(panel.key);
       const nodes = this.#panelNodes(panel.key);
@@ -150,7 +165,7 @@ export class SvgLayer {
       return nodes;
     });
     // Data groups follow the grid in panel order, annotation groups follow them.
-    let previous: Element = this.#grid;
+    let previous: Element = this.#under;
     for (const nodes of panels) previous = keepOrder(svg, nodes.marks, previous);
     for (const nodes of panels) previous = keepOrder(svg, nodes.annotations, previous);
     for (const [key, nodes] of this.#panels) {
@@ -160,14 +175,8 @@ export class SvgLayer {
       nodes.annotations.remove();
       this.#panels.delete(key);
     }
-    const axes = scene.panels.flatMap((panel) => panel.axes);
-    let markup = `<g style="font-variant-numeric:tabular-nums">${axisElements(axes, theme)}</g>`;
-    markup += headerElements(scene.headers, theme);
-    markup += titleElement(scene);
-    scene.colorLegends.forEach((legend, i) => {
-      markup += legend.draw.svg(legend, theme, `${this.#id}-ramp-${i}`);
-    });
-    for (const legend of scene.glyphLegends) markup += legend.draw.svg(legend, theme, this.#id);
+    // The series legend is the chart's HTML buttons.
+    const markup = guidesMarkup(scene, this.#id, false);
     if (markup !== this.#guideMarkup) {
       this.#guides.innerHTML = markup;
       this.#guideMarkup = markup;
@@ -180,28 +189,61 @@ export class SvgLayer {
     set(nodes.clipRect, "y", String(plot.y));
     set(nodes.clipRect, "width", String(plot.width));
     set(nodes.clipRect, "height", String(plot.height));
-    const data = marks ? panel.marks.filter((mark) => !mark.draw.guide) : [];
+    const cut = (mark: Geometry) => clipOf(mark) === "plot";
+    const data = marks ? panel.marks.filter((mark) => !mark.draw.guide && cut(mark)) : [];
     this.#renderKeyed(nodes.marks, nodes.markNodes, data, context);
-    const guides = panel.marks.filter((mark) => mark.draw.guide);
-    this.#renderKeyed(nodes.annotations, nodes.annotationNodes, guides, context);
+    const above = [
+      ...(marks ? panel.marks.filter((mark) => !mark.draw.guide && !cut(mark)) : []),
+      ...panel.marks.filter((mark) => mark.draw.guide),
+    ];
+    const plotClip = `url(#${nodes.clip.id})`;
+    const chartClip = `url(#${this.#id}-clip-chart)`;
+    this.#renderKeyed(nodes.annotations, nodes.annotationNodes, above, context, (mark) => {
+      const clip = clipOf(mark);
+      return clip === "plot" ? plotClip : clip === "chart" ? chartClip : undefined;
+    });
   }
 
-  /** Each geometry's nodes, in scene order; nodes of geometry no longer drawn go. */
+  /** A new clip path of id `id`, and the rectangle that sets it. */
+  #clipPath(id: string): SVGRectElement {
+    const clip = element(this.#document, "clipPath", { id });
+    const rect = element(this.#document, "rect");
+    clip.append(rect);
+    this.#defs.append(clip);
+    return rect;
+  }
+
+  /**
+   * Each geometry's nodes, in scene order, cut to the clip path `clipOf`
+   * names, if any; nodes of geometry no longer drawn go.
+   */
   #renderKeyed(
     parent: SVGGElement,
     retained: Map<string, Retained>,
     geometry: readonly Geometry[],
     context: SvgContext,
+    clipOf?: (mark: Geometry) => string | undefined,
   ) {
     const seen = new Set<string>();
     let previous: Element | null = null;
     for (const mark of geometry) {
       seen.add(mark.key);
       const old = retained.get(mark.key);
-      const elements = mark.draw.elements?.(mark, context);
+      const clip = clipOf?.(mark);
+      let elements = mark.draw.elements?.(mark, context);
+      if (elements && clip)
+        elements = elements.map(({ tag, attributes }) => ({
+          tag,
+          attributes: { ...attributes, "clip-path": clip },
+        }));
       const entry = elements
         ? this.#updateElements(old, mark.kind, elements)
         : this.#updateMarkup(old, mark.kind, mark.draw.svg(mark, context));
+      if (!elements) {
+        const group = entry.nodes[0]!;
+        if (clip) set(group, "clip-path", clip);
+        else group.removeAttribute("clip-path");
+      }
       if (entry !== old) {
         for (const node of old?.nodes ?? []) node.remove();
         retained.set(mark.key, entry);

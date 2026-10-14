@@ -4,10 +4,11 @@
 // in the chart's one list of marks, so their identity, colors, and legend
 // state do not depend on the panel they draw in.
 
+import { type Align, aligned } from "../layout/place.ts";
 import type { LayoutMark } from "../marks/layout-mark.ts";
 import type { BandContext, Bands, Mark } from "../marks/mark.ts";
-import type { Rect, SceneText } from "../scene/scene.ts";
-import type { AxisSpec, GridSpec, PanelSpec, ResolveSpec, ScaleResolution } from "../spec/spec.ts";
+import type { Rect } from "../scene/scene.ts";
+import type { AxisSpec, GridSpec, PanelSpec, ScaleScope } from "../spec/spec.ts";
 import type { AxisType } from "./axis.ts";
 import type { MarkSeries } from "./inspect.ts";
 import {
@@ -20,6 +21,7 @@ import {
   columnGap,
   type DescribeAnnotation,
   groups,
+  type HeaderPlace,
   type LayoutConfig,
   leastHeight,
   lowestWithAxes,
@@ -33,12 +35,14 @@ import {
   type PanelSplit,
   type PanelSplitter,
   type RowSpace,
-  resolutionOf,
   rowGap,
   type ScaleGroups,
   trackSizes,
+  typedGroups,
   yAxesOf,
 } from "./panel-layout.ts";
+import { mixedPanels, type ScaledConfig, type ScaleName, type Scopes, scopesOf } from "./scales.ts";
+import { titleText } from "./titles.ts";
 
 /** The `panel` that draws a mark in every panel. */
 export const EVERY_PANEL = "*";
@@ -47,8 +51,8 @@ export const EVERY_PANEL = "*";
  * Subplots for a chart's `panels` option: panels in rows of `columns` (1 by
  * default), in order, each drawing the marks whose `panel` names it, and
  * marks with `panel: "*"` in all of them. Panels share x unless the chart's
- * `resolve.x` says otherwise; each has a y scale of its own unless its
- * `resolve.y` does. A panel may change the chart's `x` and `y` settings for
+ * `x.scope` says otherwise; each has a y scale of its own unless its
+ * `y.scope` does. A panel may change the chart's `x` and `y` settings for
  * its own axes. A layout mark (a pie) has the panel it names to itself,
  * without axes.
  *
@@ -85,8 +89,12 @@ export class Panels implements PanelLayout {
   readonly columns: number;
   readonly rowHeights: readonly number[] | undefined;
   readonly columnWidths: readonly number[] | undefined;
-  get yDefault(): ScaleResolution {
-    return "independent";
+  scopes(config: ScaledConfig): Scopes {
+    return scopesOf(config, "panel");
+  }
+
+  mixed(numbers: Mark, categories: Mark, scale: ScaleName): Error {
+    return mixedPanels(numbers, categories, scale, panelOf);
   }
 
   get remedy(): string {
@@ -217,17 +225,11 @@ export class Panels implements PanelLayout {
         brush === "lasso")
     )
       throw new Error('chart interaction: charts with panels zoom and brush along x only; use "x"');
-    const { resolve } = options;
-    this.#agree("x", marks, resolve?.x ?? "shared", options.x, held);
-    this.#agree("y", marks, resolve?.y ?? "independent", options.y, held);
-    this.#agree(
-      "yRight",
-      marks,
-      resolve?.yRight ?? resolve?.y ?? "independent",
-      options.yRight,
-      held,
-    );
-    checkBands(marks, options, this.yDefault);
+    const scopes = this.scopes(options);
+    this.#agree("x", marks, scopes.x, options.x, held);
+    this.#agree("y", marks, scopes.y, options.y, held);
+    this.#agree("yRight", marks, scopes.yRight, options.yRight, held);
+    checkBands(marks, options, scopes);
     return layouts;
   }
 
@@ -248,14 +250,14 @@ export class Panels implements PanelLayout {
   #agree(
     axis: PanelAxis,
     marks: readonly Mark[],
-    resolution: ScaleResolution,
+    scope: ScaleScope,
     chart: AxisSpec | undefined,
     held: ReadonlyMap<string, string>,
   ): void {
-    if (resolution === "independent") return;
+    if (scope === "panel") return;
     const { columns } = this;
     const groupOf = (i: number) =>
-      resolution === "rows" ? Math.floor(i / columns) : resolution === "columns" ? i % columns : 0;
+      scope === "row" ? Math.floor(i / columns) : scope === "column" ? i % columns : 0;
     const first = new Map<number, string>();
     const x = axis === "x";
     this.list.forEach(({ id }, i) => {
@@ -310,7 +312,7 @@ export class Panels implements PanelLayout {
     );
     const split: PanelSplit = {
       keys: this.list.map(({ id }) => id),
-      values: this.list.map(({ id, title }) => [title ?? id]),
+      values: this.list.map(({ id, title }) => [titleText(title) ?? id]),
       dimensions: [],
       panels: members.map((drawn) =>
         base.map(({ mark, series }, m) => ({ mark, series: drawn[m] ? series : [] })),
@@ -324,7 +326,7 @@ export class Panels implements PanelLayout {
       return mark && { mark, index: mark.indices?.[0] ?? marks.indexOf(mark), rows: undefined };
     });
     if (items.some(Boolean)) split.items = items;
-    placed.place(split, columns, bands, chart.config.resolve, this.yDefault, context);
+    placed.place(split, columns, bands, this.scopes(chart.config), context);
     return split;
   }
 
@@ -346,7 +348,7 @@ export class Panels implements PanelLayout {
     };
   }
 
-  /** A panel's title above it. */
+  /** A panel's title above it, at the start of its plot's width unless `align` says. */
   headers(
     index: number,
     _values: readonly string[],
@@ -355,11 +357,14 @@ export class Panels implements PanelLayout {
     plot: Rect,
     grid: PanelGrid,
     fit: (text: string, room: number) => string,
-  ): SceneText[] {
-    const title = this.list[index]?.title;
+    _aside: number,
+    align: Align | undefined,
+  ): HeaderPlace[] {
+    const title = titleText(this.list[index]?.title);
     if (!grid.header || !title) return [];
     const text = fit(title, plot.width);
-    return [{ text, x: plot.x, y: plot.y - grid.header / 2, anchor: "start", angle: 0 }];
+    const { at, anchor } = aligned(align ?? "start", plot.x, plot.width);
+    return [{ text, x: at, y: plot.y - grid.header / 2, anchor, angle: 0 }];
   }
 
   /** The chart's `x`, `y`, or `yRight`, with the panel's own settings in place of its. */
@@ -383,34 +388,20 @@ export class Panels implements PanelLayout {
     return trackSizes(free, count, weights, panels, columns, room, this.remedy);
   }
 
-  resolution(axis: PanelAxis, resolve: ResolveSpec | undefined): ScaleResolution {
-    return resolutionOf(axis, resolve, this.yDefault);
-  }
-
   /**
    * A group's axis is its first panel's, which the others agree with (see
-   * `check`), of the type its marks give unless that panel sets one; a
-   * category axis is one in every panel.
+   * `check`), of the type the marks its panels draw give unless that panel
+   * sets one: categories in one subplot leave another's scale alone.
    */
   groups(
-    resolution: ScaleResolution,
+    scope: ScaleScope,
     split: PanelSplit,
     columns: number,
     axis: PanelAxis,
     chart: AxisSpec | undefined,
-    chartType: AxisType,
   ): ScaleGroups {
-    const found = groups(resolution, split, columns, axis);
-    const channel = axis === "x" ? "x" : "y";
-    const axes = found.drawn.map((drawn, g) => {
-      const spec = this.panelAxis(axis, found.first[g]!, chart);
-      const marks = drawn.map(({ mark }) => mark);
-      return {
-        type: chartType === "band" ? chartType : (spec?.type ?? typeOf(marks, channel)),
-        spec,
-      };
-    });
-    return { ...found, axes };
+    const found = groups(scope, split, columns, axis);
+    return typedGroups(found, axis, (g) => this.panelAxis(axis, found.first[g]!, chart), panelOf);
   }
 
   across(
@@ -446,4 +437,9 @@ function typeOf(marks: readonly Mark[], axis: "x" | "y"): AxisType {
 function positive(weights: readonly number[]): boolean {
   for (const weight of weights) if (!(weight > 0 && Number.isFinite(weight))) return false;
   return true;
+}
+
+/** The one panel a mark draws in, for errors; undefined for marks drawn in every panel. */
+function panelOf({ spec }: Mark): string | undefined {
+  return spec.panel === EVERY_PANEL ? undefined : spec.panel;
 }

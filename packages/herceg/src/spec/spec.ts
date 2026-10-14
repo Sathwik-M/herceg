@@ -7,8 +7,21 @@
 // columns can travel as binary buffers next to the JSON (see `BinaryColumnSpec`).
 
 import type { Expression } from "../data/expression.ts";
+import type { Place } from "./place.ts";
+import type {
+  AxisStyles,
+  Halo,
+  Insets,
+  LegendStyles,
+  PanelStyles,
+  StyleRoles,
+  TextStyle,
+  ThemeTokens,
+} from "./style.ts";
 
 export type { Expression, Operator } from "../data/expression.ts";
+export type * from "./place.ts";
+export type * from "./style.ts";
 
 /**
  * The spec format version this herceg writes and reads. Readers refuse
@@ -29,8 +42,11 @@ export type Frozen<T> = T extends object ? { readonly [K in keyof T]: Frozen<T[K
 export interface ChartSpec {
   /** Spec format version; 1, the only one so far, when omitted. */
   version?: 1;
-  /** Chart title, also its accessible name. */
-  title?: string;
+  /**
+   * The chart's title, also its accessible name: its text, or its text with
+   * where it goes (above the chart, the default, or below) and how it looks.
+   */
+  title?: string | TitleSpec;
   /** Longer description for assistive technology. */
   description?: string;
   /** CSS pixels. In the browser, omitted sizes follow the container. */
@@ -39,21 +55,22 @@ export interface ChartSpec {
   /** Tables referenced by marks, by name. */
   data?: Record<string, DataSpec>;
   marks: readonly MarkSpec[];
-  x?: XAxisSpec;
-  y?: AxisSpec;
   /**
-   * A second y axis on the right, for marks with `axis: "right"`, with its
-   * own scale and domain; in charts with facets or panels, in every panel
-   * drawing such marks. Grid lines follow it only where no mark uses the left axis.
+   * The x scale and its axis: the short form of the scale named "x" and the
+   * axis guide that shows it.
    */
-  yRight?: AxisSpec;
+  x?: XAxisSpec;
+  /** The left y scale ("y") and its axis. */
+  y?: ChartAxisSpec;
+  /**
+   * A second y axis on the right ("yRight"), for marks with `axis: "right"`,
+   * with its own scale and domain; in charts with facets or panels, in every
+   * panel drawing such marks. Grid lines follow it only where no mark uses
+   * the left axis.
+   */
+  yRight?: ChartAxisSpec;
   /** Small multiples: the chart drawn once per value of a category field. */
   facet?: FacetSpec;
-  /**
-   * Which panels share an x or y scale: all panels share x by default, and
-   * y in facets; each of the `panels` has a y scale of its own by default.
-   */
-  resolve?: ResolveSpec;
   /**
    * Subplots: panels in a grid, each drawing the marks that name it in their
    * `panel`. Not with `facet`.
@@ -61,7 +78,19 @@ export interface ChartSpec {
   panels?: readonly PanelSpec[];
   /** How `panels` are placed: in rows of `columns` (1 by default), in order. */
   grid?: GridSpec;
-  legend?: boolean;
+  /**
+   * The series legend: shown when the chart has several series unless
+   * `false`; `true` or an object shows it also for one, with an object
+   * saying where it goes (above the plots by default) and how it looks.
+   */
+  legend?: boolean | LegendSpec;
+  /**
+   * Whitespace between the chart's edges and everything it draws, in pixels:
+   * the same on every side, or each side's own. Room guides need (labels
+   * reaching past a plot's ends) comes on top. Left out, the chart keeps a
+   * few pixels on each side, more where text tends to reach.
+   */
+  padding?: Insets;
   tooltip?: boolean | TooltipSpec;
   interaction?: InteractionSpec;
   /**
@@ -78,7 +107,7 @@ export interface ChartSpec {
    * which dragging and the keyboard move and resize. `true` uses the
    * defaults. Needs a number or time x axis; with facets or panels, one
    * strip goes under all of them and moves the x range they share, so
-   * `resolve.x` must be "shared".
+   * `x.scope` must be "chart".
    */
   navigator?: boolean | NavigatorSpec;
   /**
@@ -105,7 +134,7 @@ export interface ChartSpec {
    * The vertical axis of 3D charts (`point3d`, `line3d`, and `surface` marks), whose
    * `x` and `y` are the floor's. Only for 3D charts.
    */
-  z?: AxisSpec;
+  z?: Omit<AxisSpec, "style">;
   /** Where a 3D chart is seen from at first; the pointer and keyboard turn it. Only for 3D charts. */
   camera?: CameraSpec;
   /**
@@ -140,25 +169,15 @@ export interface CameraSpec {
 export type FacetSpec = WrappedFacetSpec | GridFacetSpec;
 
 /**
- * How facet panels share a scale: "shared" by all (the default), each its
- * own ("independent"), or shared by the panels of a row or of a column.
+ * Which panels share one instance of a scale, with one domain (each panel
+ * keeps its own pixel range): every panel of the chart, each panel alone,
+ * or the panels of a row or of a column. A category scale that panels do
+ * not share holds only the categories of the rows they draw, and its type
+ * comes from the marks of its own panels, so subplots can put categories
+ * on one panel's axis and numbers on another's. Histograms choose their
+ * bins from the rows of the panels sharing an x scale.
  */
-export type ScaleResolution = "shared" | "independent" | "rows" | "columns";
-
-/**
- * Scale sharing between panels. A category
- * axis that panels do not share holds only the categories of the rows they
- * draw. Histograms choose their bins from the rows of the panels sharing an
- * x scale.
- */
-export interface ResolveSpec {
-  /** Shared by default. */
-  x?: ScaleResolution;
-  /** Shared by default in facets, independent in subplots. */
-  y?: ScaleResolution;
-  /** The right y axis' scale: shared as `y` is, unless this says otherwise. */
-  yRight?: ScaleResolution;
-}
+export type ScaleScope = "chart" | "panel" | "row" | "column";
 
 /** One of a chart's `panels`. */
 export interface PanelSpec {
@@ -166,8 +185,10 @@ export interface PanelSpec {
   camera?: CameraSpec;
   /** Unique among the panels; marks name it in their `panel`. */
   id: string;
-  /** Drawn above the panel. */
-  title?: string;
+  /** Drawn above the panel: its text, or its text and how it looks. */
+  title?: string | PanelTitleSpec;
+  /** Styles of what the panel draws: its plot's background and border, and its axes' parts. */
+  style?: PanelStyles;
   /**
    * The panel's x axis: the chart's `x`, with these settings in place of
    * its own (`format` replaces the chart's whole). Panels sharing an x
@@ -432,10 +453,51 @@ export interface AxisSpec {
   tooltipFormat?: Intl.NumberFormatOptions | Intl.DateTimeFormatOptions;
   /** Draw the axis. Default true. */
   show?: boolean;
+  /** How the axis' parts look: its line, ticks, tick labels, title, and grid lines. */
+  style?: AxisStyles;
+}
+
+/** The chart's title with where it goes and how it looks. */
+export interface TitleSpec {
+  text: string;
+  /** Above the chart (the default) or below it. */
+  place?: { side: "top" | "bottom" };
+  /** `align` puts it at the start, center, or end of the chart's width. */
+  style?: TextStyle;
+}
+
+/** A panel's title and how it looks; `align` puts it in the plot's width. */
+export interface PanelTitleSpec {
+  text: string;
+  style?: TextStyle;
+}
+
+/** Where the series legend goes and how it looks. */
+export interface LegendSpec {
+  /**
+   * Outside on a side (above the plots by default; on the left or right in a
+   * column), or inside a plot at a corner, over what it draws.
+   */
+  place?: Place;
+  style?: LegendStyles;
+}
+
+/**
+ * One of the chart's position scales (x, y, or yRight) and its axis: the
+ * scale's settings, the axis', and which panels share the scale.
+ */
+export interface ChartAxisSpec extends AxisSpec {
+  /**
+   * Which panels share one instance of the scale: for x, the whole chart
+   * by default; for y, the whole chart in facets and each panel in
+   * subplots; for yRight, as y. Only charts with facets or panels have
+   * several.
+   */
+  scope?: ScaleScope;
 }
 
 /** The x axis: an axis whose time may leave out spans of time. */
-export interface XAxisSpec extends AxisSpec {
+export interface XAxisSpec extends ChartAxisSpec {
   /**
    * Time the axis leaves out, so that what is left is drawn without gaps:
    * weekends, hours outside trading sessions, holidays. Needs a time axis.
@@ -549,8 +611,11 @@ export type SelectionSpec =
 
 /** The range navigator's options. */
 export interface NavigatorSpec {
-  /** Set false to leave text without its readability outline. */
-  halo?: boolean;
+  /**
+   * The outline that keeps the mark's text readable over what it is drawn
+   * on: "auto" (the default), false for none, or a color of its own.
+   */
+  halo?: Halo;
   /**
    * The strip's height in CSS pixels, from 16 up: 40 by default, at most a
    * third of the height the plots and the strip share, and less where the
@@ -586,43 +651,17 @@ export type ZoomSpec = "x" | "y" | "xy";
 export type BrushSpec = "x" | "y" | "xy" | "lasso";
 
 /**
- * Changes to a built-in theme. Colors and the font may be CSS variables,
- * `var(--name)`: charts in a page read them where the chart is, and follow
- * changes of the page's theme; elsewhere (static export) a variable needs a
- * fallback, `var(--name, #2a78d6)`.
+ * Changes to a built-in theme: its tokens, the colors its styles are made
+ * of, and role styles (`style.title`, `style.tickLabel`, ...). Colors and
+ * fonts may be CSS variables, `var(--name)`: charts in a page read them
+ * where the chart is, and follow changes of the page's theme; elsewhere
+ * (static export) a variable needs a fallback, `var(--name, #2a78d6)`.
  */
 export interface ThemeSpec {
   /** Base theme to extend; "light" by default. */
   extends?: ThemeName;
-  /** Chart background; "transparent" shows the page (or, in exports, what they are shown on). */
-  background?: string;
-  text?: string;
-  /** Axis labels and secondary text. */
-  muted?: string;
-  grid?: string;
-  /** Axis lines and baselines. */
-  axis?: string;
-  font?: string;
-  fontSize?: number;
-  /** Size of the chart's title, in pixels. */
-  titleSize?: number;
-  /** Dash pattern of grid lines, in pixels; empty for solid lines. */
-  gridDash?: readonly number[];
-  /** Width of lines and area outlines that do not set one. */
-  lineWidth?: number;
-  /** Radius of the corners at the value end of unstacked bars; 0 for square bars. */
-  barRadius?: number;
-  tooltipBackground?: string;
-  tooltipBorder?: string;
-  /** Categorical colors in assignment order. */
-  palette?: readonly string[];
-  /** Ramp for continuous color (heatmaps), from low to high values. */
-  sequential?: readonly string[];
-  /** Ramp for colors on either side of a midpoint, low to high. */
-  diverging?: readonly string[];
-  /** Colors of candlesticks that close at or above, and below, their open. */
-  rise?: string;
-  fall?: string;
+  tokens?: ThemeTokens;
+  style?: StyleRoles;
 }
 
 export type MarkSpec =
@@ -657,7 +696,21 @@ export type MarkSpec =
   | Line3DSpec
   | SurfaceSpec;
 
+/**
+ * What a mark's drawing is cut to: its plot, the whole chart, or nothing
+ * (`false`), which lets markers at a plot's edge show whole. Turning the
+ * plot's clip off does not grow the chart: a chart's outputs still end at
+ * its size.
+ */
+export type Clip = "plot" | "chart" | false;
+
 interface MarkBase {
+  /**
+   * What the mark's drawing is cut to. Without it, data is cut to the plot,
+   * and labels, rules, and text are drawn whole (those of values outside
+   * the plot are left out).
+   */
+  clip?: Clip;
   /** Name of the table in `ChartSpec.data`; defaults to the only table. */
   data?: string;
   /** Stable identity, used for legend state and updates. */
@@ -852,17 +905,17 @@ export type AreaSpec = AreaStyle &
   );
 
 /**
- * A position of an annotation: a number (times in epoch milliseconds), or a
- * number or time field of the mark's table. An annotation with a field draws
- * one item per row; with numbers only, one item.
+ * Where an annotation is along an axis: a number (times in epoch
+ * milliseconds), or a number or time field of the mark's table. An
+ * annotation with a field draws one item per row; with numbers only, one item.
  */
-export type Position = number | Field;
+export type AnnotationValue = number | Field;
 
 /** Where rules stand: at `x` (vertical) or at `y` (horizontal). */
 export type RulePosition<P> = { x: P; y?: never } | { y: P; x?: never };
 
 /** Horizontal (y) or vertical (x) reference lines. */
-export type RuleSpec = RuleStyle & RulePosition<Position>;
+export type RuleSpec = RuleStyle & RulePosition<AnnotationValue>;
 
 interface RuleStyle extends MarkBase {
   type: "rule";
@@ -901,11 +954,14 @@ export type RegionRange<P> =
  * `y2` across its width, or rectangles with both. Drawn in mark order, so
  * list them before the marks they highlight to draw them underneath.
  */
-export type RegionSpec = RegionStyle & RegionRange<Position>;
+export type RegionSpec = RegionStyle & RegionRange<AnnotationValue>;
 
 interface RegionStyle extends MarkBase {
-  /** Set false to leave text without its readability outline. */
-  halo?: boolean;
+  /**
+   * The outline that keeps the mark's text readable over what it is drawn
+   * on: "auto" (the default), false for none, or a color of its own.
+   */
+  halo?: Halo;
   type: "region";
   /** Defaults to the theme's muted color. */
   fill?: string;
@@ -923,11 +979,14 @@ interface RegionStyle extends MarkBase {
  * point is outside the plot.
  */
 export interface TextSpec extends MarkBase {
-  /** Set false to leave text without its readability outline. */
-  halo?: boolean;
+  /**
+   * The outline that keeps the mark's text readable over what it is drawn
+   * on: "auto" (the default), false for none, or a color of its own.
+   */
+  halo?: Halo;
   type: "text";
-  x: Position;
-  y: Position;
+  x: AnnotationValue;
+  y: AnnotationValue;
   label?: string;
   /** Category or number field with each label's text. */
   textField?: Field;
@@ -954,8 +1013,11 @@ export interface TextSpec extends MarkBase {
  * fields are drawn side by side or stacked.
  */
 export interface BarSpec extends SeriesBase, RowTooltip {
-  /** Set false to leave text without its readability outline. */
-  halo?: boolean;
+  /**
+   * The outline that keeps the mark's text readable over what it is drawn
+   * on: "auto" (the default), false for none, or a color of its own.
+   */
+  halo?: Halo;
   type: "bar";
   x: Field | readonly Field[];
   y: Field | readonly Field[];
@@ -1321,8 +1383,11 @@ export interface GaugeSpec {
  * count), with faint connectors between neighboring bars.
  */
 export interface FunnelSpec {
-  /** Set false to leave text without its readability outline. */
-  halo?: boolean;
+  /**
+   * The outline that keeps the mark's text readable over what it is drawn
+   * on: "auto" (the default), false for none, or a color of its own.
+   */
+  halo?: Halo;
   type: "funnel";
   data?: string;
   id?: string;
@@ -1346,8 +1411,11 @@ export interface FunnelSpec {
  * scale from the center.
  */
 export interface RadarSpec {
-  /** Set false to leave text without its readability outline. */
-  halo?: boolean;
+  /**
+   * The outline that keeps the mark's text readable over what it is drawn
+   * on: "auto" (the default), false for none, or a color of its own.
+   */
+  halo?: Halo;
   type: "radar";
   data?: string;
   id?: string;
@@ -1378,8 +1446,11 @@ export interface RadarSpec {
  * itself, and links that would close a cycle are left out.
  */
 export interface SankeySpec {
-  /** Set false to leave text without its readability outline. */
-  halo?: boolean;
+  /**
+   * The outline that keeps the mark's text readable over what it is drawn
+   * on: "auto" (the default), false for none, or a color of its own.
+   */
+  halo?: Halo;
   type: "sankey";
   data?: string;
   id?: string;
@@ -1432,8 +1503,11 @@ export type GraphLayout =
  * 50,000 nodes and 200,000 links.
  */
 export interface GraphSpec {
-  /** Set false to leave text without its readability outline. */
-  halo?: boolean;
+  /**
+   * The outline that keeps the mark's text readable over what it is drawn
+   * on: "auto" (the default), false for none, or a color of its own.
+   */
+  halo?: Halo;
   type: "graph";
   data?: string;
   id?: string;

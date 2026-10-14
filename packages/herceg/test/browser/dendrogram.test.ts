@@ -98,7 +98,7 @@ it("draws no SVG or Canvas pixels at zero stroke width", () => {
     ],
     x: { show: false, grid: false },
     y: { show: false, grid: false },
-    theme: { background: "transparent" },
+    theme: { tokens: { background: "transparent" } },
   });
   model.setSize(400, 200, 1);
   const scene = model.scene(estimateText);

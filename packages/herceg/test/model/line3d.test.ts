@@ -11,6 +11,7 @@ import { renderToSVG } from "../../src/render/static.ts";
 import type { FaceGeometry, LineBatch3D, Scene } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import { FaceIndex } from "../../src/three/faces.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig, clouds = false, width = 600, height = 500) {
   const model = new ChartModel({ locale: "en-US", ...config });
@@ -65,7 +66,7 @@ describe("3D lines", () => {
     });
     // a: 0-2, then 6 alone after the gap; b: 1-3-5-7.
     expect(segments(facesOf(scene))).toHaveLength(1 + 3);
-    expect(scene.legend.map((entry) => entry.label)).toEqual(["a", "b"]);
+    expect(legendOf(scene).map((entry) => entry.label)).toEqual(["a", "b"]);
     // Samples path after path, each in row order.
     expect(keys(model)).toEqual([0, 2, 6, 1, 3, 5, 7]);
     const first = model.inspectItem(JSON.stringify([0, 2])) as ItemInspection;

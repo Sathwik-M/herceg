@@ -5,7 +5,15 @@ import type { Breaks } from "../lod/m4.ts";
 import type { RangeIndex } from "../lod/minmax-index.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { AreaGeometry } from "../scene/scene.ts";
-import type { AreaSpec, AreaStack, Curve, Frozen, StackGaps, StackOrder } from "../spec/spec.ts";
+import type {
+  AreaSpec,
+  AreaStack,
+  Clip,
+  Curve,
+  Frozen,
+  StackGaps,
+  StackOrder,
+} from "../spec/spec.ts";
 import { BandShares, STILL } from "./dodge.ts";
 import { definedFields } from "./line.ts";
 import {
@@ -60,6 +68,12 @@ import { type StackLayer, UnionStack } from "./union-stack.ts";
 interface AreaCommon {
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /**
+   * What the mark's drawing is cut to: "plot", "chart", or false for
+   * nothing, so markers at the plot's edge show whole. Without it, data is
+   * cut to the plot and labels are drawn whole.
+   */
+  clip?: Clip;
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
   /**
@@ -659,7 +673,7 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
     const stacked = Boolean(spec.stack);
     const band = this.#split === undefined;
     const fillOpacity = spec.fillOpacity ?? (stacked ? 0.85 : band ? 0.2 : 0.25);
-    const strokeWidth = spec.strokeWidth ?? frame.theme.lineWidth;
+    const strokeWidth = spec.strokeWidth ?? frame.theme.style.line.strokeWidth;
     const outline =
       strokeWidth > 0 &&
       (spec.line ??
@@ -937,6 +951,7 @@ export function area<S extends Schema>(
       "axis",
       "facet",
       "panel",
+      "clip",
     ]),
     ...(x !== undefined && { x: typeof x === "string" ? x : [...x] }),
     ...(y !== undefined && { y: typeof y === "string" ? y : [...y] }),

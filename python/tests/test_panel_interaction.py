@@ -79,26 +79,28 @@ def test_maps_and_networks_fill_subplots_of_their_own():
         )
 
 
-def test_panels_without_axes_refuse_resolving_scales():
-    message = "Chart resolve_x: every panel draws a geopoint or another mark without axes"
+def test_panels_without_axes_refuse_scoping_scales():
+    message = "Chart x scope: every panel draws a geopoint or another mark without axes"
     with pytest.raises(ValueError, match=message):
-        hg.Chart(CITIES, panels=["a"], resolve_x="independent").geopoint(
+        hg.Chart(CITIES, panels=["a"], x=hg.Axis(scope="panel")).geopoint(
             "lon", "lat", panel="a"
         ).to_spec()
-    with pytest.raises(ValueError, match="Chart resolve_y: every panel draws a geoshape"):
-        hg.Chart(CITIES, facet="year", resolve_y="independent").geoshape(
+    with pytest.raises(ValueError, match="Chart y scope: every panel draws a geoshape"):
+        hg.Chart(CITIES, facet="year", y=hg.Axis(scope="panel")).geoshape(
             data=SQUARE, facet="repeat"
         ).geopoint("lon", "lat").to_spec()
     # Shared, as the panels' scales would be, they take.
-    shared = hg.Chart(CITIES, panels=["a"], resolve_x="shared").geopoint("lon", "lat", panel="a")
-    assert shared.to_spec()[0]["resolve"] == {"x": "shared"}
-    # Beside panels with axes, they resolve those.
+    shared = hg.Chart(CITIES, panels=["a"], x=hg.Axis(scope="chart")).geopoint(
+        "lon", "lat", panel="a"
+    )
+    assert shared.to_spec()[0]["x"] == {"scope": "chart"}
+    # Beside panels with axes, those scales are scoped.
     beside = (
-        hg.Chart(CITIES, panels=["line", "map"], resolve_y="independent")
+        hg.Chart(CITIES, panels=["line", "map"], y=hg.Axis(scope="panel"))
         .line("lon", "lat", panel="line")
         .geopoint("lon", "lat", panel="map")
     )
-    assert beside.to_spec()[0]["resolve"] == {"y": "independent"}
+    assert beside.to_spec()[0]["y"] == {"scope": "panel"}
 
 
 def test_trees_in_facets_drill_and_select_rows():
@@ -241,13 +243,13 @@ def test_widgets_keep_moves_of_networks_whose_data_did_not_change():
 
 
 def test_widgets_check_layout_marks_options_when_made_and_updated():
-    with pytest.raises(ValueError, match="Chart resolve_y: every panel draws a geopoint"):
-        hg.Chart(CITIES, panels=["a"], resolve_y="independent").geopoint(
+    with pytest.raises(ValueError, match="Chart y scope: every panel draws a geopoint"):
+        hg.Chart(CITIES, panels=["a"], y=hg.Axis(scope="panel")).geopoint(
             "lon", "lat", panel="a"
         ).widget()
     widget = hg.Chart(CITIES, facet="year").geopoint("lon", "lat").widget()
-    with pytest.raises(ValueError, match="Chart resolve_y: every panel draws a geopoint"):
-        widget.update(resolve_y="independent")
+    with pytest.raises(ValueError, match="Chart y scope: every panel draws a geopoint"):
+        widget.update(y=hg.Axis(scope="panel"))
     with pytest.raises(ValueError, match='Chart zoom: expected True or "xy"'):
         widget.update(zoom="x")
     with pytest.raises(ValueError, match="Chart sync: a geopoint has no x axis"):

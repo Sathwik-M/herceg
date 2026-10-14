@@ -1,11 +1,12 @@
+import { checkFonts } from "../fonts/prepared.ts";
 import { estimateText, type MeasureText } from "../layout/text.ts";
 import { describeChart } from "../model/describe.ts";
 import { type ChartConfig, ChartModel, STATIC_RASTER_RATIO } from "../model/model.ts";
 import { NO_PAGE } from "./fallbacks.ts";
 import { pngDataUrl } from "./png.ts";
-import { renderSvg } from "./svg.ts";
+import { checkSizing, renderSvg, type SvgSizing } from "./svg.ts";
 
-export interface StaticOptions extends ChartConfig {
+export interface StaticOptions extends ChartConfig, SvgSizing {
   width: number;
   height: number;
   /**
@@ -15,7 +16,8 @@ export interface StaticOptions extends ChartConfig {
   idPrefix?: string;
   /**
    * Text measurement. Defaults to built-in Helvetica metrics so output is the
-   * same on every machine; pass a canvas-based measurer to match a browser.
+   * same on every machine; pass a canvas-based measurer to match a browser,
+   * or `fonts` to measure with the fonts the SVG names.
    */
   measureText?: MeasureText;
 }
@@ -27,13 +29,24 @@ let renders = 0;
  * `rowSelection`, the selections its stores hold are drawn highlighted.
  */
 export function renderToSVG(options: StaticOptions): string {
+  checkSizing(options, "renderToSVG");
+  checkFonts(options.fonts, "renderToSVG");
+  if (options.fonts && options.measureText)
+    throw new TypeError(
+      "renderToSVG: fonts or measureText, not both; fonts measure their own text",
+    );
   const model = new ChartModel(options, NO_PAGE);
   model.setSize(options.width, options.height, 1, STATIC_RASTER_RATIO);
   // What the bound stores hold now is drawn as a mounted chart draws it.
   options.rowSelection?.highlight(model);
-  const scene = model.scene(options.measureText ?? estimateText);
+  const scene = model.scene(options.fonts?.measure ?? options.measureText ?? estimateText);
+  const { sizing, preserveAspectRatio, strokeScaling } = options;
   return renderSvg(scene, {
+    sizing,
+    preserveAspectRatio,
+    strokeScaling,
     idPrefix: options.idPrefix ?? `herceg-svg-${++renders}`,
+    unkerned: options.fonts !== undefined,
     encodeRaster: (mark) => pngDataUrl(mark.columns, mark.rows, mark.pixels),
     description: describeChart(model),
   });

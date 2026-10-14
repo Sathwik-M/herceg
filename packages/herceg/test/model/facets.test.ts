@@ -15,6 +15,7 @@ import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { LineGeometry, Panel, RectGeometry, Scene } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
+import { headersOf, legendOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -23,7 +24,7 @@ function build(config: ChartConfig, width = 600, height = 400) {
 }
 
 const lines = (panel: Panel) => panel.marks.filter((m): m is LineGeometry => m.kind === "line");
-const axis = (panel: Panel, orient: string) => panel.axes.find((a) => a.orient === orient);
+const axis = (panel: Panel, orient: string) => panel.axes.find((a) => a.side === orient);
 /** Pixel x and y of each point of a line. */
 const points = (geometry: LineGeometry) => {
   const { coords, count } = geometry.path;
@@ -45,7 +46,7 @@ describe("facets", () => {
       facet: facet("region"),
     });
     expect(scene.panels.map((p) => p.key)).toEqual(["N", "S", "E"]);
-    expect(scene.headers.map((h) => h.text)).toEqual(["N", "S", "E"]);
+    expect(headersOf(scene).map((h) => h.text)).toEqual(["N", "S", "E"]);
     // One y domain for all panels, covering every region.
     expect(model.yScale()!.domain[1]).toBeGreaterThanOrEqual(300);
     // Each panel draws its region's rows: N is 1, 2, 3.
@@ -61,7 +62,7 @@ describe("facets", () => {
       [10, 20, 30].map((v) => expect.closeTo(y(v, s!), 3)),
     );
     // The legend has the series once.
-    expect(scene.legend).toHaveLength(0);
+    expect(legendOf(scene)).toHaveLength(0);
     expect(model.series()).toHaveLength(1);
   });
 
@@ -91,7 +92,7 @@ describe("facets", () => {
     const titles = scene.panels.flatMap((p) => p.axes.map((a) => a.title?.text).filter(Boolean));
     expect(titles.sort()).toEqual(["units", "week"]);
     // Panel headers sit above their plots.
-    expect(scene.headers[0]!.y).toBeLessThan(n.plot.y);
+    expect(headersOf(scene)[0]!.y).toBeLessThan(n.plot.y);
   });
 
   it("repeat constant annotations and marks marked repeat in every panel", () => {
@@ -395,11 +396,11 @@ describe("row and column facets", () => {
     expect(lines(sb!).every((l) => l.path.count === 0)).toBe(true);
     expect(points(lines(nb!)[0]!)).toHaveLength(2);
     // Columns are headed once above the top row, rows once beside the last column.
-    const top = scene.headers.filter((h) => h.angle === 0);
+    const top = headersOf(scene).filter((h) => h.angle === 0);
     expect(top.map((h) => h.text)).toEqual(["A", "B"]);
     expect(top[1]!.x).toBeCloseTo(nb!.plot.x + nb!.plot.width / 2);
     expect(top[0]!.y).toBeLessThan(na!.plot.y);
-    const side = scene.headers.filter((h) => h.angle === 90);
+    const side = headersOf(scene).filter((h) => h.angle === 90);
     expect(side.map((h) => h.text)).toEqual(["N", "S", "E"]);
     expect(side[0]!.x).toBeGreaterThan(nb!.plot.x + nb!.plot.width);
     expect(side[0]!.x).toBeLessThan(600);
@@ -432,7 +433,7 @@ describe("row and column facets", () => {
     }).scene;
     expect(columns.panels.map((p) => p.key)).toEqual(["A", "B"]);
     expect(columns.panels[1]!.plot.y).toBe(columns.panels[0]!.plot.y);
-    expect(columns.headers.map((h) => [h.text, h.angle])).toEqual([
+    expect(headersOf(columns).map((h) => [h.text, h.angle])).toEqual([
       ["A", 0],
       ["B", 0],
     ]);
@@ -442,7 +443,7 @@ describe("row and column facets", () => {
     }).scene;
     expect(rows.panels.map((p) => p.key)).toEqual(["N", "S", "E"]);
     expect(rows.panels[1]!.plot.x).toBe(rows.panels[0]!.plot.x);
-    expect(rows.headers.map((h) => h.angle)).toEqual([90, 90, 90]);
+    expect(headersOf(rows).map((h) => h.angle)).toEqual([90, 90, 90]);
   });
 
   it("refuse facets without fields, with one field twice, or with both forms", () => {
@@ -484,7 +485,7 @@ describe("row and column facets", () => {
         facet: facet(grid),
       });
       expect(scene.panels).toHaveLength(1);
-      expect(scene.headers).toEqual([]);
+      expect(headersOf(scene)).toEqual([]);
       expect(
         renderToSVG({
           marks: [line(empty, { x: "t", y: "units" })],
@@ -494,9 +495,9 @@ describe("row and column facets", () => {
         }),
       ).toContain("<svg");
       empty.append({ t: [0], units: [1], region: ["N"], product: ["A"] });
-      expect(model.scene(estimateText).headers.length).toBeGreaterThan(0);
+      expect(headersOf(model.scene(estimateText)).length).toBeGreaterThan(0);
       empty.dropFirst(1);
-      expect(model.scene(estimateText).headers).toEqual([]);
+      expect(headersOf(model.scene(estimateText))).toEqual([]);
     }
   });
 
@@ -558,7 +559,7 @@ describe("facet panels with y scales of their own", () => {
     const { model, scene } = build({
       marks,
       facet: facet({ row: "region", column: "product" }),
-      resolve: { y: "independent" },
+      y: { scope: "panel" },
     });
     expect([0, 1, 2, 3].map((i) => top(model, i))).toEqual([2, 4, 200, 400]);
     expect(labeled(scene)).toEqual([true, true, true, true]);
@@ -571,19 +572,19 @@ describe("facet panels with y scales of their own", () => {
     const rows = build({
       marks,
       facet: facet({ row: "region", column: "product" }),
-      resolve: { y: "rows" },
+      y: { scope: "row" },
     });
     expect([0, 1, 2, 3].map((i) => top(rows.model, i))).toEqual([4, 4, 400, 400]);
     expect(labeled(rows.scene)).toEqual([true, false, true, false]);
     const columns = build({
       marks,
       facet: facet({ row: "region", column: "product" }),
-      resolve: { y: "columns" },
+      y: { scope: "column" },
     });
     expect([0, 1, 2, 3].map((i) => top(columns.model, i))).toEqual([200, 400, 200, 400]);
     expect(labeled(columns.scene)).toEqual([true, true, true, true]);
     // Without facets, there is nothing to resolve.
-    const plain = build({ marks, resolve: { y: "independent" } });
+    const plain = build({ marks, y: { scope: "panel" } });
     expect(top(plain.model, 0)).toBe(400);
   });
 
@@ -594,7 +595,7 @@ describe("facet panels with y scales of their own", () => {
     const { model } = build({
       marks: [line(lines, { x: "t", y: "v" }), bar(bars, { x: "t", y: "v" })],
       facet: facet("g"),
-      resolve: { y: "independent" },
+      y: { scope: "panel" },
     });
     expect(Math.min(...model.panels()[0]!.y.domain)).toBeGreaterThan(0);
     expect(Math.min(...model.panels()[1]!.y.domain)).toBe(0);
@@ -604,8 +605,8 @@ describe("facet panels with y scales of their own", () => {
     const fixed = build({
       marks: [line(sparse, { x: "t", y: "v" }), line(sparseRows, { x: "t", y: "v" })],
       facet: facet({ row: "r", column: "c" }),
-      resolve: { y: "independent" },
-      y: { domain: [0, 10] },
+
+      y: { domain: [0, 10], scope: "panel" },
     });
     const labels = fixed.scene.panels.map((p) => axis(p, "left")?.ticks.length ?? 0);
     expect(labels.map((n) => n > 0)).toEqual([true, false, false, true]);
@@ -615,7 +616,7 @@ describe("facet panels with y scales of their own", () => {
     const model = new ChartModel({ marks, facet: facet("region") });
     model.setYViewport({ y: [0, 50], yRight: null });
     expect(model.yViewport.y).toEqual([0, 50]);
-    model.update({ marks, facet: facet("region"), resolve: { y: "independent" } });
+    model.update({ marks, facet: facet("region"), y: { scope: "panel" } });
     expect(model.yViewport).toEqual({ y: null, yRight: null });
     expect(() => model.setYViewport({ y: [0, 50], yRight: null })).toThrow("no one y range");
   });
@@ -625,7 +626,7 @@ describe("facet panels with y scales of their own", () => {
       build({
         marks,
         facet: facet("region"),
-        resolve: { y: "independent" },
+        y: { scope: "panel" },
         interaction: { zoom: "xy" },
       }),
     ).toThrow("cannot zoom along y");
@@ -634,7 +635,7 @@ describe("facet panels with y scales of their own", () => {
         {
           data: { t: { columns: { x: [1, 2], y: [1, 2] } } },
           marks: [{ type: "line", x: "x", y: "y" }],
-          resolve: { y: "independent" },
+          y: { scope: "panel" },
         },
         [],
       ),
@@ -662,8 +663,8 @@ describe("facet panels with x scales of their own", () => {
     const { model, scene } = build({
       marks,
       facet: grid,
-      resolve: { x: "independent" },
-      x: { title: "Time" },
+
+      x: { title: "Time", scope: "panel" },
     });
     expect(xOf(model)).toEqual([
       [0, 10],
@@ -685,7 +686,7 @@ describe("facet panels with x scales of their own", () => {
   });
 
   it("share an x scale along rows or columns", () => {
-    const rows = build({ marks, facet: grid, resolve: { x: "rows" }, x: { title: "Time" } });
+    const rows = build({ marks, facet: grid, x: { title: "Time", scope: "row" } });
     expect(xOf(rows.model)).toEqual([
       [0, 10],
       [0, 10],
@@ -698,7 +699,7 @@ describe("facet panels with x scales of their own", () => {
     expect(rowTitles).toHaveLength(2);
     const [a, b] = rows.scene.panels as Panel[];
     expect(rowTitles[0]!.x).toBeCloseTo((a!.plot.x + b!.plot.x + b!.plot.width) / 2, 5);
-    const columns = build({ marks, facet: grid, resolve: { x: "columns" } });
+    const columns = build({ marks, facet: grid, x: { scope: "column" } });
     // Each column spans both sites; only the lowest panels have labels.
     expect(xOf(columns.model)).toEqual([
       [0, 1100],
@@ -730,8 +731,8 @@ describe("facet panels with x scales of their own", () => {
       {
         marks: [point(table(sites), { x: "t", y: "v" })],
         facet: facet({ row: "site", column: "kind" }),
-        resolve: { x: "rows", y: "columns" },
-        x: { title: "Seconds" },
+        y: { scope: "column" },
+        x: { title: "Seconds", scope: "row" },
       },
       640,
       480,
@@ -751,7 +752,7 @@ describe("facet panels with x scales of their own", () => {
 
   it("keep scenes of shared x unchanged", () => {
     const plain = build({ marks, facet: grid, x: { title: "Time" } });
-    const shared = build({ marks, facet: grid, x: { title: "Time" }, resolve: { x: "shared" } });
+    const shared = build({ marks, facet: grid, x: { title: "Time", scope: "chart" } });
     expect(renderToSVG({ marks, facet: grid, width: 600, height: 400, idPrefix: "a" })).toBe(
       renderToSVG({
         marks,
@@ -759,7 +760,7 @@ describe("facet panels with x scales of their own", () => {
         width: 600,
         height: 400,
         idPrefix: "a",
-        resolve: { x: "shared" },
+        x: { scope: "chart" },
       }),
     );
     expect(shared.scene.panels.map((p) => p.plot)).toEqual(plain.scene.panels.map((p) => p.plot));
@@ -771,15 +772,15 @@ describe("facet panels with x scales of their own", () => {
     const fixed = build({
       marks,
       facet: grid,
-      resolve: { x: "independent" },
-      x: { domain: [0, 50] },
+
+      x: { domain: [0, 50], scope: "panel" },
     });
     expect(xOf(fixed.model).every(([a, b]) => a === 0 && b === 50)).toBe(true);
     const log = build({
       marks: [line(readings, { x: "t", y: "v" })],
       facet: facet("site"),
-      resolve: { x: "independent" },
-      x: { type: "log" },
+
+      x: { type: "log", scope: "panel" },
     });
     // Log axes leave out zero: A's panel fits 10 alone.
     expect(log.model.panels()[0]!.x.type).toBe("log");
@@ -793,7 +794,7 @@ describe("facet panels with x scales of their own", () => {
     const timed = build({
       marks: [line(times, { x: "when", y: "v" })],
       facet: facet("site"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     const [a, b] = timed.model.panels();
     expect(a!.x.type).toBe("time");
@@ -809,7 +810,7 @@ describe("facet panels with x scales of their own", () => {
     const empty = build({
       marks: [line(sparse, { x: "t", y: "v" })],
       facet: facet({ row: "r", column: "c" }),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(labeled(empty.scene)).toEqual([true, false, false, true]);
     expect(empty.scene.panels.map((p) => axis(p, "bottom") !== undefined)).toEqual([
@@ -830,7 +831,7 @@ describe("facet panels with x scales of their own", () => {
     const { model } = build({
       marks: [line(data, { x: "t", y: "v" })],
       facet: facet("site"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     const top = () => Math.max(...model.panels()[1]!.y.domain);
     expect(top()).toBeGreaterThanOrEqual(100);
@@ -855,7 +856,7 @@ describe("facet panels with x scales of their own", () => {
     const { model } = build({
       marks: [line(streamed, { x: "t", y: "v" })],
       facet: grid,
-      resolve: { x: "rows" },
+      x: { scope: "row" },
     });
     const [a, b, c] = model.panels().map((p) => p.key);
     model.setViewport([2, 4], b);
@@ -878,20 +879,22 @@ describe("facet panels with x scales of their own", () => {
     expect(model.viewportOf(a)).toBeNull();
   });
 
-  it("load from specs and check the resolution", () => {
-    const spec = (resolve: unknown) => () =>
+  it("load from specs and check the scales' scopes", () => {
+    const spec = (scopes: unknown) => () =>
       loadSpec(
         {
           data: { t: { columns: { x: [1, 2], y: [1, 2], g: ["a", "b"] } } },
           marks: [{ type: "line", data: "t", x: "x", y: "y" }],
           facet: { field: "g" },
-          resolve: resolve as { x: "rows" },
+          ...(scopes as object),
         },
         [],
       );
-    expect(spec({ x: "independent" })).not.toThrow();
-    expect(spec({ y: "independent" })).not.toThrow();
-    expect(spec({ x: "each" })).toThrow("spec.resolve.x");
+    expect(spec({ x: { scope: "panel" } })).not.toThrow();
+    expect(spec({ y: { scope: "panel" } })).not.toThrow();
+    expect(spec({ x: { scope: "each" } })).toThrow(
+      'spec.x.scope: expected "chart", "panel", "row", or "column"',
+    );
   });
 });
 
@@ -915,9 +918,9 @@ describe("panel groups", () => {
         {},
         { zone: "UTC", locale: undefined, theme: model.theme },
       );
-    const byPanel = layout.groups("independent", split, 2, "x", undefined, "linear");
+    const byPanel = layout.groups("panel", split, 2, "x", undefined);
     expect(byPanel.keys).toEqual(['["a"]', '["b"]', '["c"]', '["d"]']);
-    const byRow = layout.groups("rows", split, 2, "y", undefined, "linear");
+    const byRow = layout.groups("row", split, 2, "y", undefined);
     expect(byRow.keys).toEqual(['["a","b"]', '["c","d"]']);
     // Rows by panels: each row has its two panels, and no other pairs.
     const parts = layout.across(split, byRow.groupOf, byPanel.groupOf);

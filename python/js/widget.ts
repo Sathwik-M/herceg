@@ -903,7 +903,7 @@ class Widget {
       view.chart?.update(update);
       this.#size(view);
       // Drawn at once: views shown next read the panels' axes as drawn,
-      // which options such as `resolve` change.
+      // which options such as an axis' `scope` change.
       view.chart?.render();
     }
     // Reconcile even with no mounted display; unchanged effective defaults keep turned views.

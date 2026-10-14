@@ -13,6 +13,7 @@ import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { AreaGeometry, LineGeometry, RuleGeometry, Scene } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 /** The y of a polyline at pixel x, by linear interpolation, if it spans x. */
 function yAt(path: Polyline, x: number): number | undefined {
@@ -75,8 +76,8 @@ function sceneOf(
   return { model, scene: model.scene(estimateText) };
 }
 
-const yAxis = (scene: Scene) => scene.panels[0]!.axes.find((axis) => axis.orient === "left")!;
-const xAxis = (scene: Scene) => scene.panels[0]!.axes.find((axis) => axis.orient === "bottom")!;
+const yAxis = (scene: Scene) => scene.panels[0]!.axes.find((axis) => axis.side === "left")!;
+const xAxis = (scene: Scene) => scene.panels[0]!.axes.find((axis) => axis.side === "bottom")!;
 const lines = (scene: Scene) =>
   scene.panels[0]!.marks.filter((m): m is LineGeometry => m.kind === "line");
 
@@ -100,11 +101,13 @@ describe("ChartModel layout", () => {
 
   it("shows a legend for two or more series only", () => {
     expect(
-      sceneOf({ marks: [line(data, { x: "x", y: ["a", "b"] })] }).scene.legend.map((i) => i.label),
+      legendOf(sceneOf({ marks: [line(data, { x: "x", y: ["a", "b"] })] }).scene).map(
+        (i) => i.label,
+      ),
     ).toEqual(["a", "b"]);
-    expect(sceneOf({ marks: [line(data, { x: "x", y: "a" })] }).scene.legend).toEqual([]);
+    expect(legendOf(sceneOf({ marks: [line(data, { x: "x", y: "a" })] }).scene)).toEqual([]);
     expect(
-      sceneOf({ marks: [line(data, { x: "x", y: "a" })], legend: true }).scene.legend,
+      legendOf(sceneOf({ marks: [line(data, { x: "x", y: "a" })], legend: true }).scene),
     ).toHaveLength(1);
   });
 
@@ -212,7 +215,7 @@ describe("domains", () => {
     const scene = model.scene(estimateText);
     expect(lines(scene).map((l) => l.key)).toEqual(['[0,"a"]']);
     expect(Math.max(...yAxis(scene).ticks.map((t) => Number(t.label)))).toBeLessThanOrEqual(1);
-    expect(scene.legend.find((item) => item.key === '[0,"b"]')?.hidden).toBe(true);
+    expect(legendOf(scene).find((item) => item.key === '[0,"b"]')?.hidden).toBe(true);
   });
 
   it("includes rules in the domain", () => {

@@ -340,9 +340,11 @@ describe("value transitions", () => {
   /** The left axis' tick labels on screen. */
   const yLabels = (chart: Chart) =>
     [...chart.root.querySelectorAll('text[text-anchor="end"]')].map((text) => text.textContent);
-  /** The grid lines on screen. */
+  /** The grid lines on screen, drawn with the backgrounds under the data. */
   const grid = (chart: Chart) =>
-    chart.root.querySelector(':scope > svg > path[fill="none"]')?.getAttribute("d") ?? "";
+    chart.root
+      .querySelector(':scope > svg > g:first-of-type > path[fill="none"]')
+      ?.getAttribute("d") ?? "";
 
   it("move the axes with values, their ticks and grid lines between", async () => {
     const marks = (data: ReturnType<typeof sales>) => [bar(data, { x: "region", y: "sales" })];

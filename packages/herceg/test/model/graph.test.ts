@@ -12,6 +12,7 @@ import type { PointGeometry, Scene, SegmentGeometry, TextGeometry } from "../../
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ChartSpec } from "../../src/spec/spec.ts";
 import { DARK, LIGHT, surface } from "../../src/theme.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 // Two teams joined through Ana. Bo and Ana talk both ways (one link of 5).
 // Left out: a link from Ana to herself, a row without a target, and, when
@@ -94,8 +95,8 @@ const read = (model: ChartModel) =>
 describe("graph", () => {
   it("draws a circle per node in its group's color, ringed, over a path per kind of link", () => {
     const { scene, model } = build({ marks: [teams()] });
-    expect(scene.legend.map(({ label }) => label)).toEqual(["Data", "Sales"]);
-    const [data, sales] = scene.legend.map(({ color }) => color);
+    expect(legendOf(scene).map(({ label }) => label)).toEqual(["Data", "Sales"]);
+    const [data, sales] = legendOf(scene).map(({ color }) => color);
     const nodes = nodesOf(scene);
     // Gus has no links but is in the nodes table, so it is drawn.
     expect(nodes).toHaveLength(7);
@@ -215,7 +216,7 @@ describe("graph", () => {
   it("hides a group's nodes and their links from the legend, leaving the rest in place", () => {
     const { model, scene } = build({ marks: [teams()] });
     const before = model.inspectItem(JSON.stringify([0, "Ana"]))!.points[0]!;
-    model.hidden.add(scene.legend[1]!.key);
+    model.hidden.add(legendOf(scene)[1]!.key);
     const hidden = model.scene(estimateText);
     expect(nodesOf(hidden)).toHaveLength(3);
     expect(linksOf(hidden).map(({ count }) => count)).toEqual([3]);
@@ -297,7 +298,7 @@ describe("graph", () => {
 
   it("draws one color without groups, and muted nodes outside the nodes table", () => {
     const plain = build({ marks: [graph(links(), { source: "from", target: "to" })] });
-    expect(plain.scene.legend).toEqual([]);
+    expect(legendOf(plain.scene)).toEqual([]);
     const fills = new Set(nodesOf(plain.scene).map(({ fill }) => fill));
     expect(fills).toEqual(new Set([LIGHT.palette[0]]));
     expect(linksOf(plain.scene).map(({ stroke }) => stroke)).toEqual([LIGHT.muted]);
@@ -327,7 +328,7 @@ describe("graph", () => {
       "Fay: 2 links",
     ]);
     expect(model.inspectItem(JSON.stringify([0, "Fay"]))!.points[0]!.color).toBe(LIGHT.muted);
-    expect(scene.legend.map(({ label }) => label)).toEqual(["Data", "Sales"]);
+    expect(legendOf(scene).map(({ label }) => label)).toEqual(["Data", "Sales"]);
   });
 
   it("follows both tables as they change", () => {
@@ -390,7 +391,7 @@ describe("graph", () => {
     });
     const scene = model.scene(estimateText);
     expect(scene.panels[0]!.marks).toEqual([]);
-    expect(scene.legend).toEqual([]);
+    expect(legendOf(scene)).toEqual([]);
     expect(model.layoutSummary()).toBe(
       `Network of ${count(MAX_NODES + 2)} nodes and ${count(MAX_NODES / 2 + 1)} links: too many to lay out ${limits}.`,
     );

@@ -538,7 +538,7 @@ function followApp(instance: Instance) {
  * background, which the chart shows through.
  */
 function appColors(theme: ThemeName | undefined): ThemeSpec {
-  return { extends: theme ?? "light", background: "transparent" };
+  return { extends: theme ?? "light", tokens: { background: "transparent" } };
 }
 
 /**

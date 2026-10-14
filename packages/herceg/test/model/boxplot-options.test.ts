@@ -19,6 +19,7 @@ import type {
   SegmentGeometry,
 } from "../../src/scene/scene.ts";
 import { checkSpec, validateSpec } from "../../src/spec/validate.ts";
+import { legendOf } from "../helpers/guides.ts";
 import legacyBoxes from "./fixtures/boxplot-legacy.json";
 
 const fields = { low: "lo", q1: "p25", median: "p50", q3: "p75", high: "hi" } as const;
@@ -439,15 +440,14 @@ describe("box plot options", () => {
       const { model, scene } = build({
         marks: [mark],
         facet: facet("panel"),
-        resolve: horizontal
-          ? { y: "independent", x: "independent" }
-          : { x: "independent", y: "independent" },
+        x: { scope: "panel" },
+        y: { scope: "panel" },
       });
       expect(model.panels().map((p) => (horizontal ? p.y : p.x).categories)).toEqual([
         ["a", "b"],
         ["b", "c"],
       ]);
-      expect(scene.legend.map((entry) => entry.label)).toEqual(["one", "two"]);
+      expect(legendOf(scene).map((entry) => entry.label)).toEqual(["one", "two"]);
       const stop = model.keyboardStops("S")[0]!;
       const read = model.inspectPosition(stop.key, 0, "S")!;
       expect(read.label).toBe("b");

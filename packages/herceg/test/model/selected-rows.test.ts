@@ -282,7 +282,7 @@ describe("brushes as conditions", () => {
     const model = drawn({
       marks: [line(regions, { x: "x", y: "a" }), line(regions, { x: "x", y: "b", axis: "right" })],
       facet: facet("region"),
-      resolve: { yRight: "independent" },
+      yRight: { scope: "panel" },
     });
     const expected = model.panels().flatMap((panel) => {
       const range = [panel.y.map(19), panel.y.map(21)].map((p) => panel.yRight!.invert(p));
@@ -312,7 +312,7 @@ describe("brushes as conditions", () => {
     const model = drawn({
       marks: [point(readings, { x: "x", y: "a" })],
       facet: facet("host"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     const owner = { x: model.panels().find(({ key }) => key === "q")!.xGroup, panels: ["q"] };
     const selection = brushedRows(model, readings, xRange([0, 10]), owner);

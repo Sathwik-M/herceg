@@ -136,7 +136,12 @@ def test_dash_strings_serialize_and_render_with_scaled_widths(style, pattern, su
         chart = hg.Chart(DATA).rule(y=1, dash=style, stroke_width=2)
     else:
         chart = hx.pointplot(
-            DATA, x="group", y="y", linestyle=style, errorbar=None, theme={"line_width": 2}
+            DATA,
+            x="group",
+            y="y",
+            linestyle=style,
+            errorbar=None,
+            theme={"style": {"line": {"stroke_width": 2}}},
         )
     mark = next(m for m in chart.to_spec()[0]["marks"] if m["type"] in ("line", "rule"))
     assert mark["dash"] == style

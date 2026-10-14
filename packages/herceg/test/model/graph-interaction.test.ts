@@ -1,3 +1,4 @@
+import { legendOf } from "../helpers/guides.ts";
 // Networks' directed links and link labels, nodes moved by the chart's
 // user, and rows of either table selected and highlighted.
 
@@ -371,7 +372,7 @@ describe("node colors", () => {
           labels: false,
         }),
       ],
-      theme: { palette },
+      theme: { tokens: { palette: palette } },
     });
     const drawn = marksOf<PointGeometry>(scene, "point", "graph-nodes");
     expect(drawn.length).toBeGreaterThan(1);
@@ -467,7 +468,7 @@ describe("moves across charts, groups, and changes", () => {
     const { model, scene } = build({ marks: marks() });
     const [x, y] = model.items!.result()!.moves!.toLayout('[0,"a"]', 70, 60);
     model.items!.setItemPosition('[0,"a"]', { x, y });
-    model.hidden.add(scene.legend[0]!.key);
+    model.hidden.add(legendOf(scene)[0]!.key);
     model.scene(estimateText);
     expect(model.items!.setItemPosition('[0,"a"]', null)).toEqual({
       key: '[0,"a"]',
@@ -609,7 +610,7 @@ describe("network navigation and lassos", () => {
       [600, 400],
       [0, 400],
     ] as const;
-    model.hidden.add(scene.legend[0]!.key);
+    model.hidden.add(legendOf(scene)[0]!.key);
     model.scene(estimateText);
     expect(model.items!.result()!.lassoed!(all, nodes as unknown as Table)).toEqual([2, 3]);
     expect(
@@ -649,7 +650,7 @@ describe("network navigation and lassos", () => {
     const link = model.inspectItem('[0,"a","b"]')!.points[0]!;
     expect((model.inspect(...a) as ItemInspection).key).toBe('[0,"a"]');
     expect((model.inspect(link.px, link.py) as ItemInspection).key).toBe('[0,"a","b"]');
-    model.hidden.add(scene.legend[0]!.key);
+    model.hidden.add(legendOf(scene)[0]!.key);
     model.scene(estimateText);
     expect(model.inspect(...a)).toBeUndefined();
     expect(model.inspect(link.px, link.py)).toBeUndefined();

@@ -77,7 +77,7 @@ export function overviewBars(
   if (drawable < threshold) {
     // Labels and corner metadata use the full mark's authoring logic, over
     // just the retained rows rather than another walk of the source table.
-    if (mark.spec.labels || frame.theme.barRadius > 0 || frame.keyed) {
+    if (mark.spec.labels || frame.theme.style.bar.radius > 0 || frame.keyed) {
       return mark.geometry(
         visible.map((s, i) => ({
           ...s,

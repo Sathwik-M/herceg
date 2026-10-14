@@ -15,6 +15,7 @@ const common = {
   alias: {
     herceg: join(engine, "index.ts"),
     "herceg/pdf": join(engine, "pdf.ts"),
+    "herceg/fonts": join(engine, "fonts.ts"),
     "herceg/spec": join(engine, "from-spec.ts"),
   },
   logLevel: "warning",

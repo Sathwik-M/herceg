@@ -97,11 +97,11 @@ export class Toolbar {
 
   /** Styles the buttons for a theme, when it changed. */
   style(theme: Theme): void {
-    const key = `${theme.text}|${theme.tooltipBackground}|${theme.tooltipBorder}`;
+    const key = `${theme.text}|${theme.style.tooltip.fill}|${theme.style.tooltip.stroke}`;
     if (key === this.#theme) return;
     this.#theme = key;
     for (const { button } of this.#buttons)
-      button.style.cssText = `width:24px;height:24px;padding:3px;border:1px solid ${theme.tooltipBorder};border-radius:4px;background:${theme.tooltipBackground};color:${theme.text};cursor:pointer`;
+      button.style.cssText = `width:24px;height:24px;padding:3px;border:1px solid ${theme.style.tooltip.stroke};border-radius:4px;background:${theme.style.tooltip.fill};color:${theme.text};cursor:pointer`;
     this.refresh();
   }
 

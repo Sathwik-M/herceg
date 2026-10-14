@@ -17,6 +17,7 @@ import { BandScale, LinearScale } from "../../src/scale/scale.ts";
 import type { SegmentGeometry } from "../../src/scene/scene.ts";
 import { LIGHT } from "../../src/theme.ts";
 import { clustermap } from "../fixtures/clustermap.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 const linkage = () => table({ first: [0, 2, 5], second: [1, 3, 4], height: [1, 2, 4] });
 const options = {
@@ -164,7 +165,8 @@ describe("dendrogram", () => {
           marks: treeFirst ? [tree, cells] : [cells, tree],
           ...(panel && {
             panels: panels([{ id: panel }]),
-            resolve: { x: "independent", y: "independent" },
+            y: { scope: "panel" },
+            x: { scope: "panel" },
           }),
         });
         const scale = model.panels()[0]!.x;
@@ -183,7 +185,7 @@ describe("dendrogram", () => {
     const { model } = build({
       marks: [point(view, { x: "x", y: "y", series: "group", panel: "points" })],
       panels: panels([{ id: "points" }]),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(model.panels()[0]!.x.categories).toEqual(["a", "b"]);
     view.setQuery({ filter: col("y").gt(10) });
@@ -261,7 +263,7 @@ describe("dendrogram", () => {
       legend: true,
     });
     expect(describeChart(model)).toContain("Columns: 4 leaves, 3 merges. Merge heights 1 to 4.");
-    expect(scene.legend).toEqual([]);
+    expect(legendOf(scene)).toEqual([]);
     expect(model.keyboardStops("")).toEqual([]);
     expect(
       model.inspect(scene.panels[0]!.plot.x + 20, scene.panels[0]!.plot.y + 20),
@@ -296,8 +298,8 @@ describe("dendrogram", () => {
     expect(left!.x.categories).toEqual([]);
     expect(scene.panels[0]!.marks).toEqual([]);
     expect(scene.panels[0]!.axes).toEqual([]);
-    expect(scene.panels[1]!.axes.some((a) => a.orient === "left")).toBe(false);
-    expect(scene.panels[2]!.axes.map((a) => a.orient)).toEqual(["left"]);
+    expect(scene.panels[1]!.axes.some((a) => a.side === "left")).toBe(false);
+    expect(scene.panels[2]!.axes.map((a) => a.side)).toEqual(["left"]);
     expect(top!.x.categories).toEqual(matrix!.x.categories);
     expect(left!.y.categories).toEqual(matrix!.y.categories);
     const topCoords = coords(segments(scene.panels[1]!.marks));
@@ -327,7 +329,8 @@ describe("dendrogram", () => {
         }),
       ],
       panels: panels([{ id: "tree" }, { id: "heatmap" }]),
-      resolve: { x: "independent", y: "independent" },
+      y: { scope: "panel" },
+      x: { scope: "panel" },
     });
     expect(model.panels().map((p) => p.x.categories)).toEqual([["c", "d", "a", "b"], ["other"]]);
   });
@@ -343,7 +346,8 @@ describe("dendrogram", () => {
         dendrogram(linkage(), { ...options, facet: "repeat" }),
       ],
       facet: facet("group"),
-      resolve: { x: "independent", y: "independent" },
+      y: { scope: "panel" },
+      x: { scope: "panel" },
     });
     expect(scene.panels).toHaveLength(2);
     for (const p of scene.panels) expect(segments(p.marks).count).toBe(9);

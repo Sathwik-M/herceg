@@ -25,7 +25,7 @@ function drawing(input: ChartMark, axes: Partial<Frame> = {}) {
     x: new LinearScale([0, 10], [20, 30]),
     y: new LinearScale([-20, 20], [42, 8]),
     plot: { x: 20, y: 5, width: 10, height: 40 },
-    theme: { ...source.theme, barRadius: 0 },
+    theme: { ...source.theme, style: { ...source.theme.style, bar: { radius: 0 } } },
     keyed: false,
     floats: (_key, _stage, length) => new Float32Array(length),
     doubles: (_key, _stage, length) => new Float64Array(length),

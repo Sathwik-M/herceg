@@ -7,6 +7,7 @@ import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type AxisInspection, type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import type { PointGeometry, RectGeometry, Scene, SegmentGeometry } from "../../src/scene/scene.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 describe("boxStats", () => {
   it("gives quartiles, and whiskers on the most extreme values within 1.5 IQR", () => {
@@ -44,7 +45,7 @@ describe("boxplot", () => {
     const { scene, model } = build({
       marks: [boxplot(latency, { x: "region", y: "ms", series: "version" })],
     });
-    expect(scene.legend.map((entry) => entry.label)).toEqual(["a", "b"]);
+    expect(legendOf(scene).map((entry) => entry.label)).toEqual(["a", "b"]);
     const boxes = geometry<RectGeometry>(scene, "rect");
     expect(boxes.map((m) => m.count)).toEqual([2, 2]);
     expect(boxes[0]!.fillOpacity).toBe(0.25);

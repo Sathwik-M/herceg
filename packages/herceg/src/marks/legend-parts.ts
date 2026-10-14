@@ -2,98 +2,107 @@
 // values those ways add them to the chart's legend; each brings its layout,
 // drawing, and description, so charts without them carry none of this code.
 
-import { escapeXml, n } from "../draw/markup.ts";
+import { escapeXml, n, rectMarkup } from "../draw/markup.ts";
 import { formatNumber } from "../format/format.ts";
-import type { LegendFlowItem, LegendLayout, LegendPart, LegendText } from "../model/legend.ts";
+import { textHeight, textItem, textWidth } from "../layout/text.ts";
+import type { LegendFlowItem, LegendOut, LegendPart, LegendText } from "../model/legend.ts";
 import { fraction } from "../scale/color.ts";
 import {
-  type ColorLegend,
-  type GlyphLegend,
+  type GuideItem,
+  type KeyGuide,
   LEGEND_SWATCH,
-  type LegendDrawing,
+  type RampGuide,
+  type RampItem,
   rampOffsets,
+  type TextItem,
 } from "../scene/scene.ts";
-import type { Theme } from "../theme.ts";
+import type { TextPaint } from "../style/style.ts";
 import type { ColorRamp, GlyphKey } from "./mark.ts";
 
 const LEGEND_GAP = 16;
 const KEY_GAP = 12;
 const RAMP_WIDTH = 120;
 
-const label = (x: number, y: number, value: string, fill: string) =>
-  `<text x="${n(x)}" y="${n(y)}" dominant-baseline="middle" fill="${escapeXml(fill)}">${escapeXml(value)}</text>`;
+/** A legend's line of text, starting at x and vertically centered on y. */
+const label = (x: number, y: number, line: string, paint: TextPaint, text: LegendText): TextItem =>
+  textItem(
+    line,
+    { x, y, anchor: "start", baseline: "middle", angle: 0 },
+    paint,
+    text.surface,
+    text.measure,
+  );
 
-/** A color ramp's SVG; `id` must be unique in the document (for the gradient). */
-const rampDrawing: LegendDrawing<ColorLegend> = {
-  svg(legend: ColorLegend, theme: Theme, id: string): string {
-    const offsets = rampOffsets(legend);
-    const stops = legend.stops
-      .map(
-        (color, i) => `<stop offset="${n(offsets[i]! * 100)}%" stop-color="${escapeXml(color)}"/>`,
-      )
-      .join("");
-    const { y, title, low, ramp, high } = legend;
-    return (
-      `<defs><linearGradient id="${id}">${stops}</linearGradient></defs>` +
-      label(title.x, y, title.text, theme.text) +
-      label(low.x, y, low.text, theme.muted) +
-      `<rect x="${n(ramp.x)}" y="${n(y - LEGEND_SWATCH / 2)}" width="${n(ramp.width)}" height="${LEGEND_SWATCH}" rx="2" fill="url(#${id})"/>` +
-      label(high.x, y, high.text, theme.muted)
-    );
-  },
-};
-
-/**
- * A size, shape, or color key's SVG: its title, then glyphs in their colors
- * (sizes and shapes in the muted color, translucent) with their labels.
- */
-const glyphDrawing: LegendDrawing<GlyphLegend> = {
-  svg({ title, entries }: GlyphLegend, theme: Theme): string {
-    let out = label(title.x, title.y, title.text, theme.text);
-    out += `<g fill="${escapeXml(theme.muted)}" fill-opacity="0.6">`;
-    for (const { glyph, x, y, fill } of entries) {
-      const own = fill === undefined ? "" : ` fill="${escapeXml(fill)}" fill-opacity="1"`;
-      out += `<path transform="translate(${n(x)} ${n(y)})" d="${glyph}"${own}/>`;
-    }
-    out += "</g>";
-    for (const { y, label: text } of entries) out += label(text.x, y, text.text, theme.muted);
-    return out;
-  },
-};
+/** A ramp as SVG: a rectangle filled with a gradient of its stops, the gradient's id `id`. */
+function rampMarkup(item: RampItem, id: string): string {
+  const stops = item.stops
+    .map(
+      (color, i) =>
+        `<stop offset="${n(item.offsets[i]! * 100)}%" stop-color="${escapeXml(color)}"/>`,
+    )
+    .join("");
+  return `<defs><linearGradient id="${id}">${stops}</linearGradient></defs>${rectMarkup(item, item.radius, ` fill="url(#${id})"`)}`;
+}
 
 /** The legend of a continuous color scale: its title, low value, ramp, and high value in a row. */
 export function rampLegend(ramp: ColorRamp): LegendPart {
   const { title, domain, midpoint, stops } = ramp;
+  const key = `ramp|${title}|${domain.join()}|${midpoint}|${stops.join()}`;
   return {
-    key: `ramp|${title}|${domain.join()}|${midpoint}|${stops.join()}`,
-    items({ measure, font, lineHeight, locale }: LegendText, out: LegendLayout): LegendFlowItem[] {
+    key,
+    items(text: LegendText, out: LegendOut): LegendFlowItem[] {
+      const { measure, lineHeight, locale } = text;
       const [lo, hi] = domain;
       const low = formatNumber(lo, locale);
       const high = formatNumber(hi, locale);
-      const titleWidth = measure(title, font) + 10;
-      const lowWidth = measure(low, font) + 6;
+      const titleWidth = textWidth(title, text.title, measure) + 10;
+      const lowWidth = textWidth(low, text.value, measure) + 6;
+      // Where the midpoint falls between the ends, for diverging ramps.
+      const middle =
+        midpoint === undefined
+          ? undefined
+          : hi > lo
+            ? Math.min(1, Math.max(0, fraction(midpoint, lo, hi)))
+            : 0.5;
+      const at = out.guides.length;
+      out.guides.push(placeRamp(0, 0));
+      function placeRamp(x: number, y: number): RampGuide {
+        const start = x + titleWidth + lowWidth;
+        return {
+          kind: "ramp",
+          key,
+          stops,
+          middle,
+          y,
+          title: { text: title, x },
+          low: { text: low, x: x + titleWidth },
+          ramp: { x: start, width: RAMP_WIDTH },
+          high: { text: high, x: start + RAMP_WIDTH + 6 },
+          rampMarkup,
+          items: [
+            label(x, y, title, text.title, text),
+            label(x + titleWidth, y, low, text.value, text),
+            {
+              type: "ramp",
+              x: start,
+              y: y - LEGEND_SWATCH / 2,
+              width: RAMP_WIDTH,
+              height: LEGEND_SWATCH,
+              radius: 2,
+              stops,
+              offsets: rampOffsets(stops, middle),
+            },
+            label(start + RAMP_WIDTH + 6, y, high, text.value, text),
+          ],
+        };
+      }
       return [
         {
-          width: titleWidth + lowWidth + RAMP_WIDTH + 6 + measure(high, font),
-          height: lineHeight,
+          width: titleWidth + lowWidth + RAMP_WIDTH + 6 + textWidth(high, text.value, measure),
+          height: Math.max(lineHeight, textHeight(text.title), textHeight(text.value)),
           gap: LEGEND_GAP,
           place: (x, y) => {
-            out.colorLegends.push({
-              draw: rampDrawing,
-              stops,
-              // Where the midpoint falls between the ends, for diverging ramps.
-              middle:
-                midpoint === undefined
-                  ? undefined
-                  : hi > lo
-                    ? Math.min(1, Math.max(0, fraction(midpoint, lo, hi)))
-                    : 0.5,
-              y,
-              title: { text: title, x },
-              low: { text: low, x: x + titleWidth },
-              ramp: { x: x + titleWidth + lowWidth, width: RAMP_WIDTH },
-              high: { text: high, x: x + titleWidth + lowWidth + RAMP_WIDTH + 6 },
-            });
+            out.guides[at] = placeRamp(x, y);
           },
         },
       ];
@@ -106,23 +115,42 @@ export function rampLegend(ramp: ColorRamp): LegendPart {
   };
 }
 
-/** The legend of sizes, shapes, or colors: a row of its own with the title, then each glyph and its label. */
+/**
+ * The legend of sizes, shapes, or colors: a row of its own with the title,
+ * then each glyph and its label. Glyphs without colors of their own are the
+ * value text's color, translucent.
+ */
 export function keyLegend(key: GlyphKey): LegendPart {
   const { title, channel, entries } = key;
+  const id = `key|${title}|${channel}|${entries.map((e) => `${e.label} ${e.glyph} ${e.color}`).join("|")}`;
   return {
-    key: `key|${title}|${channel}|${entries.map((e) => `${e.label} ${e.glyph} ${e.color}`).join("|")}`,
+    key: id,
     breaks: true,
-    items({ measure, font, lineHeight }: LegendText, out: LegendLayout): LegendFlowItem[] {
-      const legend: GlyphLegend = {
-        draw: glyphDrawing,
+    items(text: LegendText, out: LegendOut): LegendFlowItem[] {
+      const { measure, lineHeight } = text;
+      const legend = {
+        kind: "key",
+        key: id,
         title: { text: title, x: 0, y: 0 },
-        entries: [],
-      };
-      out.glyphLegends.push(legend);
+        entries: [] as KeyGuide["entries"][number][],
+        items: [] as GuideItem[],
+      } satisfies KeyGuide;
+      out.guides.push(legend);
+      out.finish.push(() => {
+        legend.items.push(label(legend.title.x, legend.title.y, title, text.title, text));
+        for (const { glyph, x, y, fill } of legend.entries)
+          legend.items.push(
+            fill === undefined
+              ? { type: "shape", d: glyph, at: [x, y], fill: text.value.color, fillOpacity: 0.6 }
+              : { type: "shape", d: glyph, at: [x, y], fill },
+          );
+        for (const { y, label: entry } of legend.entries)
+          legend.items.push(label(entry.x, y, entry.text, text.value, text));
+      });
       const items: LegendFlowItem[] = [
         {
-          width: measure(title, font),
-          height: lineHeight,
+          width: textWidth(title, text.title, measure),
+          height: Math.max(lineHeight, textHeight(text.title)),
           gap: KEY_GAP,
           breaks: true,
           place: (x, y) => {
@@ -131,11 +159,11 @@ export function keyLegend(key: GlyphKey): LegendPart {
           },
         },
       ];
-      for (const { label: text, glyph, r, color } of entries) {
+      for (const { label: entry, glyph, r, color } of entries) {
         const size = Math.max(LEGEND_SWATCH, r * 2);
         items.push({
-          width: size + 6 + measure(text, font),
-          height: Math.max(lineHeight, size + 2),
+          width: size + 6 + textWidth(entry, text.value, measure),
+          height: Math.max(lineHeight, size + 2, textHeight(text.value)),
           gap: KEY_GAP,
           place: (x, y) =>
             legend.entries.push({
@@ -143,7 +171,7 @@ export function keyLegend(key: GlyphKey): LegendPart {
               x: x + size / 2,
               y,
               ...(color !== undefined && { fill: color }),
-              label: { text, x: x + size + 6 },
+              label: { text: entry, x: x + size + 6 },
             }),
         });
       }

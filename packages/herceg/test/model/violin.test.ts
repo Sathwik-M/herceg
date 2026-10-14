@@ -18,6 +18,7 @@ import type {
   SegmentGeometry,
 } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 const latency = table({
   region: ["n", "n", "n", "n", "n", "s", "s", "s", "s", "s", "s", "s", "s"],
@@ -50,7 +51,7 @@ describe("violin", () => {
     const { scene, model } = build({
       marks: [violin(latency, { x: "region", y: "ms", series: "version" })],
     });
-    expect(scene.legend.map((entry) => entry.label)).toEqual(["a", "b"]);
+    expect(legendOf(scene).map((entry) => entry.label)).toEqual(["a", "b"]);
     const areas = geometry<AreaGeometry>(scene, "area");
     expect(areas.map((m) => m.upper.starts.length)).toEqual([2, 2]);
     expect(areas[0]!.fillOpacity).toBe(0.25);

@@ -15,6 +15,7 @@ import type {
   TextGeometry,
 } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 const signups = table({
   stage: ["Visit", "Cart", "Checkout", "Purchase"],
@@ -49,7 +50,7 @@ describe("funnel", () => {
       // Below the previous bar, a gap of 0.3 bars apart.
       expect(y! - y0!).toBeCloseTo((i + 1) * 1.3 * h0!, 3);
     }
-    expect(scene.legend).toEqual([]);
+    expect(legendOf(scene)).toEqual([]);
   });
 
   it("joins neighboring bars with faint connectors", () => {

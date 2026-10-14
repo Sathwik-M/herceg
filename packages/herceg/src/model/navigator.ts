@@ -11,7 +11,7 @@
 import type { NumericArray } from "../data/column.ts";
 import { escapeXml, n } from "../draw/markup.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
-import { textDrawing } from "../draw/text.ts";
+import { labelHalo, textDrawing } from "../draw/text.ts";
 import { mapValue } from "../lod/m4.ts";
 import { Polyline } from "../lod/polyline.ts";
 import type { BarMark } from "../marks/bar.ts";
@@ -31,6 +31,7 @@ import type {
   TextGeometry,
 } from "../scene/scene.ts";
 import type { NavigatorSpec } from "../spec/spec.ts";
+import type { Halo } from "../spec/style.ts";
 import { surface, type Theme } from "../theme.ts";
 import { type AxisContext, type AxisPlan, createScale, usableDomain } from "./axis.ts";
 import type { InspectedMark, Inspector, MarkSeries } from "./inspect.ts";
@@ -178,8 +179,16 @@ export class Navigator {
       if (repeated !== undefined)
         throw new TypeError(`navigator marks: "${repeated}" is listed twice`);
     }
-    if (options.halo !== undefined && typeof options.halo !== "boolean")
-      throw new TypeError("navigator halo: expected a boolean; use false to disable halos");
+    const { halo } = options;
+    if (
+      halo !== undefined &&
+      halo !== "auto" &&
+      halo !== false &&
+      typeof (halo as { color?: unknown } | null)?.color !== "string"
+    )
+      throw new TypeError(
+        'navigator halo: expected "auto", false, or an object with a color; use false to disable halos',
+      );
     this.height = height;
     this.marks = marks && Object.freeze([...marks]);
     this.#spec = {
@@ -214,10 +223,10 @@ export class Navigator {
     if (layout) throw new Error(`${layout.spec.type}: no x axis for a navigator; drop navigator`);
     // One window shows one x range, so every panel must share it, also
     // before data gives them more than one.
-    const x = options.resolve?.x;
-    if ((options.facet || options.panels) && x && x !== "shared")
+    const x = options.x?.scope;
+    if ((options.facet || options.panels) && x && x !== "chart")
       throw new Error(
-        `navigator: needs one x scale shared by every panel, and resolve.x is "${x}"; set resolve.x to "shared" or drop navigator`,
+        `navigator: needs one x scale shared by every panel, and x.scope is "${x}"; set x.scope to "chart" or drop navigator`,
       );
     for (const mark of marks) {
       const { type } = mark.spec;
@@ -265,6 +274,7 @@ export class Navigator {
     plan: XPlan,
     context: AxisContext,
     room: number,
+    lift = 0,
   ): Panel {
     let state = states.get(owner);
     if (!state) {
@@ -291,7 +301,7 @@ export class Navigator {
     const x = Math.min(...plots.map((plot) => plot.x));
     const strip: Rect = {
       x,
-      y: owner.height - BOTTOM - height,
+      y: owner.height - lift - BOTTOM - height,
       width: Math.max(...plots.map((plot) => plot.x + plot.width)) - x,
       height,
     };
@@ -339,7 +349,7 @@ export class Navigator {
       state.measure = frame.measure;
       state.overview = overview(drawn, sources, scale, strip, owner.config, context, state.buffers);
       ({ grid: state.grid, labels: state.labels } = labeled
-        ? stripTicks(rail, strip, frame, this.#spec.halo !== false)
+        ? stripTicks(rail, strip, frame, this.#spec.halo)
         : { grid: [], labels: undefined });
     }
     state.drawn = { plot: strip, rail: scale, shown, panels: sources.map(({ key }) => key) };
@@ -499,7 +509,11 @@ function overview(
       );
   };
   const { frame } = sources[0]!.inspector;
-  const theme: Theme = { ...frame.theme, lineWidth: 1, barRadius: 0 };
+  // Thin lines and square bars in the strip.
+  const theme: Theme = {
+    ...frame.theme,
+    style: { ...frame.theme.style, line: { strokeWidth: 1 }, bar: { radius: 0 } },
+  };
   const layout = config.facet ?? config.panels;
   // The y scale of a panel's marks on a side is its group's, whose panels
   // agree on its settings.
@@ -702,7 +716,7 @@ function stripTicks(
   rail: AxisPlan,
   strip: Rect,
   frame: Frame,
-  halo: boolean,
+  halo: Halo | undefined,
 ): { grid: number[]; labels: TextGeometry | undefined } {
   const { theme, measure } = frame;
   const font = `${theme.fontSize}px ${theme.font}`;
@@ -734,7 +748,7 @@ function stripTicks(
       key: "navigator-labels",
       fill: theme.muted,
       anchor: "start",
-      halo,
+      halo: labelHalo(halo, theme.muted, frame),
       coords: Float32Array.from(shown.flatMap(({ at }) => [at + 4, y])),
       labels: shown.map(({ label }) => label),
       count: shown.length,

@@ -123,7 +123,7 @@ export function boxGeometry(
       key: "box-grid",
       stroke: theme.grid,
       strokeWidth: 1,
-      dash: theme.gridDash.length > 0 ? theme.gridDash : undefined,
+      dash: theme.style.grid.dash.length > 0 ? theme.style.grid.dash : undefined,
       path: grid,
     },
     {
@@ -270,7 +270,7 @@ function labelGeometry(
       key,
       fill,
       anchor: "middle",
-      halo: false,
+      halo: undefined,
       coords: Float32Array.from(kept.flatMap(({ x, y }) => [x, y])),
       labels: kept.map(({ text }) => text),
       count: kept.length,

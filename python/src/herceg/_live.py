@@ -22,11 +22,13 @@ from ._chart import (
     OPTIONS,
     Camera,
     assemble_spec,
+    axis_scope,
     check_layout_options,
     check_y_zoom,
     columns_spec,
     on_right_axis,
     remaining_moves,
+    scope_of,
     spec_options,
     table_name,
 )
@@ -142,14 +144,19 @@ class LiveChart:
     @property
     def shares_y(self) -> bool:
         """Whether every panel shares one y scale, so the chart has one y viewport."""
-        return self._settings["resolve_y"] in (None, "shared") and "panels" not in self._layout
+        return (
+            scope_of(self._settings, "y", subplots=False) == "chart"
+            and "panels" not in self._layout
+        )
 
     @property
     def shares_y_right(self) -> bool:
-        """Whether every panel shares one right y scale (resolved as y unless
-        ``resolve_y_right`` says), so the chart has one right y viewport."""
-        resolution = self._settings["resolve_y_right"] or self._settings["resolve_y"]
-        return resolution in (None, "shared") and "panels" not in self._layout
+        """Whether every panel shares one right y scale (scoped as y unless
+        y_right's scope says), so the chart has one right y viewport."""
+        return (
+            scope_of(self._settings, "y_right", subplots=False) == "chart"
+            and "panels" not in self._layout
+        )
 
     def to_spec(self) -> Message:
         options = self._options
@@ -482,11 +489,12 @@ _STATE_MARKS = {
 def _check_live(settings: dict[str, Any]) -> None:
     """Live charts report one x range for zooming and brushing, so their
     panels share x."""
-    if settings["resolve_x"] not in (None, "shared"):
+    scope = axis_scope(settings, "x")
+    if scope not in (None, "chart"):
         raise ValueError(
-            'Chart resolve_x: expected "shared" in a live chart, which carries one x range '
-            f'for zoom and selection; received "{settings["resolve_x"]}". Show charts whose '
-            "panels have x scales of their own with chart.show() or to_html()"
+            'Chart x scope: expected "chart" in a live chart, which carries one x range '
+            f'for zoom and selection; received "{scope}". Show charts whose panels have '
+            "x scales of their own with chart.show() or to_html()"
         )
 
 

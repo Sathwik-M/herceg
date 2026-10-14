@@ -426,7 +426,7 @@ describe("band axes with many categories", () => {
     // Every label once for the widest, then only the shown ones.
     expect(first).toBeGreaterThanOrEqual(10_000);
     expect(measured).toBeLessThan(100);
-    const ticks = scene.panels[0]!.axes.find((a) => a.orient === "bottom")!.ticks;
+    const ticks = scene.panels[0]!.axes.find((a) => a.side === "bottom")!.ticks;
     const width = estimateText("host-00000", "12px sans-serif");
     expect(ticks.length).toBeLessThanOrEqual(Math.ceil(800 / width));
     expect(ticks.length).toBeGreaterThan(5);
@@ -445,7 +445,7 @@ describe("band axes with many categories", () => {
       600,
       400,
     );
-    const ticks = scene.panels[0]!.axes.find((a) => a.orient === "left")!.ticks;
+    const ticks = scene.panels[0]!.axes.find((a) => a.side === "left")!.ticks;
     expect(ticks.length).toBeGreaterThan(5);
     expect(ticks.length).toBeLessThan(40);
     expect(ticks[0]!.label).toBe("host-00000");

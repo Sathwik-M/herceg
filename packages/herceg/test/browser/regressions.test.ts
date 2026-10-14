@@ -258,7 +258,7 @@ describe("runtime regressions", () => {
   it("keeps the lowest y label clear of the first x label in large text", () => {
     const chart = createChart(host, {
       locale: "en-US",
-      theme: { fontSize: 24 },
+      theme: { style: { text: { fontSize: 24 } } },
       x: { domain: [1000, 2000], ticks: 2 },
       y: { format: { minimumFractionDigits: 4 } },
       marks: [line(table({ x: [1000, 2000], y: [10000, 20000] }), { x: "x", y: "y" })],

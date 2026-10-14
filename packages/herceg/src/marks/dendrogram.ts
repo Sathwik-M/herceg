@@ -2,7 +2,7 @@ import type { NumberField, Schema, Table } from "../data/table.ts";
 import { segmentDrawing } from "../draw/segments.ts";
 import { formatNumber } from "../format/format.ts";
 import type { SegmentGeometry } from "../scene/scene.ts";
-import type { DendrogramSpec, Frozen } from "../spec/spec.ts";
+import type { Clip, DendrogramSpec, Frozen } from "../spec/spec.ts";
 import { checkLinkage } from "./dendrogram-data.ts";
 import { definedFields } from "./line.ts";
 import {
@@ -34,6 +34,12 @@ export interface DendrogramOptions<S extends Schema> {
   strokeWidth?: number;
   label?: string;
   facet?: "repeat";
+  /**
+   * What the mark's drawing is cut to: "plot", "chart", or false for
+   * nothing, so markers at the plot's edge show whole. Without it, data is
+   * cut to the plot and labels are drawn whole.
+   */
+  clip?: Clip;
   panel?: string;
   id?: string;
 }
@@ -224,6 +230,7 @@ export function dendrogram<S extends Schema>(
       "label",
       "facet",
       "panel",
+      "clip",
       "id",
     ]),
   } as unknown as DendrogramSpec;

@@ -2,7 +2,7 @@ import type { CategoryField, NumberField, Schema, Table } from "../data/table.ts
 import { SvgPath } from "../draw/markup.ts";
 import { rectDrawing } from "../draw/rect.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
-import { textDrawing } from "../draw/text.ts";
+import { labelHalo, textDrawing } from "../draw/text.ts";
 import { formatNumber } from "../format/format.ts";
 import {
   CYCLE,
@@ -25,6 +25,7 @@ import type {
   TextGeometry,
 } from "../scene/scene.ts";
 import type { Frozen, SankeySpec } from "../spec/spec.ts";
+import type { Halo } from "../spec/style.ts";
 import { surface } from "../theme.ts";
 import {
   heldText,
@@ -38,8 +39,8 @@ import {
 import { CATEGORY, type ChartMark, DIM, frozen, type MARK, requireField } from "./mark.ts";
 
 export interface SankeyOptions<S extends Schema> {
-  /** Set false to leave text without its readability outline. */
-  halo?: boolean;
+  /** The outline that keeps text readable: "auto" (the default), false for none, or a color of its own. */
+  halo?: Halo;
   /** Category field naming where each row's flow comes from. */
   source: CategoryField<S>;
   /** Category field naming where it goes; a name in both fields is one node. */
@@ -384,7 +385,7 @@ export class SankeyMark implements LayoutMark {
       );
     }
     if (this.spec.labels ?? true)
-      geometry.push(...sankeyLabels(layout, names, frame, this.spec.halo !== false));
+      geometry.push(...sankeyLabels(layout, names, frame, this.spec.halo));
 
     const nodeItem = (node: number): LayoutItem => {
       const [x0, y0, x1, y1] = boxes.subarray(node * 4, node * 4 + 4) as unknown as number[];
@@ -624,7 +625,7 @@ function sankeyLabels(
   layout: SankeyLayout,
   names: readonly string[],
   frame: LayoutFrame,
-  halo: boolean,
+  halo: Halo | undefined,
 ): Geometry[] {
   const { bounds, theme, measure, locale } = frame;
   const { columns, columnX, nodeWidth, column, boxes, order } = layout;
@@ -690,7 +691,7 @@ function sankeyLabels(
           fill: theme.text,
           anchor,
           // Labels lie over links; the halo keeps them readable.
-          halo,
+          halo: labelHalo(halo, theme.text, frame),
           coords: Float32Array.from(sides[anchor].coords),
           labels: sides[anchor].labels,
           count: sides[anchor].labels.length,

@@ -3,7 +3,7 @@ import { table, time } from "herceg";
 import { serviceColumns } from "../data.ts";
 
 const latency = table({ ...serviceColumns, time: time(serviceColumns.time) });
-const theme = { extends: "dark", palette: ["#5b8def", "#f08a4b", "#3fbf8f"] } as const;
+const theme = { extends: "dark", tokens: { palette: ["#5b8def", "#f08a4b", "#3fbf8f"] } } as const;
 
 export function Example() {
   return (

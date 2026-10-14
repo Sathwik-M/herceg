@@ -53,7 +53,9 @@ describe("time-axis seam markers", () => {
       expect(seams.stroke).toBe(scene.theme.grid);
       expect(seams.dash).toEqual([3, 3]);
     }
-    const { scene } = build({ theme: { grid: "#123456", gridDash: [5, 2] } });
+    const { scene } = build({
+      theme: { tokens: { grid: "#123456" }, style: { grid: { dash: [5, 2] } } },
+    });
     const seams = scene.panels[0]!.marks[0] as SegmentGeometry;
     expect(seams.stroke).toBe("#123456");
     expect(seams.dash).toEqual([3, 3]);
@@ -155,7 +157,7 @@ describe("time-axis seam markers", () => {
 
   it("uses each independent panel's final scale and omits number panels", () => {
     const { model, scene } = build({
-      x: { domain: [0, 20], breaks: gap(), seams: { minSpacing: 1 } },
+      x: { domain: [0, 20], breaks: gap(), seams: { minSpacing: 1 }, scope: "panel" },
       panels: panels(
         [
           { id: "a", x: { type: "time", domain: [0, 20] } },
@@ -164,7 +166,7 @@ describe("time-axis seam markers", () => {
         ],
         { columns: 3, columnWidths: [1, 2, 1] },
       ),
-      resolve: { x: "independent" },
+
       marks: ["a", "b", "c"].map((panel) => line(data, { x: "t", y: "v", panel })),
     });
     const views = model.panels();
@@ -232,7 +234,7 @@ describe("portable specs with seams", () => {
 
   it("round trips and load", () => {
     const original = spec({ domain: [0, 20], breaks: gap().toJSON(), seams: { minSpacing: 40 } });
-    original.theme = { grid: "#ff0000" };
+    original.theme = { tokens: { grid: "#ff0000" } };
     const loaded = loadSpec(JSON.parse(JSON.stringify(original)), undefined, { unknown: "error" });
     expect(JSON.parse(JSON.stringify(loaded.config.x))).toEqual(original.x);
     expect(positions(build(loaded.config).scene.panels[0]!)).toHaveLength(2);

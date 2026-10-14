@@ -4,6 +4,7 @@
 
 import type { DrillRoot } from "../marks/tree-data.ts";
 import type { DrawnPanel, Inspection, TooltipMode, Viewport } from "../model/model.ts";
+import type { SvgSizing } from "../render/svg.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { PlotRect } from "../scene/scene.ts";
 import type { CameraSpec } from "../spec/spec.ts";
@@ -253,9 +254,9 @@ export interface Chart {
    * Standalone SVG of the current state, for export: pending changes are
    * drawn first (and reported with a `render` event once the export has
    * the frame), and nothing is drawn when nothing is pending, so `render`
-   * listeners may export.
+   * listeners may export. `options` say how the SVG sizes and scales.
    */
-  toSVG(): string;
+  toSVG(options?: SvgSizing): string;
   /**
    * PNG of the current state, as `toSVG` exports it, at `scale` times the
    * chart's size in CSS pixels (2 by default); a transparent background

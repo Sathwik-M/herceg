@@ -277,7 +277,7 @@ export class TreemapMark implements LayoutMark {
           key: `treemap-labels-${i}`,
           fill,
           anchor: "start",
-          halo: false,
+          halo: undefined,
           coords: Float32Array.from(coords),
           labels,
           count: labels.length,

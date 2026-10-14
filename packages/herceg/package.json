@@ -28,6 +28,11 @@
       "import": "./dist/pdf.js",
       "default": "./dist/pdf.js"
     },
+    "./fonts": {
+      "types": "./dist/fonts.d.ts",
+      "import": "./dist/fonts.js",
+      "default": "./dist/fonts.js"
+    },
     "./grid": {
       "types": "./dist/grid.d.ts",
       "import": "./dist/grid.js",

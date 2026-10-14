@@ -26,7 +26,7 @@ import { resolveTheme } from "../../src/theme.ts";
 import { bandBox, MOUSE, modelOf } from "./helpers.ts";
 
 /** Without a background, the canvas holds what marks paint alone. */
-const CLEAR = { background: "transparent" } as const;
+const CLEAR = { tokens: { background: "transparent" } } as const;
 
 let host: HTMLDivElement;
 
@@ -709,7 +709,9 @@ describe("themes that follow the page", () => {
       ":root.night { --chart-ink: rgb(230, 230, 230); --chart-one: #ff8800; }";
     document.head.append(style);
     const chart = createChart(host, {
-      theme: { text: "var(--chart-ink)", palette: ["var(--chart-one)", "oklch(0.7 0.1 150)"] },
+      theme: {
+        tokens: { text: "var(--chart-ink)", palette: ["var(--chart-one)", "oklch(0.7 0.1 150)"] },
+      },
       marks: [bar(table({ k: ["a", "b"], v: [1, 2] }), { x: "k", y: "v" })],
     });
     try {
@@ -725,13 +727,63 @@ describe("themes that follow the page", () => {
       expect(modelOf(chart).theme.text).toBe("#e6e6e6");
       expect(modelOf(chart).theme.palette[0]).toBe("#ff8800");
       // Light text on a light theme gets a dark tooltip.
-      expect(modelOf(chart).theme.tooltipBackground).toBe(resolveTheme("dark").tooltipBackground);
+      expect(modelOf(chart).theme.style.tooltip.fill).toBe(resolveTheme("dark").style.tooltip.fill);
       expect(markPaths(chart)[0]!.getAttribute("fill")).toBe("#ff8800");
     } finally {
       chart.destroy();
       document.documentElement.classList.remove("night");
       style.remove();
     }
+  });
+
+  it("re-read guides' styles that use the page's variables when the page switches themes", async () => {
+    const style = document.createElement("style");
+    style.textContent = ":root { --guide-ink: #ff0000; } :root.night { --guide-ink: #0000ff; }";
+    document.head.append(style);
+    const chart = createChart(host, {
+      y: { style: { tickLabel: { color: "var(--guide-ink)" } } },
+      marks: [bar(table({ k: ["a", "b"], v: [1, 2] }), { x: "k", y: "v" })],
+    });
+    const fills = () =>
+      [...host.querySelectorAll("text")]
+        .filter((text) => text.getAttribute("text-anchor") === "end")
+        .map((text) => text.getAttribute("fill"));
+    try {
+      expect(new Set(fills())).toEqual(new Set(["#ff0000"]));
+      document.documentElement.classList.add("night");
+      await frame();
+      await frame();
+      expect(new Set(fills())).toEqual(new Set(["#0000ff"]));
+    } finally {
+      chart.destroy();
+      document.documentElement.classList.remove("night");
+      style.remove();
+    }
+  });
+
+  it("read guides' colors while the page is read, leaving no probe behind", () => {
+    host.style.setProperty("--guide-ink", "#00aa00");
+    const options = {
+      x: { style: { tickLabel: { color: "blue" } } },
+      y: { style: { tickLabel: { color: "var(--guide-ink)" } } },
+      marks: [bar(table({ k: ["a", "b"], v: [1, 2] }), { x: "k", y: "v" })],
+    };
+    const chart = createChart(host, options);
+    for (let i = 0; i < 5; i++) {
+      chart.update({ ...options });
+      chart.render();
+    }
+    const fills = (anchor: string) =>
+      new Set(
+        [...host.querySelectorAll(`text[text-anchor="${anchor}"]`)].map((t) =>
+          t.getAttribute("fill"),
+        ),
+      );
+    expect(fills("middle")).toEqual(new Set(["#0000ff"]));
+    expect(fills("end")).toEqual(new Set(["#00aa00"]));
+    chart.destroy();
+    expect(host.querySelectorAll("span").length).toBe(0);
+    host.style.removeProperty("--guide-ink");
   });
 
   it("choose light or dark with auto by the surface the chart sits on", () => {
@@ -794,7 +846,7 @@ describe("themes that follow the page", () => {
     document.body.style.color = "rgb(10, 20, 30)";
     try {
       const chart = createChart(host, {
-        theme: { text: "currentColor" },
+        theme: { tokens: { text: "currentColor" } },
         marks: [line(series(10), { x: "t", y: "s0" })],
       });
       expect(modelOf(chart).theme.text).toBe("#0a141e");
@@ -834,7 +886,7 @@ describe("themes that follow the page", () => {
       // A theme that stops following the page stops listening.
       chart.update({ theme: "dark" });
       expect(listeners.size).toBe(0);
-      chart.update({ theme: { extends: "auto", lineWidth: 3 } });
+      chart.update({ theme: { extends: "auto", style: { line: { strokeWidth: 3 } } } });
       expect(listeners.size).toBe(1);
       chart.destroy();
       expect(listeners.size).toBe(0);

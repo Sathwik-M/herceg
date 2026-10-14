@@ -9,6 +9,7 @@ export const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 export const HERCEG_ALIAS = {
   herceg: join(ROOT, "..", "packages", "herceg", "src", "index.ts"),
   "herceg/pdf": join(ROOT, "..", "packages", "herceg", "src", "pdf.ts"),
+  "herceg/fonts": join(ROOT, "..", "packages", "herceg", "src", "fonts.ts"),
   "herceg/spec": join(ROOT, "..", "packages", "herceg", "src", "from-spec.ts"),
   "herceg/grid": join(ROOT, "..", "packages", "herceg", "src", "grid.ts"),
   "herceg/grid/pivot": join(ROOT, "..", "packages", "herceg", "src", "grid-pivot.ts"),

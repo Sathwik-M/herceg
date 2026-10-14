@@ -402,7 +402,7 @@ class ChartWidget(anywidget.AnyWidget):
         ):
             raise ValueError(
                 "widget.viewport: charts whose panels have y scales of their own "
-                "(resolve_y, resolve_y_right, panels) have no one y viewport; set x only"
+                "(y or y_right scope, panels) have no one y viewport; set x only"
             )
         self._set(("viewport", ""), payload)
 

@@ -1,6 +1,6 @@
 // Right y axes in charts with facets and subplots: every panel drawing marks
-// with `axis: "right"` has one, shared or resolved apart as `resolve.yRight`
-// (by default as `resolve.y`) says.
+// with `axis: "right"` has one, shared or resolved apart as `yRight.scope`
+// (by default as `y.scope`) says.
 import { describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
@@ -14,9 +14,10 @@ import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { panels } from "../../src/model/panels.ts";
 import { renderToSVG } from "../../src/render/static.ts";
-import type { AxisGeometry, Panel } from "../../src/scene/scene.ts";
+import type { AxisGuide, Panel } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
-import type { ScaleResolution } from "../../src/spec/spec.ts";
+import type { ScaleScope } from "../../src/spec/spec.ts";
+import { headersOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -24,8 +25,7 @@ function build(config: ChartConfig, width = 600, height = 400) {
   return { model, scene: model.scene(estimateText) };
 }
 
-const axis = (panel: Panel, orient: AxisGeometry["orient"]) =>
-  panel.axes.find((a) => a.orient === orient);
+const axis = (panel: Panel, orient: AxisGuide["side"]) => panel.axes.find((a) => a.side === orient);
 
 // Two regions: latency in ms on the left, requests in thousands on the right,
 // the south's ten times the north's.
@@ -67,8 +67,8 @@ describe("right axes in facets", () => {
   });
 
   it("fit each panel's own right rows with right scales of their own, labeling every panel", () => {
-    for (const resolve of [{ yRight: "independent" }, { y: "independent" }] as const) {
-      const { model, scene } = build({ marks: both(), facet: facet("region"), resolve });
+    for (const scopes of [{ yRight: { scope: "panel" } }, { y: { scope: "panel" } }] as const) {
+      const { model, scene } = build({ marks: both(), facet: facet("region"), ...scopes });
       const [n, s] = model.panels();
       expect(n!.yRight!.domain[1]).toBeLessThan(10_000);
       expect(s!.yRight!.domain[1]).toBeGreaterThanOrEqual(30_000);
@@ -90,7 +90,7 @@ describe("right axes in facets", () => {
     const { model } = build({
       marks: both(),
       facet: facet("region"),
-      resolve: { yRight: "independent" },
+      yRight: { scope: "panel" },
     });
     const [n, s] = model.panels();
     expect(n!.y.domain).toEqual(s!.y.domain);
@@ -98,7 +98,8 @@ describe("right axes in facets", () => {
     const shared = build({
       marks: both(),
       facet: facet("region"),
-      resolve: { y: "independent", yRight: "shared" },
+      yRight: { scope: "chart" },
+      y: { scope: "panel" },
     }).model.panels();
     expect(shared[0]!.yRight!.domain).toEqual(shared[1]!.yRight!.domain);
     expect(shared[0]!.y.domain).not.toEqual(shared[1]!.y.domain);
@@ -112,12 +113,12 @@ describe("right axes in facets", () => {
       region: ["N", "N", "N", "N", "S", "S", "S", "S"],
       product: ["a", "a", "b", "b", "a", "a", "b", "b"],
     });
-    const config = (yRight: ScaleResolution): ChartConfig => ({
+    const config = (yRight: ScaleScope): ChartConfig => ({
       marks: [line(grid, { x: "t", y: "v" }), line(grid, { x: "t", y: "w", axis: "right" })],
       facet: facet({ row: "region", column: "product" }),
-      resolve: { yRight },
+      yRight: { scope: yRight },
     });
-    const rows = build(config("rows"));
+    const rows = build(config("row"));
     const [na, nb, sa, sb] = rows.model.panels();
     expect(na!.yRight!.domain).toEqual(nb!.yRight!.domain);
     expect(sa!.yRight!.domain).toEqual(sb!.yRight!.domain);
@@ -130,14 +131,14 @@ describe("right axes in facets", () => {
       false,
       true,
     ]);
-    const header = rows.scene.headers.find(({ text }) => text === "N")!;
+    const header = headersOf(rows.scene).find(({ text }) => text === "N")!;
     const labels = axis(panelsDrawn[1]!, "right")!;
     const widest = Math.max(
       ...labels.ticks.map(({ label }) => estimateText(label, "12px sans-serif")),
     );
-    expect(header.x).toBeGreaterThan(labels.offset + 8 + widest);
+    expect(header.x).toBeGreaterThan(labels.edge + 8 + widest);
     expect(header.x).toBeLessThan(600);
-    const columns = build(config("columns")).model.panels();
+    const columns = build(config("column")).model.panels();
     expect(columns[0]!.yRight!.domain).toEqual(columns[2]!.yRight!.domain);
     expect(columns[0]!.yRight!.domain).not.toEqual(columns[1]!.yRight!.domain);
   });
@@ -147,16 +148,16 @@ describe("right axes in facets", () => {
       build({
         marks: both(),
         facet: facet("region"),
-        resolve: { yRight: "independent" },
+        yRight: { scope: "panel" },
         interaction: { zoom: "xy" },
       }),
-    ).toThrow('right y scales of their own (resolve.yRight "independent") cannot zoom along y');
+    ).toThrow('right y scales of their own (yRight.scope "panel") cannot zoom along y');
     // Without marks placing values on the right, there is no right scale to zoom.
     for (const extra of [[], [rule({ x: 0.5, axis: "right" })]]) {
       const { scene } = build({
         marks: [line(traffic, { x: "t", y: "ms" }), ...extra],
         facet: facet("region"),
-        resolve: { yRight: "independent" },
+        yRight: { scope: "panel" },
         interaction: { zoom: "xy" },
       });
       for (const panel of scene.panels) expect(axis(panel, "right")).toBeUndefined();
@@ -169,7 +170,7 @@ describe("right axes in facets", () => {
       [0, 5000],
     ]);
     // Giving the right side scales of its own lets go of its viewport only.
-    model.update({ marks: both(), facet: facet("region"), resolve: { yRight: "independent" } });
+    model.update({ marks: both(), facet: facet("region"), yRight: { scope: "panel" } });
     expect(model.yViewport).toEqual({ y: [0, 20], yRight: null });
     expect(() => model.setYViewport({ y: null, yRight: [0, 1] })).toThrow("no one y range");
     model.setYViewport({ y: [0, 10], yRight: null });
@@ -180,7 +181,7 @@ describe("right axes in facets", () => {
     const { model } = build({
       marks: both(),
       facet: facet("region"),
-      resolve: { yRight: "independent" },
+      yRight: { scope: "panel" },
     });
     const s = model.panels()[1]!;
     const inspection = model.inspect(s.x.map(1), s.yRight!.map(20_000), "nearest", "S")!;
@@ -252,7 +253,7 @@ describe("right axes in subplots", () => {
         line(metrics, { x: "t", y: "ms", panel: "c" }),
       ],
       panels: panels([{ id: "a" }, { id: "b", ...(yRight && { yRight }) }, { id: "c" }]),
-      resolve: { yRight: "shared" },
+      yRight: { scope: "chart" },
     });
     const { model } = build(config());
     const [a, b, c] = model.panels();
@@ -262,8 +263,9 @@ describe("right axes in subplots", () => {
     expect(() => build(config({ type: "log" }))).toThrow(
       "panels[1].yRight: shares a right y scale with others but differs",
     );
-    // By default, as `resolve.y` says: here each panel's own.
-    const own = build({ ...config(), resolve: {} }).model.panels();
+    // By default, as `y.scope` says: here each panel's own.
+    const { yRight: _, ...unscoped } = config();
+    const own = build(unscoped).model.panels();
     expect(own[0]!.yRight!.domain).not.toEqual(own[1]!.yRight!.domain);
   });
 
@@ -296,7 +298,7 @@ describe("right axes in subplots", () => {
         line(metrics, { x: "t", y: "requests", axis: "right", panel: "b" }),
       ],
       panels: panels([{ id: "a" }, { id: "b" }]),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     const [a, b] = scene.panels;
     expect(axis(a!, "left")!.ticks.map(({ label }) => label)).toEqual(["a", "b"]);
@@ -310,23 +312,23 @@ describe("right axes in subplots", () => {
     const times = table({ t: [0, 1, 2], at: time([0, 60_000, 120_000]), n: [1, 2, 3] });
     // A right-only panel has no left axis to disagree on, and a vertical
     // rule on the right places no y values, in either order.
-    const cases: [ChartConfig["marks"], NonNullable<ChartConfig["resolve"]>][] = [
+    const cases: [ChartConfig["marks"], Pick<ChartConfig, "y" | "yRight">][] = [
       [
         [
           line(times, { x: "t", y: "n", axis: "right", panel: "a" }),
           line(times, { x: "t", y: "at", panel: "b" }),
         ],
-        { y: "shared" },
+        { y: { scope: "chart" } },
       ],
       [
         [
           rule({ x: 1, axis: "right", panel: "a" }),
           line(times, { x: "t", y: "at", axis: "right", panel: "b" }),
         ],
-        { yRight: "shared" },
+        { yRight: { scope: "chart" } },
       ],
     ];
-    for (const [marks, resolve] of cases) {
+    for (const [marks, scopes] of cases) {
       for (const order of [
         ["a", "b"],
         ["b", "a"],
@@ -334,10 +336,10 @@ describe("right axes in subplots", () => {
         const { model } = build({
           marks,
           panels: panels(order.map((id) => ({ id }))),
-          resolve,
+          ...scopes,
         });
         const b = model.panels().find(({ key }) => key === "b")!;
-        expect((resolve.y ? b.y : b.yRight!).type).toBe("time");
+        expect((scopes.y ? b.y : b.yRight!).type).toBe("time");
       }
     }
   });
@@ -366,7 +368,7 @@ describe("right axes in subplots", () => {
 });
 
 describe("right axes in panels from specs", () => {
-  it("load resolve.yRight and panels' own yRight", () => {
+  it("load yRight.scope and panels' own yRight", () => {
     const spec = {
       data: {
         traffic: {
@@ -383,8 +385,7 @@ describe("right axes in panels from specs", () => {
         { type: "line" as const, data: "traffic", x: "t", y: "requests", axis: "right" as const },
       ],
       facet: { field: "region" },
-      resolve: { yRight: "independent" as const },
-      yRight: { title: "requests" },
+      yRight: { scope: "panel" as const, title: "requests" },
     };
     // Every property is known: none is refused as unknown.
     const { config } = loadSpec(spec, [], { unknown: "error" });

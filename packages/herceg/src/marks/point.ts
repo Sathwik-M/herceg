@@ -23,7 +23,7 @@ import {
   type PointGeometry,
   type PointItems,
 } from "../scene/scene.ts";
-import type { Frozen, PointSpec } from "../spec/spec.ts";
+import type { Clip, Frozen, PointSpec } from "../spec/spec.ts";
 import { surface, type Theme } from "../theme.ts";
 import { Appearance, categoryColors, categoryTones, colorKey } from "./appearance.ts";
 import { BandShares, jitterOf, STILL } from "./dodge.ts";
@@ -84,6 +84,12 @@ interface PointStyle<S extends Schema> {
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /**
+   * What the mark's drawing is cut to: "plot", "chart", or false for
+   * nothing, so markers at the plot's edge show whole. Without it, data is
+   * cut to the plot and labels are drawn whole.
+   */
+  clip?: Clip;
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
   /** A number or time field, or a category field placing points in its bands (strip plots). */
@@ -1124,6 +1130,7 @@ export function point<S extends Schema>(
       "axis",
       "facet",
       "panel",
+      "clip",
     ]),
     ...(options.radiusRange && {
       radiusRange: [options.radiusRange[0], options.radiusRange[1]] as const,

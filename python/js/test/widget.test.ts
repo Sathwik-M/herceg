@@ -569,9 +569,9 @@ describe("notebook widget", () => {
     expect(sliders()).toHaveLength(3);
   });
 
-  it("changes options of charts that resolve their scales", () => {
-    const resolved = snapshot({ resolve: { x: "shared", y: "shared" } });
-    const model = new MockModel({ _chart: resolved, _listening: [] });
+  it("changes options of charts that scope their scales", () => {
+    const scoped = snapshot({ y: { scope: "chart" }, x: { scope: "chart" } });
+    const model = new MockModel({ _chart: scoped, _listening: [] });
     const [host] = mount(model);
     model.receive({ type: "options", revision: 1, options: { title: "After" } });
     expect(figure(host!).getAttribute("aria-label")).toBe("After");

@@ -875,7 +875,7 @@ function dots(
       fill: s.color,
       fillOpacity: 1,
       opaque: false,
-      radius: Math.max(2.5, frame.theme.lineWidth * 1.5),
+      radius: Math.max(2.5, frame.theme.style.line.strokeWidth * 1.5),
       symbol: "circle",
       coords: Float32Array.from(coords),
       count: coords.length / 2,

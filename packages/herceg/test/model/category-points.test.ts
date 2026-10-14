@@ -213,10 +213,12 @@ describe("points on category axes", () => {
 });
 
 describe("points on categories of panels' own", () => {
-  const config = (resolve: ChartConfig["resolve"] = { x: "independent" }): ChartConfig => ({
+  const config = (
+    scopes: Pick<ChartConfig, "x" | "y"> = { x: { scope: "panel" } },
+  ): ChartConfig => ({
     marks: [point(sales(), { x: "product", y: "units" })],
     facet: facet("region"),
-    resolve,
+    ...scopes,
   });
 
   it("place each panel's points at its own categories", () => {
@@ -258,7 +260,7 @@ describe("points on categories of panels' own", () => {
     const { model } = build({
       marks: [point(sales(), { x: "units", y: "product" })],
       facet: facet("region"),
-      resolve: { y: "independent" },
+      y: { scope: "panel" },
     });
     expect(categories(model, "y")).toEqual([
       ["b", "d"],
@@ -280,7 +282,7 @@ describe("points on categories of panels' own", () => {
         point(goals, { x: "product", y: "goal", facet: "repeat" }),
       ],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(categories(model)).toEqual([
       ["b", "c", "d"],
@@ -302,7 +304,7 @@ describe("points on categories of panels' own", () => {
     const { model } = build({
       marks: [point(data, { x: "product", y: "units" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(categories(model)).toEqual([["a", "c"], ["b"]]);
     data.append({ region: ["S", "N"], product: ["d", "c"], units: [4, 5] });
@@ -321,7 +323,7 @@ describe("points on categories of panels' own", () => {
 
   it("draw a mark shared by two charts as each resolves it", () => {
     const mark = point(sales(), { x: "product", y: "units" });
-    const faceted = build({ marks: [mark], facet: facet("region"), resolve: { x: "independent" } });
+    const faceted = build({ marks: [mark], facet: facet("region"), x: { scope: "panel" } });
     const whole = build({ marks: [mark] });
     expect(pointsOf(whole.model, whole.scene)[1]).toEqual(["a", 2]);
     const again = faceted.model.scene(estimateText);
@@ -354,7 +356,7 @@ describe("points on categories of panels' own", () => {
 
   it("refuse synced charts, as for bars", () => {
     expect(() => build({ ...config(), interaction: { sync: "board" } })).toThrow(
-      "chart interaction.sync: panels with categories of their own (resolve.x) cannot sync yet",
+      'chart interaction.sync: panels with categories of their own (x.scope "panel") cannot sync yet',
     );
   });
 });

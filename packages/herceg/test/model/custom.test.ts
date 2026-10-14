@@ -13,6 +13,7 @@ import { renderToSVG } from "../../src/render/static.ts";
 import type { PathShape, ShapesGeometry, TextShape } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ChartSpec } from "../../src/spec/spec.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig, width = 600, height = 300) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -196,7 +197,7 @@ describe("custom marks with series", () => {
     expect([a!.label, b!.label]).toEqual(["a", "b"]);
     expect(rowsOf(a!)).toEqual([0, 2, 4]);
     expect(rowsOf(b!)).toEqual([1, 3, 5]);
-    expect(scene.legend.map(({ label, color }) => [label, color])).toEqual([
+    expect(legendOf(scene).map(({ label, color }) => [label, color])).toEqual([
       ["a", a!.color],
       ["b", b!.color],
     ]);
@@ -251,7 +252,7 @@ describe("custom marks with series", () => {
     model.hidden.add(b!.key);
     const scene = model.scene(estimateText);
     expect(seen.at(-1)!.map((s) => s.label)).toEqual(["a"]);
-    expect(scene.legend.map(({ label, hidden }) => [label, hidden])).toEqual([
+    expect(legendOf(scene).map(({ label, hidden }) => [label, hidden])).toEqual([
       ["a", false],
       ["b", true],
     ]);
@@ -357,7 +358,7 @@ describe("custom marks with series", () => {
     ).toEqual(["High"]);
     const both = custom(prices, { x: "time", y: ["low", "high"], draw() {} });
     const { scene } = build({ marks: [both] });
-    expect(scene.legend.map((item) => item.label)).toEqual(["low", "high"]);
+    expect(legendOf(scene).map((item) => item.label)).toEqual(["low", "high"]);
   });
 
   it("keep shapes between their points in view when zoomed between them", () => {
@@ -382,7 +383,7 @@ describe("custom marks with series", () => {
   it("show no series with series: false, their fields only setting the domains", () => {
     const { model, scene } = build({ marks: [wicks] });
     expect(model.series()).toEqual([]);
-    expect(scene.legend).toEqual([]);
+    expect(legendOf(scene)).toEqual([]);
     expect(model.yScale()!.domain[1]).toBeGreaterThanOrEqual(20);
     expect(model.inspect(model.xScale()!.map(start), model.yScale()!.map(10))).toBeUndefined();
     expect(wicks.spec).toEqual({ type: "custom" });
@@ -401,7 +402,7 @@ describe("custom marks with series", () => {
     const { model, scene } = build({ marks: [gantt] });
     expect(model.series()).toEqual([]);
     expect(seen).toEqual([[]]);
-    expect(scene.legend).toEqual([]);
+    expect(legendOf(scene)).toEqual([]);
     expect(model.xScale()!.domain).toEqual([0, 3]);
     expect(model.inspect(model.xScale()!.map(1), model.yScale()!.map(1))).toBeUndefined();
     // Without series there are no rows to split into panels.

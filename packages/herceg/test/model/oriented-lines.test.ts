@@ -194,7 +194,7 @@ describe("lines over category axes", () => {
     const { model, scene } = build({
       marks: [line(data, { x: "month", y: "v" })],
       facet: facet("half"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     const panels = model.panels();
     for (let p = 0; p < 2; p++) {
@@ -234,7 +234,7 @@ describe("lines over category axes", () => {
     const { model, scene } = build({
       marks: [area(data, { x: "c", y: ["a", "b"], stack: true })],
       facet: facet("half"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     const y = model.yScale()!;
     const highest = (p: number) => {
@@ -398,7 +398,7 @@ describe("lines and areas along y", () => {
     const { model, scene } = build({
       marks: [area(data, { x: "v", y: "day", series: "g", stack: true })],
       facet: facet("half"),
-      resolve: { y: "independent" },
+      y: { scope: "panel" },
     });
     expect(model.panels().map((p) => p.y.categories)).toEqual([
       ["thu", "fri"],

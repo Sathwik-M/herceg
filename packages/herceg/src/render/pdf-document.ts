@@ -3,7 +3,7 @@
 // readers use to find each object. Streams are Flate-compressed.
 
 import { zlibCompress } from "./deflate.ts";
-import type { EmbeddedFace, PdfFontResolver } from "./pdf-font-resolver.ts";
+import type { PdfFace, PdfFontResolver } from "./pdf-font-embed.ts";
 import type { PdfFont } from "./pdf-fonts.ts";
 
 /** Points per CSS pixel: CSS has 96 pixels to the inch, PDF 72 points. */
@@ -91,7 +91,7 @@ export class PdfPage {
   readonly width: number;
   readonly height: number;
   #content: string;
-  #fonts = new Map<PdfFont | EmbeddedFace, string>();
+  #fonts = new Map<PdfFont | PdfFace, string>();
   #states = new Map<string, string>();
   #images: Image[] = [];
   #shadings: Shading[] = [];
@@ -110,7 +110,7 @@ export class PdfPage {
   }
 
   /** The resource name of a font. */
-  font(font: PdfFont | EmbeddedFace): string {
+  font(font: PdfFont | PdfFace): string {
     return named(this.#fonts, font, "F");
   }
 
@@ -148,7 +148,7 @@ export class PdfPage {
   /** Writes a completed page; font objects are finalized after all pages. */
   writeTo(
     file: PdfObjectWriter,
-    fonts: Map<PdfFont | EmbeddedFace, number>,
+    fonts: Map<PdfFont | PdfFace, number>,
     pages: number,
     index: number,
   ): number {
@@ -283,7 +283,7 @@ export class PdfWriter {
   #doc = this.reserve();
   #pageIds: number[] = [];
   #figures: number[] = [];
-  #fonts = new Map<PdfFont | EmbeddedFace, number>();
+  #fonts = new Map<PdfFont | PdfFace, number>();
 
   constructor() {
     // A comment with bytes above 127 tells transfer tools the file is binary.

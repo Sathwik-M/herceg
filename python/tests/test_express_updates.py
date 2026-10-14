@@ -73,7 +73,7 @@ def test_a_drawn_seed_is_kept_and_options_are_copied_when_the_call_is_made():
     palette.append("#333333")
     again = hx.recompute(first, DATA)
     assert hx.statistics(again).seed == seed
-    assert spec(again)["theme"]["palette"] == ["#111111", "#222222"]
+    assert spec(again)["theme"]["tokens"]["palette"] == ["#111111", "#222222"]
     same_tables(again, first)
     # Option objects too: a jitter's seed, an axis' title.
     jitter, axis = hg.Jitter(width=0.2, seed=7), hg.Axis(title="Tip")
