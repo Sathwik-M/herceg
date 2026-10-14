@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   type ForceGraph,
-  fitLayout,
+  ForceSimulation,
+  fitLayout as fitWith,
   LINK_DISTANCE,
+  layoutFit,
   layoutForce,
   separate,
 } from "../../src/layout/force.ts";
@@ -203,6 +205,87 @@ describe("layoutForce", () => {
       return sum / nodes;
     };
     expect(spread(151) / spread(150)).toBeCloseTo(1, 1);
+  });
+});
+
+/** Layout positions placed in a room as `layoutFit` fits them. */
+const fitLayout = (
+  positions: Float64Array,
+  room: { x: number; y: number; width: number; height: number },
+  options: { inset: number; maxScale: number; maxStretch: number },
+) => fitWith(positions, layoutFit(positions, room, options));
+
+describe("ForceSimulation", () => {
+  it("ends where an uninterrupted run does, however its steps spread over deadlines", () => {
+    const graph = randomGraph(400);
+    const whole = layoutForce(graph);
+    const sliced = new ForceSimulation(graph);
+    let calls = 0;
+    // Deadlines already past: every call takes one step.
+    while (!sliced.run(0)) calls++;
+    expect(calls).toBeGreaterThan(300);
+    expect(sliced.positions).toEqual(whole);
+    // A run limited to some ticks stops there and goes on from there.
+    const paced = new ForceSimulation(graph);
+    paced.run(Number.POSITIVE_INFINITY, 10);
+    expect(paced.ticked).toBe(10);
+    expect(paced.done).toBe(false);
+    paced.run();
+    expect(paced.positions).toEqual(whole);
+  });
+
+  it("holds nodes where they are held, and moves only the nodes it is given", () => {
+    const graph = graphOf(12, ring(12));
+    const start = layoutForce(graph);
+    const held = new Map([[0, [500, 400] as const]]);
+    const moving = Int32Array.of(1, 11);
+    const positions = layoutForce(graph, { start, held, moving, alpha: 0.3, ticks: 40 });
+    expect(point(positions, 0)).toEqual([500, 400]);
+    // Its neighbors are pulled toward it; nodes not moving stay exactly.
+    for (const node of [1, 11])
+      expect(Math.hypot(positions[node * 2]! - 500, positions[node * 2 + 1]! - 400)).toBeLessThan(
+        Math.hypot(start[node * 2]! - 500, start[node * 2 + 1]! - 400),
+      );
+    for (let node = 2; node < 11; node++)
+      expect(point(positions, node)).toEqual(point(start, node));
+    // The same with a quadtree: still nodes push through one built once.
+    const large = randomGraph(600);
+    const laid = layoutForce(large);
+    const some = Int32Array.from({ length: 40 }, (_, i) => i + 1);
+    const settled = layoutForce(large, { start: laid, held, moving: some, alpha: 0.3, ticks: 40 });
+    for (let node = 41; node < 600; node++) expect(point(settled, node)).toEqual(point(laid, node));
+    for (const v of settled) expect(Number.isFinite(v)).toBe(true);
+  });
+
+  it("says its nodes are placed only once components to lay out apart are", () => {
+    const graph = graphOf(6, [
+      [0, 1],
+      [2, 3],
+      [3, 4],
+      [4, 5],
+    ]);
+    const start = Float64Array.of(0, 0, 30, 0, 100, 0, 100.1, 0, 100.2, 0, 100.3, 0);
+    const run = new ForceSimulation(graph, {
+      start,
+      arrange: [Int32Array.of(2, 3, 4, 5)],
+      ticks: 5,
+    });
+    expect(run.started).toBe(true);
+    expect(run.placed).toBe(false);
+    run.run();
+    expect(run.placed).toBe(true);
+    // Laid out apart, the chain's links are about a link long.
+    expect(distance(run.positions, 2, 3)).toBeGreaterThan(LINK_DISTANCE / 2);
+  });
+
+  it("starts from pivot MDS only without a start, and says when it has started", () => {
+    const fresh = new ForceSimulation(randomGraph(300));
+    expect(fresh.started).toBe(false);
+    fresh.run(0);
+    fresh.run();
+    expect(fresh.started).toBe(true);
+    const start = layoutForce(randomGraph(300));
+    expect(new ForceSimulation(randomGraph(300), { start }).started).toBe(true);
   });
 });
 

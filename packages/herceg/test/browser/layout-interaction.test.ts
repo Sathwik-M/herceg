@@ -9,13 +9,14 @@ import { selectionStore } from "../../src/data/selection.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
 import type { ChartEvents } from "../../src/dom/events.ts";
+import { estimateText } from "../../src/layout/text.ts";
 import { geopoint } from "../../src/marks/geopoint.ts";
 import { geoshape } from "../../src/marks/geoshape.ts";
 import { graph } from "../../src/marks/graph.ts";
 import { line } from "../../src/marks/line.ts";
 import { sunburst } from "../../src/marks/sunburst.ts";
 import { treemap } from "../../src/marks/treemap.ts";
-import type { ItemInspection } from "../../src/model/model.ts";
+import { ChartModel, type ItemInspection } from "../../src/model/model.ts";
 import { rowSelection } from "../../src/model/row-selection.ts";
 import { accessibilityTree, MOUSE, modelOf, pageOrigin, realMouse } from "./helpers.ts";
 
@@ -843,6 +844,12 @@ describe("networks", () => {
       interaction: { drag: true },
       ...options,
     });
+  /** A network whose other nodes stay where they are when one is moved. */
+  const still = graph(ring(), {
+    source: "from",
+    target: "to",
+    layout: { type: "force", settle: false },
+  });
   const where = (chart: Chart, name: string) => {
     const { px, py } = modelOf(chart).inspectItem(JSON.stringify([0, name]))!.points[0]!;
     return [px, py] as [number, number];
@@ -930,7 +937,7 @@ describe("networks", () => {
   });
 
   it("drags nodes while zoomed and cancels a drag whose view changes", async () => {
-    const chart = await network({ interaction: { zoom: true, drag: true } });
+    const chart = await network({ marks: [still], interaction: { zoom: true, drag: true } });
     const [ax, ay] = where(chart, "a");
     await mouse(chart, "mouseWheel", ax, ay, { deltaY: -200 });
     await frame();
@@ -1036,7 +1043,7 @@ describe("networks", () => {
   });
 
   it("move a node dragged, which stays where it is dropped, its links following", async () => {
-    const chart = await network();
+    const chart = await network({ marks: [still] });
     const moves = heard(chart, "itemMove");
     const clicks = heard(chart, "click");
     const [ax, ay] = where(chart, "a");
@@ -1313,7 +1320,16 @@ describe("networks", () => {
   it("drag the node drawn on top where nodes overlap", async () => {
     const nodes = table({ name: ["a", "b", "c", "d"], weight: [1, 9, 1, 1] });
     const chart = await network({
-      marks: [graph(ring(), { source: "from", target: "to", nodes, node: "name", size: "weight" })],
+      marks: [
+        graph(ring(), {
+          source: "from",
+          target: "to",
+          nodes,
+          node: "name",
+          size: "weight",
+          layout: { type: "force", settle: false },
+        }),
+      ],
     });
     // The small node a on the large node b, drawn above it.
     const [bx, by] = where(chart, "b");
@@ -1326,6 +1342,68 @@ describe("networks", () => {
     await frame();
     expect(moved.map(({ key }) => key)).toEqual(['[0,"a"]']);
     expect(where(chart, "b")).toEqual([bx, by]);
+  });
+
+  it("settle the nodes near a dropped node over a few frames, and put a node back at Escape", async () => {
+    const chart = await network();
+    const moves = heard(chart, "itemMove");
+    const [ax, ay] = where(chart, "a");
+    const b = where(chart, "b");
+    await drag(chart, [ax, ay], [ax + 60, ay + 40]);
+    // b moves toward a over frames, then stops.
+    const seen: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      await frame();
+      seen.push(where(chart, "b").join());
+    }
+    await chart.loading;
+    const settled = where(chart, "b");
+    expect(new Set(seen).size).toBeGreaterThan(1);
+    expect(Math.hypot(settled[0] - b[0], settled[1] - b[1])).toBeGreaterThan(2);
+    await frame();
+    expect(where(chart, "b")).toEqual(settled);
+    expect(moves.map(({ key }) => key)).toEqual(['[0,"a"]']);
+    // Escape during a drag puts the node back and moves nothing.
+    const [x, y] = where(chart, "c");
+    await mouse(chart, "mousePressed", x, y);
+    await mouse(chart, "mouseMoved", x + 20, y + 20);
+    await mouse(chart, "mouseMoved", x + 40, y + 20);
+    await frame();
+    expect(where(chart, "c")[0]).toBeCloseTo(x + 40, 0);
+    chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await mouse(chart, "mouseReleased", x + 40, y + 20);
+    await frame();
+    expect(where(chart, "c")).toEqual([x, y]);
+    expect(moves).toHaveLength(1);
+    expect(chart.root.querySelector("[aria-live]")!.textContent).toBe("Put c back.");
+  });
+
+  it("lay a large network out over frames, which `loading` waits for", async () => {
+    const from: string[] = [];
+    const to: string[] = [];
+    for (let i = 1; i < 2000; i++) {
+      from.push(`n${i}`);
+      to.push(`n${Math.floor(i / 20) * 20 + ((i * 7) % 20)}`);
+      if (i % 20 === 0) {
+        from.push(`n${i}`);
+        to.push(`n${i - 20}`);
+      }
+    }
+    const links = table({ from, to });
+    const chart = mountNow({ marks: [graph(links, { source: "from", target: "to" })] });
+    await frame();
+    expect(modelOf(chart).items!.pending).toBe(true);
+    await chart.loading;
+    expect(modelOf(chart).items!.pending).toBe(false);
+    // Where one uninterrupted layout puts the nodes.
+    const whole = new ChartModel({
+      locale: "en-US",
+      marks: [graph(links, { source: "from", target: "to" })],
+    });
+    whole.setSize(modelOf(chart).width, modelOf(chart).height, 1);
+    whole.scene(estimateText);
+    const at = (model: ChartModel) => model.items!.result()!.item(5);
+    expect([at(modelOf(chart)).px, at(modelOf(chart)).py]).toEqual([at(whole).px, at(whole).py]);
   });
 
   it("move nothing without interaction.drag", async () => {

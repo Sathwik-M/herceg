@@ -26,7 +26,7 @@ One name per concept, used the same way in code and docs.
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Break** | A span of time a time axis leaves out (nights, weekends, holidays): the axis measures the time it shows, and data inside a break is not drawn. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
-| **Viewport** | What a chart shows when zoomed: `{ x, y, yRight }`, the visible x range (one per x scale when panels have x scales of their own) and the left and right y axes' ranges; null for an axis that is not zoomed, which shows its configured domain or its data. A map's are ranges of its projection's plane; a network's are ranges of its force layout, with y increasing downwards. |
+| **Viewport** | What a chart shows when zoomed: `{ x, y, yRight }`, the visible x range (one per x scale when panels have x scales of their own) and the left and right y axes' ranges; null for an axis that is not zoomed, which shows its configured domain or its data. A map's are ranges of its projection's plane; a network's are ranges of its layout, with y increasing downwards. |
 | **Drill root** | The node a treemap or sunburst is drilled into, whose subtree it lays out (`getDrillRoot`, chart state that clicks, keys, and `setDrillRoot` change, shared by facet panels and each subplot's own); null for the whole tree. |
 | **Controls** | What a chart of a 3D, map, tree, or network mark loads to turn, pan and zoom, drill, or move nodes by pointer, keyboard, and toolbar (`dom/controls.ts`). |
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
@@ -2305,30 +2305,128 @@ changes: the DOM chart subscribes to each and keys its description on their
 versions, and the React, Vue, and Svelte adapters compare them when deciding
 whether a rebuilt mark is the same. The network is built in one pass over
 each table (names to node indexes once per dictionary code, one link per
-unordered pair), rebuilt when either table changes. Its layout
-(`layout/force.ts`) runs d3-force's simulation with its defaults: springs of
-length 30 whose strength is the inverse of the smaller end's degree, and
-whose pull moves the less connected end more; many-body repulsion of -30,
-summed exactly up to 150 nodes and with a Barnes–Hut quadtree (theta 0.9,
-rebuilt each tick in flat typed arrays) above; alpha decaying from 1 to
-0.001 over 300 ticks; velocities keeping 60% per tick. Two things differ from
-d3, both for the picture's sake. Nodes start from pivot MDS
-(`layout/pivot-mds.ts`, after Brandes and Pich): breadth-first distances
-from up to 50 pivots, double centered, and the top two eigenvectors of the
-small pivot-by-pivot matrix, so the start already follows distances in the
-network; from d3's phyllotaxis spiral, rings and long chains settle folded.
-And connected components are packed in rows of their bounding boxes, tallest
-first (`layout/components.ts`), before and after the simulation, instead of
-being held together by a pull toward the center: components started inside
-one another never separate under 1/r repulsion, and the pull squeezes large
-components out of shape. Boxes are a less compact arrangement than discs,
-but they cannot overlap. Networks are limited to 5,000 nodes, where repulsion
-costs about a second, and 20,000 links, so dense networks cannot make the
-springs cost more. Degrees and totals in tooltips and the description are
-counted over the links drawn, so hiding a group changes them. Layout positions are cached per network; each room
-refits them (uniform scale, one axis stretched by at most 30%, at most 2.5 px
-per unit), then pushes overlapping circles apart over a few passes of a
-uniform grid. Nodes are a point geometry (packed centers, radii, and color
+unordered pair, and per link which ways its rows run), rebuilt when either
+table changes. Its force layout (`layout/force.ts`) runs d3-force's
+simulation with its defaults: springs of length 30 whose strength is the
+inverse of the smaller end's degree, and whose pull moves the less
+connected end more; many-body repulsion of -30, summed exactly up to 150
+nodes and with a Barnes–Hut quadtree (rebuilt each tick in flat typed
+arrays; theta 0.9, and 1.2 above 5,000 nodes, which draws meshes, trees, and
+clusters of 20,000 nodes alike and saves about a third of the time) above;
+alpha decaying from 1 to 0.001 over 300 ticks; velocities keeping 60% per
+tick. Two things differ from d3, both for the picture's sake. Nodes start
+from pivot MDS (`layout/pivot-mds.ts`, after Brandes and Pich):
+breadth-first distances from up to 50 pivots, double centered, and the top
+two eigenvectors of the small pivot-by-pivot matrix, so the start already
+follows distances in the network; from d3's phyllotaxis spiral, rings and
+long chains settle folded. And connected components are packed in rows of
+their bounding boxes, tallest first (`layout/components.ts`), before and
+after the simulation, instead of being held together by a pull toward the
+center: components started inside one another never separate under 1/r
+repulsion, and the pull squeezes large components out of shape. Boxes are
+a less compact arrangement than discs, but they cannot overlap. The
+simulation (`ForceSimulation`) is a generator of steps: pivot MDS in steps
+of about 2^18 operations, each tick's springs, and its repulsion in chunks
+of 2,048 nodes, so it stops when a deadline passes and resumes where it
+stopped, ending where an uninterrupted run does. It also runs from given
+positions with some nodes held and only some moving: still nodes push
+through a quadtree built once, moving ones through one rebuilt each tick,
+and only springs with a moving end pull.
+
+A circular layout (`layout/circular.ts`) puts nodes on one circle a link
+length apart in an order by group, then degree, input order, or name, with a
+gap between groups (less than a slot where groups are many, never more than
+a fifth of the circle). A layered layout (`layout/layered.ts`, after
+Sugiyama, Tagawa, and Toda) reads constraints from each link's rows, source
+before target, so undirected networks of parents and children layer as
+trees too; a depth-first search turns back edges around for placing only
+(they are drawn as they are, and counted); a node's layer is its longest
+path from a node without constraints into it, then such nodes move down
+next to their nearest successor; links spanning layers get a bend point in
+each layer between (at most 500,000 in all, refused before they are made);
+four down-and-up sweeps order layers by barycenters, keeping the order with
+the fewest crossings, counted with a Fenwick tree as Barth, Jünger, and
+Mutzel do; and eight passes place each vertex over the middle of its
+neighbors' span in the layer before (both layers in the last two), each
+layer then fitted by weighted isotonic regression that keeps its order and
+gaps (nodes without neighbors on that side weigh almost nothing, so they
+give way). Components stand side by side. Its steps yield every 16,384
+vertices, so a frame never waits long; links curve between layers (an
+easing across, linear along), straight between bend points beyond 20,000
+links.
+
+Where nodes are is per chart state (`marks/node-positions.ts`,
+`NodePositions`, in `ItemViews`' state: facet panels share one), so two
+charts drawing the same tables lay them out apart, and a mark made again
+over new tables keeps them. It keeps three sets of positions by node: the
+layout's own, which ignore the nodes moved by hand; the settled, the
+layout's own with the nodes near the moved ones settled around them (a
+force layout that settles); and the shown. The settled positions are a
+function of the layout's own and of where nodes are held, not of the order
+of moves: a settle simulates from the layout's own positions, the moved
+nodes held, the nodes within two links of any of them or within two link
+lengths of where one is held moving (at most 1,000, with at most 20,000
+links), from alpha 0.3 for 40 ticks. So views of one widget, and a chart
+restored from saved moves, draw the same, and putting a node back returns
+it to the layout's own place. When the settled positions change, the shown
+ones ease to them over 300 ms (with reduced motion, at once). After a
+change of the data, the layout's own positions are seeded from the
+previous ones by name: in a force layout, nodes that remain start where
+they were, new ones at the mean of their placed neighbors plus a third of a
+link in a direction their name's hash gives, components of new nodes by
+pivot MDS beside the rest (as the run's first steps, `ForceRun.arrange`:
+they start on a spiral, since pivot MDS of a large component takes longer
+than a frame); nodes within two links of a new node, a gained or a lost link
+move, from alpha 0.3 for 100 ticks (all of them from alpha 0.5 for 200 when
+that is more than half). A change that leaves the nodes, their order, the
+links, and what the layout reads of them as they were changes nothing, and
+work under way goes on. Work is never thrown away by a change of the data,
+so streamed data cannot starve it: jobs carry the network they are for; a
+force run under way is carried into the new network with its moving nodes,
+alpha, and ticks left (reheated only if something changed; a first layout
+still packs its components at the end), once all its nodes have places; a
+layered layout finishes for its network while nodes show where they were,
+then lays out the network as it is now from those places. A circle is turned to move the nodes that remain least (the
+circular mean of their angles' changes); a layered layout starts its sweeps
+from the order of its nodes' previous places. The first force layout of a
+network ignores held nodes, which settle once it is done, so a chart given
+moves before it first draws ends as one given them later. Results repeat
+for the same data and the same changes at the same points of the work:
+work spreads over frames by time, so in the browser a change during a
+layout carries on from wherever the layout had come. Pins are dropped
+only with their node. `carryNodePositions(from, to)` in `herceg/spec`
+hands a replaced chart's states over (a Streamlit run remounts its chart).
+
+Layout work runs in `NodePositions.update`, when the mark draws, as the
+chart's frame allows: `ItemViews` gives every scene of a mounted chart a
+clock with a 12 ms deadline (exports of a mounted chart too, which show the
+work as far as it has come), and model-only charts and exports without a
+page none, which run work to its end. The controls a network's chart loads
+(`dom/node-drag.ts`, or `dom/layout-frames.ts` for a chart without
+interaction) work on the layout in frames that do not draw
+(`ItemViews.workLayouts`), and ask for a frame that draws when its
+progress is due: every frame for networks of up to 20,000 nodes and links,
+four times a second for larger ones, and while nodes ease. So the page
+stays at 60 frames a second while a large network is laid out, but for
+those four frames (50 to 80 ms at 200,000 links), rather than drawing
+200,000 links each frame for 12 ms of work. This is chunking on
+the main thread rather than a worker: a worker would need its own module
+URL in npm, a bundled one in the Python widget and Streamlit (esbuild does
+not follow `new URL(..., import.meta.url)`), CSP allowances in notebooks,
+and a synchronous path for the embedded V8 of Python's static export
+anyway; steps of a few milliseconds keep frames short without any of it.
+`chart.loading` waits for a frame with no layout work left. Networks are
+limited to 50,000 nodes and 200,000 links: a force layout at the limit
+takes about 12 s; at 200,000 nodes and a million links it would take about
+a minute (pivot MDS 5 s, 180 ms a tick, in Node), and no layout of that
+many is legible in a chart. Degrees and totals in tooltips and the description are
+counted over the links drawn, so hiding a group changes them. Each room
+fits the layout's own positions (uniform scale, one axis stretched by at
+most 30% but a circle's, at most 2.5 px per unit), kept while they are, so
+the view holds while nodes settle and ease; then a force layout's
+overlapping circles are pushed apart over a few passes of a uniform grid,
+where the room has space for them all (in crowded rooms they cannot be
+set apart, and a pass would cost seconds). Nodes are a point geometry (packed centers, radii, and color
 indexes), largest first, each filled and ringed in the surface color, so
 overlaps stay legible; links are a segments geometry per width and color
 (four floats a link, with an opacity of their own), so a frame that moves a
@@ -2336,7 +2434,8 @@ node writes typed arrays rather than SVG path strings. Directed networks
 keep a link per ordered pair; a pair with links both ways bows each to its
 right as a quadratic curve (a shapes path, since few links are bowed),
 and each directed link ends at its target's ring with a chevron of two
-segments along its end's tangent. Link labels (`linkLabelField`) are a link's
+segments along its end's tangent; in a layered layout, a pair's links each
+way keep 5 px to either side of their route. Link labels (`linkLabelField`) are a link's
 category when all its rows agree, placed at its middle where they cover no
 node or label, budgeted as node labels. Pointer candidates come from packed
 32-pixel spatial grids (`layout/hit-grid.ts`), built lazily for nodes and
@@ -2353,22 +2452,24 @@ layer. Candidate grids are retained across draws of unchanged positions,
 including selection changes, and replaced on moves, navigation, or resize.
 
 Nodes the chart's user moves (`setItemPosition`, or a drag's position each
-frame, which is drawn without being a move until it is dropped) are kept
-per chart by key in the network's layout units, with the layout positions
-they were moved in: the drawing places them through the room's fit
-(`layoutFit`) after the automatic placement and its separation, which
-moved nodes are left out of, so the fit never changes as nodes move, and
-moves are dropped when the network's tables change and the layout runs
-again. What identifies the layout is kept per links and nodes table, their
-versions, and the fields and options the layout reads, so a mark made again
-over the same tables (an adapter's re-render with other styles) keeps the
-chart's moves; a drag whose node the layout lost ends without a move. A
-frame dragging a node of 5,000 nodes and 20,000 links took about 4 ms of
-the main thread in the earlier Chrome measurement (p95 about 5.5 ms, p99
-under 8 ms), the frames keeping 60 Hz. With navigation and picking state,
-interleaved Node runs of the same scene now take about 5.6 ms rather than
-5.0 ms. The extra redraw cost is accepted for these interactions; browser
-frame costs for the new controller have not been measured.
+frame, which is drawn without being a move until it is dropped, and settles
+nothing) are kept per chart state by key in the network's layout units: the
+drawing places them through the room's fit (`layoutFit`) after the
+placement and its separation, which moved nodes are left out of, so the fit
+never changes as nodes move. Moves last while their node is in the network
+(hidden or not), whatever else of the data changes, and whatever mark draws
+it; a drag goes on while the data changes and ends without a move when its
+node goes; Escape ends one too. Picking candidates (`layout/hit-grid.ts`)
+are kept per placement, selection-free, in the pixels of the fitted
+layout before any zoom: the pointer is mapped back there, and at a zoom of
+1 or more everything within reach on screen is within reach there (bowed
+links are indexed with half their bow as extra reach, layered curves with 2
+px), so panning and zooming keep them; a view set wider than the fit is
+indexed as drawn. A scene dragging a node of 5,000 nodes and 20,000 links
+takes about 1.1 ms in Node (5.9 ms before links' parts were grouped
+without strings, labels chosen without sorting every node, and the map of
+links' places made only when a key is looked up; interleaved runs of
+`bench/core.ts`), and a scene settling a dropped node about 5.5 ms.
 
 Networks expose `LayoutResult.plane` just as maps do (`layout/graph-view.ts`).
 Separated base pixels are inverted through their original fit into layout
@@ -2488,7 +2589,7 @@ of six map subplots of 200 regions: about 44 ms a scene before, 0.4 ms
 after, in Node). A network's facet panels share one layout of the whole
 network: each draws the links its rows give, with their totals and labels
 over those rows alone (`GraphMark.#part`, kept per rows), and the nodes they
-join; the placement (the force layout fitted to a room and its overlapping
+join; the placement (the layout fitted to a room and its overlapping
 nodes pushed apart) is computed once per room size at its corner and moved
 to each room, so equal panels draw a node at the same place of each, and
 pointer lookups are kept per panel.
@@ -2499,8 +2600,8 @@ plane), and a network's moved nodes, with the node being dragged. Facet
 panels show one mark's rows split by a field, so they share one state, keyed
 ""; each subplot has its own, keyed by its id; a chart of one layout mark has
 "". The first panel of a state drawn in a scene settles it (a root the whole
-tree lost gives way to its nearest ancestor, reported once; moves of
-another layout go), and a scene drops the states of subplots the last one
+tree lost gives way to its nearest ancestor, reported once; moves of nodes
+the network lost go), and a scene drops the states of subplots the last one
 left out. A facet panel whose part of the tree has nothing under the root
 still draws the path to it. Methods take a panel (`Chart.setDrillRoot(node,
 { panel })`, `setItemPosition`, `getItemPositions`, `getDrillRoot`, and for
@@ -4304,11 +4405,29 @@ properties are the chart's one state (facet panels share it). Snapshots
 restore them before listening to engine events; position
 assignments suppress intermediate setter events. Move deltas are accumulated
 and combined once a frame before whole-state comparison and reporting; peers
-apply only changed coordinates and defer hidden nodes until they are shown.
+apply only changed coordinates, hidden nodes' too (`setItemPosition` moves
+a node of a hidden group, drawn there once shown).
 A change of a network's data (its links' or its nodes' table, or a table
-either derives from) clears that network's positions in Python even
-without an open output and advances its stale-report fence; other
-networks keep theirs. Map viewport restoration keeps x and y without requiring axis metadata.
+either derives from) that may take nodes away (a replacement, or rows a
+rolling window drops; added rows take none from a network over its own
+rows) lets go, in Python, of the
+moves of the nodes it no longer has, counted as the browser counts them
+(`network_names`, from the codes rows use, even without an open output).
+It sends no state: each front end lets go of the same moves as it draws
+the change. Reports made before the change are not stale for it, as moves
+of the nodes that remain still hold: Python takes them without the nodes
+it took, as their browser lets go of those too. A front end reconciles the
+networks reading the changed tables once per update, from the moves a
+display's engine kept having drawn the change (the display a move waiting
+for its frame came from, else any: every display holds every move), and
+reports the result at the change's revision where Python may lack it:
+moves made on the data before and not sent yet (waiting for their frame or
+held back by the throttle), and networks of derived tables, whose rows
+Python does not have, whose moves it keeps until a front end reports, and
+which added rows can take nodes from (a sum turning negative). Only
+Python's own assignments fence earlier reports off. A chart
+made again with other marks (an express recompute) lets go of every move
+on both sides, and fences off reports made before it. Map viewport restoration keeps x and y without requiring axis metadata.
 Replacements reset those tables in place, so points with `animationKey`
 animate across replacements, as they do in JavaScript apps.
 `herceg.express` charts remember their call (function, copied arguments,
@@ -4339,15 +4458,16 @@ points show at once in Streamlit. The script receives the selection whole;
 it does not hear of zooming. `on_drill` and `on_item_move` enable persistent
 `drill_root` and `item_positions` results, using the same Python values as
 widgets. Roots survive redraws through their nearest surviving ancestor;
-positions survive style-only redraws and are tagged with the network data
-and layout identity so Python discards stale results. These values travel in
+positions and node places survive redraws of the same networks (an "item
+epoch" of the graph marks' ids and panels, and the chart's facet or
+panels), whatever their data: the new chart takes the old one's node
+places with `carryNodePositions` before the old one goes, and Python lets
+go of moves of nodes this run's data no longer has. These values travel in
 the existing component state, with one binary chart payload per run: each
 holds the chart's one state and each subplot's by panel (`{ root, panels }`,
 `{ epoch, positions, panels }`, and the viewport with `panels`), which reruns
 keep where a subplot's plane has the same key (a map's projection, or a
-network in the same layout). The layout epoch is the chart's, as the data
-epoch of row selections is: a run changing one network's data lays out
-every network again.
+network of the same item epoch).
 Charts without a theme read the app's from the
 CSS variables Streamlit gives components, since Python may not know it.
 
@@ -4606,17 +4726,22 @@ mouse input, through Playwright's mouse.
   (as ECharts' indicators have), log scales, circular grids, or labels on
   the polygons' values. A radar draws at most 100 spokes, and its pointer
   lookup scans every drawn value.
-- Networks are laid out once per change of either table, from scratch: a
-  streamed row redraws the whole picture rather than settling the new node
-  in place, and costs about a second at the 5,000-node limit (links are
-  limited to 20,000), which drops nodes moved by hand. Moved nodes stay
-  where they are dropped without the layout settling around them, there
-  is no pan or zoom, nodes are not lassoed, links of a pair whose rows
-  name them differently have no label (no parallel links are drawn), there
-  are no circular or hierarchical layouts, and hovering a node does not
-  highlight its neighbors. Labels go to the 50 most connected nodes at most
-  (fewer in larger networks) and are left out where they would cover a
-  node. The pointer lookup scans every node and link.
+- Networks draw at most 50,000 nodes and 200,000 links; a force layout at
+  that size takes about 12 s in the browser (on the main thread, in steps),
+  and pans and zooms of 200,000 Canvas links take 20 to 50 ms a frame:
+  nodes are not drawn by WebGL, whose point painter has one radius and one
+  color per cloud and no rings, and links have no GPU path or level of
+  detail. A layered layout's coordinates are a simple barycentric
+  placement, not Brandes and Köpf's, and it has no tidy-tree or
+  orthogonal-routing mode; links between nodes in one layer (links without
+  a constraint between their ends) are straight. Links of a pair whose rows
+  name them differently have no label (no parallel links are drawn), and
+  hovering a node does not highlight its neighbors. Labels go to the 50
+  most connected nodes at most (fewer in larger networks) and are left out
+  where they would cover a node. Settling after a move reaches at most
+  1,000 nodes; streamed data settles the nodes within two links of what
+  changed, so a network that grows a lot by appends can end more cramped
+  than a fresh layout of it.
 - Sankey diagrams leave out links that close cycles rather than drawing
   them looping back, and links spanning several columns pass behind the
   nodes between. Nodes cannot be dragged or placed by hand, and there is no

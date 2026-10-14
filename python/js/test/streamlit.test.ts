@@ -882,7 +882,7 @@ describe("Streamlit item interaction", () => {
     },
   );
 
-  it("accumulates moves, preserves style-only reruns, and clears changed data", async () => {
+  it("accumulates moves, preserves style-only reruns, and clears changed networks", async () => {
     const parent = host();
     const first = run(parent, items("graph", "First", ["itemMove"]));
     await vi.dynamicImportSettled();
@@ -908,6 +908,62 @@ describe("Streamlit item interaction", () => {
     ]);
     const again = run(parent, items("graph", "Styled", ["itemMove"], "new-layout"));
     expect(again.state).toEqual([]);
+    again.cleanup();
+  });
+
+  it("keeps nodes' places and moves when a rerun changes a network's data", async () => {
+    const listener = vi.spyOn(MountedChart.prototype, "on");
+    const names = Array.from({ length: 30 }, (_, i) => `n${i}`);
+    const ring = (extra: boolean) => {
+      const from = names.map((_, i) => i);
+      const to = names.map((_, i) => (i + 1) % 30);
+      const dictionary = extra ? [...names, "x"] : names;
+      if (extra) {
+        from.push(0);
+        to.push(30);
+      }
+      const spec: Header["spec"] = {
+        width: 400,
+        height: 300,
+        renderer: "svg",
+        interaction: { drag: true },
+        data: {
+          links: {
+            columns: {
+              from: { type: "category", codes: 0, dictionary },
+              to: { type: "category", codes: 1, dictionary },
+            },
+          },
+        },
+        marks: [{ type: "graph", data: "links", source: "from", target: "to" }],
+      };
+      return payload(
+        spec,
+        [Int32Array.from(from), Int32Array.from(to)],
+        ["itemMove"],
+        3,
+        extra ? "more" : "ring",
+        "network",
+      );
+    };
+    const charts = () => listener.mock.instances as unknown as MountedChart[];
+    const place = (name: string) => {
+      const model = MountedChart.modelOf(charts().at(-1)!);
+      const at = model.inspectItem(JSON.stringify([0, name]))!.points[0]!;
+      return model.items!.result()!.moves!.toLayout(JSON.stringify([0, name]), at.px, at.py);
+    };
+    const parent = host();
+    run(parent, ring(false));
+    await vi.dynamicImportSettled();
+    charts().at(-1)!.setItemPosition('[0,"n20"]', { x: 5, y: 6 });
+    await frame();
+    const far = place("n10");
+    const again = run(parent, ring(true));
+    await frame();
+    // The node far from the change, and the moved one, are where they were.
+    expect(place("n10")[0]).toBeCloseTo(far[0], 6);
+    expect(place("n10")[1]).toBeCloseTo(far[1], 6);
+    expect(charts().at(-1)!.getItemPositions()).toEqual({ '[0,"n20"]': { x: 5, y: 6 } });
     again.cleanup();
   });
 

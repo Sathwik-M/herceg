@@ -5,7 +5,7 @@ import { segmentDrawing } from "../draw/segments.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
 import { textDrawing } from "../draw/text.ts";
 import { formatNumber } from "../format/format.ts";
-import { fitLayout, type LayoutFit, layoutFit, layoutForce, separate } from "../layout/force.ts";
+import { fitLayout, type LayoutFit, layoutFit, separate } from "../layout/force.ts";
 import { graphView } from "../layout/graph-view.ts";
 import { HitGrid } from "../layout/hit-grid.ts";
 import { labelFor } from "../layout/text.ts";
@@ -22,7 +22,7 @@ import type {
   ShapesGeometry,
   TextGeometry,
 } from "../scene/scene.ts";
-import type { Frozen, GraphSpec } from "../spec/spec.ts";
+import type { Frozen, GraphLayout, GraphSpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
 import type {
   LayoutControls,
@@ -33,6 +33,12 @@ import type {
 } from "./layout-mark.ts";
 import { insidePolygon } from "./layout-mark.ts";
 import { CATEGORY, type ChartMark, DIM, frozen, type MARK, requireField } from "./mark.ts";
+import {
+  type LayoutNetwork,
+  type NetworkLayout,
+  NodePositions,
+  pairKey,
+} from "./node-positions.ts";
 
 export type GraphOptions<S extends Schema, N extends Schema = Schema> = {
   /** Set false to leave text without its readability outline. */
@@ -55,6 +61,11 @@ export type GraphOptions<S extends Schema, N extends Schema = Schema> = {
   linkLabelField?: CategoryField<S>;
   /** Names beside the most connected (or largest) nodes that have room; true by default. */
   labels?: boolean;
+  /**
+   * How nodes are placed: "force" (the default), "circular", or "layered",
+   * or an object naming one in `type` with its options (see `GraphLayout`).
+   */
+  layout?: GraphLayout;
   id?: string;
   /** With the chart's `panels`, the id of the panel the network has to itself. */
   panel?: string;
@@ -73,16 +84,13 @@ export type GraphOptions<S extends Schema, N extends Schema = Schema> = {
 );
 
 /**
- * The force simulation costs about a second at this many nodes, and every
- * change to the tables runs it again; larger networks are refused.
+ * A force layout of this many nodes takes about ten seconds, spread over
+ * frames in the browser; larger networks are refused, as no layout of them
+ * is quick or legible enough.
  */
-export const MAX_NODES = 5000;
-/**
- * Springs cost little next to repulsion up to this many links (at most a
- * few tens of milliseconds), but a dense network's millions would take
- * seconds, so more are refused too.
- */
-export const MAX_LINKS = 20_000;
+export const MAX_NODES = 50_000;
+/** Links beyond this many cost the springs, routes, and drawing more than repulsion; more are refused too. */
+export const MAX_LINKS = 200_000;
 /** Ids for lists of rows, so caches can tell one facet panel's from another's. */
 const rowIds = new WeakMap<Uint32Array, number>();
 let rowCount = 0;
@@ -131,6 +139,12 @@ const MAX_BOW = 28;
 /** Arrowheads' sides, in pixels at the least, and their angle to the link. */
 const ARROW = 6;
 const ARROW_ANGLE = (24 * Math.PI) / 180;
+/** A mapping of numbers, as a scale's. */
+type Map1 = (value: number) => number;
+/** How far a layered layout's links each way between two nodes keep to either side, in pixels. */
+const LAYER_SIDE = 5;
+/** Layered links are curves in networks of up to this many links, and polylines in larger ones. */
+const CURVED_LINKS = 20_000;
 /** Colors one geometry of points indexes, a byte each. */
 const MAX_COLORS = 256;
 /** Links whose names are written, as nodes': all of 50, fewer in denser networks. */
@@ -143,7 +157,7 @@ const DRAG: LayoutControls = {
 };
 
 /** The tables' nodes and links, rebuilt when either changes. */
-interface Network {
+interface Network extends LayoutNetwork {
   /** The table versions it was built from. */
   versions: string;
   /** Node names: the nodes table's in its order, then names only links use, as they appear. */
@@ -175,15 +189,23 @@ interface Network {
   loops: number;
   /** Links whose total overflows a double, which are left out. */
   overflowed: number;
-  /** Layout positions, in layout units, once computed. */
-  positions: Float64Array | undefined;
+}
+
+/**
+ * Pointer lookups of a room: grids of nodes and links, built when first
+ * needed, and those reaching beyond the grids' area, looked through one by one.
+ */
+interface Picking {
+  nodes?: HitGrid;
+  links?: HitGrid;
+  farNodes?: number[];
+  farLinks?: number[];
 }
 
 /** Where nodes are drawn in one room. */
 interface Placement {
-  /** The table versions and room it is for. */
+  /** The positions' revision and the room it is for. */
   key: string;
-  versions: string;
   /** x, y per node, in pixels. */
   at: Float64Array;
   radii: Float64Array;
@@ -194,22 +216,27 @@ interface Placement {
 }
 
 /**
- * Nodes moved by dragging in one chart, by key: x, y in layout units, and
- * the layout positions they were moved in (moves in another are dropped).
+ * Nodes moved in one chart, by key, x, y in layout units: where they are
+ * drawn (`at`, the node being dragged where it is dragged), and the moves
+ * made (`held`, where the layout holds them: a drag moves nothing until it
+ * is dropped, so nothing settles before).
  */
 export interface MovedNodes {
-  layout: object;
   at: ReadonlyMap<string, readonly [number, number]>;
+  held: ReadonlyMap<string, readonly [number, number]>;
 }
 
 /** What a network's drawing lends the controls that move its nodes (see dom/node-drag.ts). */
 export interface NodeMoves {
-  /** The layout positions moves are in. */
-  layout: object;
-  /** Whether the network's tables are still as they were laid out (no change waits to be drawn). */
+  /** Whether the network's tables are still as they were drawn (no change waits to be drawn). */
   current(): boolean;
-  /** Whether the item keyed `key` is a node drawn now, which can be moved. */
+  /** Whether the item keyed `key` is a node drawn now, which can be dragged. */
   movable(key: string): boolean;
+  /**
+   * Whether the item keyed `key` is a node of this panel's network, drawn or
+   * in a hidden group: one `setItemPosition` moves, drawn there once shown.
+   */
+  inPanel(key: string): boolean;
   /** Whether a key is one of the network's nodes', drawn or not (a hidden group's). */
   owns(key: string): boolean;
   /**
@@ -236,17 +263,28 @@ export class GraphMark implements LayoutMark {
   readonly interactions = ["plane", "lasso", "drag"] as const;
   readonly selects = true;
   #network: Network | undefined;
+  /** The layout, its options filled in. */
+  readonly #layout: NetworkLayout;
   /** Each facet panel's part of the network, by its rows (see `#part`). */
   readonly #parts = new WeakMap<Uint32Array, Network>();
-  /** Placements by the size of the room, at its top left corner (see `#place`). */
-  readonly #placed = new Map<string, Placement>();
-  /** Pointer lookups of the panels last drawn, by what they depend on. */
-  #picking = new Map<string, { nodes?: HitGrid; links?: HitGrid }>();
+  /** Placements by the positions they place, then by the size of the room, at its top left corner (see `#place`). */
+  readonly #placed = new WeakMap<NodePositions, Map<string, Placement>>();
+  /** Where nodes are when a frame keeps no state for them (a mark drawn on its own). */
+  readonly #positions = { current: undefined as NodePositions | undefined };
+  /**
+   * Pointer lookups of the room last drawn by each chart's positions (or,
+   * in facet panels, by each panel's rows), with what they depend on.
+   */
+  readonly #picking = new WeakMap<
+    object,
+    { places: NodePositions; key: string; picking: Picking }
+  >();
 
   constructor(input: GraphSpec, links: Table, nodes?: Table) {
     this.spec = frozen(input);
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
+    this.#layout = layoutOf(spec.layout);
     requireField(links, spec.source, CATEGORY, "graph source");
     requireField(links, spec.target, CATEGORY, "graph target");
     if (spec.value !== undefined) requireField(links, spec.value, ["number"], "graph value");
@@ -271,9 +309,10 @@ export class GraphMark implements LayoutMark {
     this.measure = spec.value ?? "Links";
   }
 
-  controls(config: ChartConfig): LayoutControls | undefined {
+  controls(config: ChartConfig): LayoutControls {
     const { zoom, brush, drag } = config.interaction ?? {};
-    if (!zoom && !brush && !drag) return undefined;
+    // Without interaction, the chart still draws the frames a layout takes.
+    if (!zoom && !brush && !drag) return { kind: "layout", hint: "" };
     return {
       kind: "drag",
       hint: zoom
@@ -287,8 +326,7 @@ export class GraphMark implements LayoutMark {
 
   /** The key `linkOf` finds the link of nodes `s` and `t` by. */
   #pair(network: Pick<Network, "stride">, s: number, t: number): number {
-    const { stride } = network;
-    return this.spec.directed ? s * stride + t : Math.min(s, t) * stride + Math.max(s, t);
+    return pairKey({ stride: network.stride, directed: this.spec.directed === true }, s, t);
   }
 
   /** The versions of the tables the network is built from. */
@@ -356,6 +394,8 @@ export class GraphMark implements LayoutMark {
     const sums: number[] = [];
     const labels: number[] = [];
     const linkOfRow = new Int32Array(links.length).fill(-1);
+    // Per link, which ways its rows run: from its source to its target (1), back (2).
+    const ways: number[] = [];
     const loops = new Set<number>();
     for (let row = 0; row < links.length; row++) {
       const a = from.codes[row]!;
@@ -379,8 +419,10 @@ export class GraphMark implements LayoutMark {
         target.push(t);
         sums.push(0);
         labels.push(code);
+        ways.push(0);
       } else if (labels[link] !== code) labels[link] = -2;
       sums[link]! += value;
+      ways[link]! |= source[link] === s ? 1 : 2;
       linkOfRow[row] = link;
     }
 
@@ -398,6 +440,10 @@ export class GraphMark implements LayoutMark {
         if (linkOfRow[row]! >= 0) linkOfRow[row] = renumber[linkOfRow[row]!]!;
     }
     const count = names.length;
+    const value = Float64Array.from(kept, (link) => sums[link]!);
+    // Heavier links pull somewhat harder, without making the simulation stiff.
+    let largest = 0;
+    for (const v of value) largest = Math.max(largest, v);
     const network: Network = {
       versions,
       names,
@@ -407,7 +453,13 @@ export class GraphMark implements LayoutMark {
       size: spec.size === undefined ? undefined : new Float64Array(count).fill(Number.NaN),
       source: Int32Array.from(kept, (link) => source[link]!),
       target: Int32Array.from(kept, (link) => target[link]!),
-      value: Float64Array.from(kept, (link) => sums[link]!),
+      value,
+      strength:
+        spec.value === undefined
+          ? undefined
+          : Float64Array.from(value, (v) => 0.5 + 0.5 * Math.sqrt(v / largest)),
+      ways: Uint8Array.from(kept, (link) => ways[link]!),
+      directed: spec.directed === true,
       linkOf,
       stride,
       linkOfRow,
@@ -415,7 +467,6 @@ export class GraphMark implements LayoutMark {
       labels: named?.dictionary ?? [],
       loops: loops.size,
       overflowed: sums.length - kept.length,
-      positions: undefined,
     };
     // Groups in the order of their first node.
     const groupIndex = new Map<number, number>();
@@ -436,41 +487,29 @@ export class GraphMark implements LayoutMark {
     return network;
   }
 
-  /** Layout positions, computed once per network. */
-  #positions(network: Network): Float64Array {
-    if (network.positions) return network.positions;
-    // Heavier links pull somewhat harder, without making the simulation stiff.
-    let largest = 0;
-    for (const value of network.value) largest = Math.max(largest, value);
-    const strength =
-      this.spec.value === undefined
-        ? undefined
-        : Float64Array.from(network.value, (value) => 0.5 + 0.5 * Math.sqrt(value / largest));
-    network.positions = layoutForce({
-      nodes: network.names.length,
-      source: network.source,
-      target: network.target,
-      strength,
-    });
-    return network.positions;
-  }
-
   /**
    * Where nodes are drawn in a room, and how large: the layout scaled to
-   * fit at least `margin` inside its edges, then overlapping nodes pushed
-   * apart. Hidden groups keep their places, so showing them again moves
-   * nothing.
+   * fit at least `margin` inside its edges, then, in a force layout,
+   * overlapping nodes pushed apart. Hidden groups keep their places, so
+   * showing them again moves nothing. The fit holds while nodes settle, so
+   * the view does not move under them.
    */
-  #place(network: Network, bounds: Rect, margin: number): Placement {
+  #place(network: Network, places: NodePositions, bounds: Rect, margin: number): Placement {
+    let kept = this.#placed.get(places);
+    if (!kept) {
+      kept = new Map();
+      this.#placed.set(places, kept);
+    }
     // Laid out in a room of the size at its corner, then moved to the room:
     // facet panels of one size share the work, and draw nodes alike.
-    const size = `${network.versions} ${bounds.width} ${bounds.height} ${margin}`;
-    let placed = this.#placed.get(size);
+    // Positions as they are now, and the network they place (whose sizes radii follow).
+    const shown = `${places.revision} ${network.versions}`;
+    const size = `${shown} ${bounds.width} ${bounds.height} ${margin}`;
+    let placed = kept.get(size);
     if (!placed) {
-      if (this.#placed.size > 8 || [...this.#placed.values()][0]?.versions !== network.versions)
-        this.#placed.clear();
-      placed = this.#placeAt(network, { ...bounds, x: 0, y: 0 }, margin);
-      this.#placed.set(size, placed);
+      if (kept.size > 8 || ![...kept.keys()][0]?.startsWith(`${shown} `)) kept.clear();
+      placed = this.#placeAt(network, places, { ...bounds, x: 0, y: 0 }, margin);
+      kept.set(size, placed);
     }
     if (bounds.x === 0 && bounds.y === 0) return placed;
     const at = placed.at.map((v, i) => v + (i % 2 === 0 ? bounds.x : bounds.y));
@@ -478,8 +517,8 @@ export class GraphMark implements LayoutMark {
     return { ...placed, key: `${size} ${bounds.x} ${bounds.y}`, at, fit };
   }
 
-  #placeAt(network: Network, bounds: Rect, margin: number): Placement {
-    const key = `${network.versions} ${bounds.width} ${bounds.height} ${margin} 0 0`;
+  #placeAt(network: Network, places: NodePositions, bounds: Rect, margin: number): Placement {
+    const key = `${places.revision} ${network.versions} ${bounds.width} ${bounds.height} ${margin} 0 0`;
     const count = network.names.length;
     // Nodes shrink in rooms crowded with them, so they stay apart.
     const room = Math.max(1, bounds.width * bounds.height);
@@ -487,22 +526,63 @@ export class GraphMark implements LayoutMark {
     const radii = this.#radii(network, crowding);
     let largest = 0;
     for (const r of radii) largest = Math.max(largest, r);
+    const circular = this.#layout.type === "circular";
+    // A circle's labels stand outside it, beside the nodes at its left and right.
+    const labelRoom = circular && margin > 0 ? Math.min(80, bounds.width / 6) : 0;
+    const inset = Math.max(largest + RING + 1, margin);
     const options = {
-      inset: Math.max(largest + RING + 1, margin),
+      inset,
+      insetX: Math.max(inset, labelRoom),
       maxScale: MAX_SCALE,
-      maxStretch: MAX_STRETCH,
+      // A circle stays round.
+      maxStretch: circular ? 1 : MAX_STRETCH,
     };
-    const positions = this.#positions(network);
-    const at = fitLayout(positions, bounds, options);
+    const positions = places.shown!;
+    const { insetX, maxStretch } = options;
+    const fit = places.fit(
+      `${bounds.width} ${bounds.height} ${inset} ${insetX} ${maxStretch}`,
+      () => layoutFit(places.own ?? positions, bounds, options),
+    );
+    const at = fitLayout(positions, fit);
     const inside = {
       x: bounds.x + RING,
       y: bounds.y + RING,
       width: Math.max(0, bounds.width - 2 * RING),
       height: Math.max(0, bounds.height - 2 * RING),
     };
-    separate(at, radii, inside, RING + 1);
-    const fit = layoutFit(positions, bounds, options);
-    return { key, versions: network.versions, at, radii, crowding, fit };
+    // Only a force layout's nodes may overlap, and only where they can be
+    // set apart: nodes whose circles would cover the room stay as they are.
+    let area = 0;
+    for (const r of radii) area += (2 * r + RING + 1) ** 2;
+    if (this.#layout.type === "force" && area < inside.width * inside.height)
+      separate(at, radii, inside, RING + 1);
+    return { key, at, radii, crowding, fit };
+  }
+
+  /**
+   * Whether the network, as its tables are now, has the node keyed `key`
+   * (drawn or not), the mark being `id` among its chart's: what a host that
+   * keeps moves without drawing the chart (a notebook widget with no display
+   * open) asks to let go of those of nodes the data took.
+   */
+  ownsNode(key: string, id: string | number): boolean {
+    return nodeOfKey(this.#build(), id, key) >= 0;
+  }
+
+  /**
+   * The moves of a network not drawn (too large, or still being arranged):
+   * its nodes can be moved, and keep their moves, though none can be dragged.
+   */
+  #unplaced(network: Network, id: string | number): NodeMoves {
+    const owns = (key: string) => nodeOfKey(network, id, key) >= 0;
+    return {
+      current: () => this.#versions() === network.versions,
+      owns,
+      movable: owns,
+      inPanel: owns,
+      toLayout: () => [Number.NaN, Number.NaN],
+      pixelOf: () => undefined,
+    };
   }
 
   /**
@@ -549,10 +629,42 @@ export class GraphMark implements LayoutMark {
 
   draw(frame: LayoutFrame): LayoutResult {
     const whole = this.#build();
+    // The chart's state of the panel keeps where nodes are; a lone mark keeps its own.
+    const slot = frame.nodePositions ?? this.#positions;
     const refused = overLimit(whole);
     if (refused) {
-      this.#picking.clear();
-      return nothing(refused);
+      if (slot.current) this.#picking.delete(slot.current);
+      // Moves of nodes the network has stay for when it is drawn again.
+      return { ...nothing(refused), moves: this.#unplaced(whole, frame.id) };
+    }
+    let places = slot.current;
+    if (places?.owner !== frame.id) slot.current = places = new NodePositions(frame.id);
+    // Moved nodes are held where they were put; a drag is not yet a move.
+    const moved = frame.moved?.at;
+    const held = new Map<number, readonly [number, number]>();
+    for (const [key, place] of frame.moved?.held ?? []) {
+      const node = nodeOfKey(whole, frame.id, key);
+      if (node >= 0) held.set(node, place);
+    }
+    places.update(whole, this.#layout, held, frame.clock);
+    if (places.failure) {
+      // Links spanning more layers than a layered layout routes.
+      this.#picking.delete(places);
+      return {
+        ...nothing(
+          `N${describeNetwork(whole).slice(1)}: too many layers between linked nodes to route (${places.failure}); use another layout, or filter the links`,
+        ),
+        moves: this.#unplaced(whole, frame.id),
+      };
+    }
+    if (!places.shown) {
+      this.#picking.delete(places);
+      // Nodes can be moved already (moves restored as a chart mounts), though not dragged.
+      return {
+        ...nothing(`Arranging the ${describeNetwork(whole)}`),
+        pending: true,
+        moves: this.#unplaced(whole, frame.id),
+      };
     }
     const { bounds, theme, hidden, locale, rows } = frame;
     // A facet panel draws its rows' links, with their totals there, and the
@@ -590,10 +702,8 @@ export class GraphMark implements LayoutMark {
     const labeled = this.spec.labels ?? true;
     // Room for half a line of text above and below, so labels at the edges fit.
     const margin = labeled ? Math.round(theme.fontSize * 1.25) / 2 : 0;
-    const placement = this.#place(whole, bounds, margin);
+    const placement = this.#place(whole, places, bounds, margin);
     const { radii, crowding, fit } = placement;
-    // Nodes the chart's user moved are where they were put, in the layout's units.
-    const moved = frame.moved?.layout === this.#layoutIdentity(whole) ? frame.moved?.at : undefined;
     const plane = graphView(fit, bounds, frame.viewport);
     const navigating = !!(frame.viewport?.x || frame.viewport?.y);
     const at = navigating || (moved && moved.size > 0) ? placement.at.slice() : placement.at;
@@ -646,36 +756,102 @@ export class GraphMark implements LayoutMark {
       const g = group[source[link]!]!;
       return g >= 0 && g === group[target[link]!] ? groupColors[g]! : theme.muted;
     };
-    // A directed link whose pair runs the other way too bows to its own side.
+    // A directed link whose pair runs the other way too bows to its own side;
+    // a layered layout's links curve through their bend points instead.
+    const routes = places.routes;
     const bowed = (link: number) =>
-      directed && network.linkOf.has(this.#pair(network, target[link]!, source[link]!));
-    const route = (link: number) =>
-      routeOf(x(source[link]!), y(source[link]!), x(target[link]!), y(target[link]!), bowed(link));
+      !routes && directed && network.linkOf.has(this.#pair(network, target[link]!, source[link]!));
+    const across = this.#layout.type === "layered" ? this.#layout.direction : undefined;
+    // Many links are drawn through their bend points straight, which costs a chord a span.
+    const curved = source.length <= CURVED_LINKS;
+    // Routes from nodes' pixels, bend points mapped from layout units as they are.
+    const routing =
+      (px: (node: number) => number, py: (node: number) => number, mapX: Map1, mapY: Map1) =>
+      (link: number): Route => {
+        const [s, t] = [source[link]!, target[link]!];
+        if (!routes) return routeOf(px(s), py(s), px(t), py(t), bowed(link));
+        const points = [px(s), py(s)];
+        for (let k = routes.starts[link]!; k < routes.starts[link + 1]!; k++)
+          points.push(mapX(routes.bends[k * 2]!), mapY(routes.bends[k * 2 + 1]!));
+        points.push(px(t), py(t));
+        const vertical = across === "down" || across === "up";
+        // Directed links each way between two nodes go a few pixels to either side.
+        if (directed && network.linkOf.has(this.#pair(network, t, s))) {
+          if (points.length === 4)
+            points.splice(2, 0, (points[0]! + points[2]!) / 2, (points[1]! + points[3]!) / 2);
+          const side = (s < t ? 1 : -1) * LAYER_SIDE;
+          for (let i = 2; i < points.length - 2; i += 2) points[i + (vertical ? 0 : 1)]! += side;
+        }
+        return pathRoute(points, vertical, curved);
+      };
+    const route = routing(
+      x,
+      y,
+      (v) => plane.x.map(v),
+      (v) => plane.y.map(v),
+    );
     const ringColor = surface(theme);
     const opacity = LINK_OPACITY[isLightColor(ringColor) === false ? "dark" : "light"];
     // Links of about the same width, color, and highlight share a geometry.
     type Part = { width: number; color: string; dim: boolean; coords: number[]; d: string };
-    const parts = new Map<string, Part>();
+    // Parts by color, then width, dimmed ones apart.
+    const byColor = [new Map<string, Map<number, Part>>(), new Map<string, Map<number, Part>>()];
+    const parts: Part[] = [];
     // Each drawn link's part, by its place in `links`, for the order they are drawn in.
     const partOf: Part[] = [];
     for (const link of links) {
       const width = Math.round(widthOf(link) * 4) / 4;
       const color = linkColor(link);
       const dim = highlightedLinks !== undefined && !highlightedLinks[link];
-      const key = `${width} ${color} ${dim}`;
-      let part = parts.get(key);
+      const byWidth = byColor[dim ? 1 : 0]!;
+      let widths = byWidth.get(color);
+      if (!widths) {
+        widths = new Map();
+        byWidth.set(color, widths);
+      }
+      let part = widths.get(width);
       if (!part) {
         part = { width, color, dim, coords: [], d: "" };
-        parts.set(key, part);
+        widths.set(width, part);
+        parts.push(part);
       }
       partOf.push(part);
+      // Undirected straight links, most of them in large networks, need no route.
+      const t = target[link]!;
+      if (!directed && !routes) {
+        part.coords.push(x(source[link]!), y(source[link]!), x(t), y(t));
+        continue;
+      }
+      // So do undirected layered links of large networks, straight between their bend points.
+      if (!directed && routes && !curved) {
+        let [ax, ay] = [x(source[link]!), y(source[link]!)];
+        for (let k = routes.starts[link]!; k < routes.starts[link + 1]!; k++) {
+          const bx = plane.x.map(routes.bends[k * 2]!);
+          const by = plane.y.map(routes.bends[k * 2 + 1]!);
+          part.coords.push(ax, ay, bx, by);
+          [ax, ay] = [bx, by];
+        }
+        part.coords.push(ax, ay, x(t), y(t));
+        continue;
+      }
       const r = route(link);
       // Directed links end at the target's ring, an arrowhead's tip there.
-      const t = target[link]!;
       const end = directed ? radii[t]! + ringWidth(radii[t]!) + 0.5 : 0;
       const [ex, ey] = r.pointBack(end);
       if (r.bow) part.d += `M${n(r.x0)} ${n(r.y0)}Q${n(r.cx)} ${n(r.cy)} ${n(ex)} ${n(ey)}`;
-      else part.coords.push(r.x0, r.y0, ex, ey);
+      else if (r.path) {
+        // Chords of the curve, the last ending at the arrowhead's tip.
+        const { path } = r;
+        for (let i = 2; i < path.length; i += 2) {
+          const last = i === path.length - 2;
+          part.coords.push(
+            path[i - 2]!,
+            path[i - 1]!,
+            last ? ex : path[i]!,
+            last ? ey : path[i + 1]!,
+          );
+        }
+      } else part.coords.push(r.x0, r.y0, ex, ey);
       if (directed) {
         const [ux, uy] = r.direction();
         const side = Math.max(ARROW * Math.max(0.6, crowding), width * 2.5);
@@ -692,7 +868,7 @@ export class GraphMark implements LayoutMark {
       }
     }
     // Dimmed links below the others, muted below colored, thin below thick.
-    const ordered = [...parts.values()].sort(
+    const ordered = [...parts].sort(
       (a, b) =>
         Number(b.dim) - Number(a.dim) ||
         Number(b.color === theme.muted) - Number(a.color === theme.muted) ||
@@ -741,7 +917,12 @@ export class GraphMark implements LayoutMark {
     geometry.push(...this.#nodeGeometry(nodes, at, radii, colorOf, ringColor, litNodes));
     // Labels' boxes, x0, y0, x1, y1 each, which later labels keep clear of.
     const placed: number[] = [];
-    if (labeled) geometry.push(...this.#labels(network, nodes, degree, at, radii, frame, placed));
+    // A circle's labels point outward: left of the nodes on its left half.
+    const middle = plane.x.map(0);
+    const leftward =
+      this.#layout.type === "circular" ? (node: number) => x(node) < middle : () => false;
+    if (labeled)
+      geometry.push(...this.#labels(network, nodes, degree, at, radii, frame, placed, leftward));
     if (network.label)
       geometry.push(...this.#linkLabels(network, links, route, at, radii, nodes, frame, placed));
 
@@ -784,16 +965,24 @@ export class GraphMark implements LayoutMark {
         text: `${named}${format(value[link]!)}`,
         px: mx,
         py: my,
-        outline: r.bow
-          ? `M${n(r.x0)} ${n(r.y0)}Q${n(r.cx)} ${n(r.cy)} ${n(r.x1)} ${n(r.y1)}`
-          : band(r.x0, r.y0, r.x1, r.y1, widthOf(link) / 2 + 2),
+        outline: routePath(r, widthOf(link) / 2 + 2),
       };
     };
     const nodePlace = new Int32Array(count).fill(-1);
     nodes.forEach((node, i) => {
       nodePlace[node] = i;
     });
-    const linkPlace = new Map(links.map((link, i) => [link, i]));
+    // Each link's place among those drawn, found once a link key is looked up.
+    let linkPlace: Int32Array | undefined;
+    const placeOfLink = (link: number) => {
+      if (!linkPlace) {
+        linkPlace = new Int32Array(source.length).fill(-1);
+        links.forEach((link, i) => {
+          linkPlace![link] = i;
+        });
+      }
+      return link < 0 ? -1 : linkPlace[link]!;
+    };
     /** The link an item key names, -1 for none drawn. */
     const linkOfKey = (parts: unknown[]) => {
       const s = network.nodeOf.get(parts[1] as string) ?? -1;
@@ -819,12 +1008,12 @@ export class GraphMark implements LayoutMark {
       return radii[a] !== radii[b] ? radii[a]! < radii[b]! : a > b;
     };
     const moves: NodeMoves = {
-      layout: this.#layoutIdentity(whole),
       current: () => this.#versions() === network.versions,
-      owns: (key) => keyParts(key)?.length === 2,
-      movable: (key) => {
-        const parts = keyParts(key);
-        return parts?.length === 2 && nodePlace[network.nodeOf.get(parts[1] as string) ?? -1]! >= 0;
+      owns: (key) => nodeOfKey(network, frame.id, key) >= 0,
+      movable: (key) => nodePlace[nodeOfKey(network, frame.id, key)]! >= 0,
+      inPanel: (key) => {
+        const node = nodeOfKey(network, frame.id, key);
+        return node >= 0 && (!joined || joined[node] === 1);
       },
       toLayout: (key, px, py) => {
         const node = nodeOfKey(network, frame.id, key);
@@ -837,21 +1026,103 @@ export class GraphMark implements LayoutMark {
         return place ? pixelAt(place) : [x(node), y(node)];
       },
     };
+    // Picking candidates come from the layout as fitted to the room, before
+    // any zoom: the pointer is mapped back there, so they last while the view
+    // pans and zooms. At a zoom of 1 or more, everything within reach on
+    // screen is within reach there too; a view set wider is indexed as drawn.
+    const fitted = plane.zoom >= 1;
+    const fitX = (v: number) => fit.cx + (v - fit.mx) * fit.sx;
+    const fitY = (v: number) => fit.cy + (v - fit.my) * fit.sy;
+    const baseAt = fitted && (navigating || moved) ? placement.at.slice() : at;
+    if (baseAt !== at)
+      for (const [key, [lx, ly]] of moved ?? []) {
+        const node = nodeOfKey(network, frame.id, key);
+        if (node >= 0) [baseAt[node * 2], baseAt[node * 2 + 1]] = [fitX(lx), fitY(ly)];
+      }
+    const bx = (node: number) => baseAt[node * 2]!;
+    const by = (node: number) => baseAt[node * 2 + 1]!;
+    const baseRoute = baseAt === at ? route : routing(bx, by, fitX, fitY);
+    const toBase = (px: number, py: number): [number, number] =>
+      fitted ? [fitX(plane.x.invert(px)), fitY(plane.y.invert(py))] : [px, py];
+    // Indexed where nodes are, or might be moved to, within a few rooms of the room.
+    let [left, top, right, bottom] = [
+      bounds.x,
+      bounds.y,
+      bounds.x + bounds.width,
+      bounds.y + bounds.height,
+    ];
+    let largest = 0;
+    for (const node of nodes) {
+      left = Math.min(left, bx(node));
+      right = Math.max(right, bx(node));
+      top = Math.min(top, by(node));
+      bottom = Math.max(bottom, by(node));
+      largest = Math.max(largest, radii[node]!);
+    }
+    // With room for the nodes' circles and links' strokes around them.
+    const pad = Math.max(largest, WIDTH_RANGE[1] / 2 + 2) + REACH;
+    [left, top, right, bottom] = [left - pad, top - pad, right + pad, bottom + pad];
+    const indexed = {
+      x: Math.max(left, bounds.x - 2 * bounds.width),
+      y: Math.max(top, bounds.y - 2 * bounds.height),
+      width: 0,
+      height: 0,
+    };
+    indexed.width = Math.min(right, bounds.x + 3 * bounds.width) - indexed.x;
+    indexed.height = Math.min(bottom, bounds.y + 3 * bounds.height) - indexed.y;
+    // Nodes and links reaching beyond that (moved there, or bowing or
+    // bending out) are looked through one by one.
+    const beyond = (left: number, top: number, right: number, bottom: number) =>
+      left < indexed.x ||
+      right > indexed.x + indexed.width ||
+      top < indexed.y ||
+      bottom > indexed.y + indexed.height;
     // Picking candidates depend on positions and widths, not highlight order;
     // each facet panel's on its links.
     const pickKey = JSON.stringify([
       placement.key,
       rows && idOf(rows),
-      frame.viewport,
+      fitted ? null : frame.viewport,
       [...hidden],
       [...(moved ?? [])],
     ]);
-    let picking = this.#picking.get(pickKey);
-    if (!picking) {
-      if (this.#picking.size > 64) this.#picking.clear();
-      picking = {};
-      this.#picking.set(pickKey, picking);
+    // Only the latest: grids of 200,000 links take tens of megabytes.
+    const owner = rows ?? places;
+    let latest = this.#picking.get(owner);
+    if (latest?.places !== places || latest.key !== pickKey) {
+      latest = { places, key: pickKey, picking: {} };
+      this.#picking.set(owner, latest);
     }
+    const picking = latest.picking;
+    const kept = picking;
+    const farNodes = () =>
+      (kept.farNodes ??= nodes.filter((node) => {
+        const far = radii[node]! + REACH;
+        return beyond(bx(node) - far, by(node) - far, bx(node) + far, by(node) + far);
+      }));
+    // How far from its route's chords a link can be picked.
+    const reachOf = (link: number, r: Route) => {
+      const reach = widthOf(link) / 2 + REACH;
+      // A curve's chords drawn at another zoom differ a little.
+      if (r.path) return reach + 2;
+      // A bow drawn zoomed lies between its chord and the bow fitted here,
+      // never farther from the chord than half the bow's offset.
+      return r.bow
+        ? reach + Math.hypot(r.cx - (r.x0 + r.x1) / 2, r.cy - (r.y0 + r.y1) / 2) / 2
+        : reach;
+    };
+    const farLinks = () =>
+      (kept.farLinks ??= links.flatMap((link, i) => {
+        const r = baseRoute(link);
+        const reach = reachOf(link, r);
+        let [left, right] = [Math.min(r.x0, r.x1), Math.max(r.x0, r.x1)];
+        let [top, bottom] = [Math.min(r.y0, r.y1), Math.max(r.y0, r.y1)];
+        for (let k = 0; r.path && k < r.path.length; k += 2) {
+          [left, right] = [Math.min(left, r.path[k]!), Math.max(right, r.path[k]!)];
+          [top, bottom] = [Math.min(top, r.path[k + 1]!), Math.max(bottom, r.path[k + 1]!)];
+        }
+        return beyond(left - reach, top - reach, right + reach, bottom + reach) ? [i] : [];
+      }));
     return {
       geometry,
       plane,
@@ -865,18 +1136,19 @@ export class GraphMark implements LayoutMark {
           )
         )
           return undefined;
-        picking.nodes ??= new HitGrid(bounds, (grid, add) => {
+        picking.nodes ??= new HitGrid(indexed, (grid, add) => {
           for (const node of nodes) {
             const far = radii[node]! + REACH;
-            grid.box(node, x(node) - far, y(node) - far, x(node) + far, y(node) + far, add);
+            grid.box(node, bx(node) - far, by(node) - far, bx(node) + far, by(node) + far, add);
           }
         });
+        const [qx, qy] = toBase(px, py);
         // The node drawn on top of those under the pointer, else the one
         // whose edge is nearest, within reach.
         let top = -1;
         let best = -1;
         let bestGap = REACH;
-        for (const node of picking.nodes.at(px, py)) {
+        const nearNode = (node: number) => {
           const gap = Math.hypot(px - x(node), py - y(node)) - radii[node]!;
           if (gap <= 0) {
             if (top < 0 || drawnAbove(node, top)) top = node;
@@ -884,38 +1156,36 @@ export class GraphMark implements LayoutMark {
             best = node;
             bestGap = gap;
           }
-        }
+        };
+        for (const node of picking.nodes.at(qx, qy)) nearNode(node);
+        for (const node of farNodes()) nearNode(node);
         if (top >= 0) return nodeItem(top);
         if (best >= 0) return nodeItem(best);
         // Else the link nearest the pointer, within reach of its edge; of
         // links as near (those whose stroke it is on), the one drawn on top.
         let nearest = -1;
         let nearestGap = 0;
-        picking.links ??= new HitGrid(bounds, (grid, add) => {
+        picking.links ??= new HitGrid(indexed, (grid, add) => {
           links.forEach((link, i) => {
-            const r = route(link);
-            const reach = widthOf(link) / 2 + REACH;
-            let [ax, ay] = [r.x0, r.y0];
-            const pieces = r.bow ? 8 : 1;
-            for (let piece = 1; piece <= pieces; piece++) {
-              const t = piece / pieces,
-                u = 1 - t;
-              const bx = u * u * r.x0 + 2 * u * t * r.cx + t * t * r.x1;
-              const by = u * u * r.y0 + 2 * u * t * r.cy + t * t * r.y1;
-              grid.segment(i, ax, ay, bx, by, reach, add);
-              [ax, ay] = [bx, by];
-            }
+            const r = baseRoute(link);
+            const reach = reachOf(link, r);
+            const path = r.path;
+            if (!path) grid.segment(i, r.x0, r.y0, r.x1, r.y1, reach, add);
+            for (let k = 2; path && k < path.length; k += 2)
+              grid.segment(i, path[k - 2]!, path[k - 1]!, path[k]!, path[k + 1]!, reach, add);
           });
         });
-        for (const i of picking.links.at(px, py)) {
+        const nearLink = (i: number) => {
           const link = links[i]!;
           const gap = Math.max(0, route(link).distance(px, py) - widthOf(link) / 2);
-          if (gap > REACH) continue;
+          if (gap > REACH) return;
           if (nearest < 0 || gap < nearestGap || (gap === nearestGap && linkAbove(i, nearest))) {
             nearest = i;
             nearestGap = gap;
           }
-        }
+        };
+        for (const i of picking.links.at(qx, qy)) nearLink(i);
+        for (const i of farLinks()) nearLink(i);
         return nearest >= 0 ? linkItem(nearest) : undefined;
       },
       count: nodes.length + links.length,
@@ -929,10 +1199,10 @@ export class GraphMark implements LayoutMark {
           const node = network.nodeOf.get(parts[1] as string);
           return node === undefined ? -1 : nodePlace[node]!;
         }
-        const place = linkPlace.get(linkOfKey(parts));
-        return place === undefined ? -1 : nodes.length + place;
+        const place = placeOfLink(linkOfKey(parts));
+        return place < 0 ? -1 : nodes.length + place;
       },
-      summary: () => this.#summary(network, nodes, links, degree, locale),
+      summary: () => this.#summary(network, nodes, links, degree, locale, places),
       // A node stands for its rows of the nodes table, a link for those of the links table.
       rowsOf: (key, table) => {
         const parts = keyParts(key);
@@ -974,37 +1244,8 @@ export class GraphMark implements LayoutMark {
         return rows;
       },
       moves,
+      pending: places.pending,
     };
-  }
-
-  /**
-   * What identifies the layout positions moves are made in, the same for
-   * every mark drawing the same tables (and versions) with the fields and
-   * options the layout reads, so a mark made again with other styles keeps
-   * the chart's moves; moves in another layout are dropped.
-   */
-  #layoutIdentity(network: Network): object {
-    const { spec, table, nodes } = this;
-    const fields = [spec.source, spec.target, spec.value, spec.directed === true, spec.node];
-    const signature = JSON.stringify(fields);
-    let byNodes = layouts.get(table);
-    if (!byNodes) {
-      byNodes = new WeakMap();
-      layouts.set(table, byNodes);
-    }
-    const owner = nodes ?? table;
-    let bySignature = byNodes.get(owner);
-    if (!bySignature) {
-      bySignature = new Map();
-      byNodes.set(owner, bySignature);
-    }
-    // Each layout of the tables has its own, new with every change of their versions.
-    let kept = bySignature.get(signature);
-    if (kept?.versions !== network.versions) {
-      kept = { versions: network.versions, identity: {} };
-      bySignature.set(signature, kept);
-    }
-    return kept.identity;
   }
 
   /** The rows of the nodes table naming node `node`. */
@@ -1068,7 +1309,9 @@ export class GraphMark implements LayoutMark {
     const geometry: PointGeometry[] = [];
     parts.forEach((part, i) => {
       const dim = lit !== undefined && i === 0;
-      const stacked = [...part].sort((a, b) => radii[b]! - radii[a]! || a - b);
+      // Nodes all alike stay in order.
+      const alike = part.every((node) => radii[node] === radii[part[0]!]);
+      const stacked = alike ? part : [...part].sort((a, b) => radii[b]! - radii[a]! || a - b);
       // Points index at most 256 colors: more make runs of nodes, drawn in order.
       let start = 0;
       while (start < stacked.length) {
@@ -1147,6 +1390,7 @@ export class GraphMark implements LayoutMark {
     radii: Float64Array,
     frame: LayoutFrame,
     placed: number[],
+    leftward: (node: number) => boolean,
   ): Geometry[] {
     const { bounds, theme, measure } = frame;
     const font = `${theme.fontSize}px ${theme.font}`;
@@ -1154,9 +1398,7 @@ export class GraphMark implements LayoutMark {
     const rank = network.size ?? degree;
     // Denser networks label fewer nodes: all of 50, 35 of 100, 11 of 1,000.
     const budget = Math.round(LABELED * Math.min(1, Math.sqrt(LABELED / nodes.length)));
-    const candidates = [...nodes]
-      .sort((a, b) => (rank[b]! || 0) - (rank[a]! || 0) || a - b)
-      .slice(0, budget);
+    const candidates = top(nodes, budget, (a, b) => (rank[b]! || 0) - (rank[a]! || 0) || a - b);
     // A label may cross links, but not other labels or other nodes, which its halo would hide.
     const free = (node: number, left: number, top: number, right: number, bottom: number) => {
       for (let i = 0; i < placed.length; i += 4) {
@@ -1197,11 +1439,15 @@ export class GraphMark implements LayoutMark {
       const width = measure(text, font);
       const after = x + offset;
       const before = x - offset;
-      let anchor: "start" | "end";
-      if (after + width <= right && free(node, after, top, after + width, bottom)) anchor = "start";
-      else if (before - width >= bounds.x && free(node, before - width, top, before, bottom))
-        anchor = "end";
-      else continue;
+      const fits = {
+        start: after + width <= right && free(node, after, top, after + width, bottom),
+        end: before - width >= bounds.x && free(node, before - width, top, before, bottom),
+      };
+      const [first, second] = leftward(node)
+        ? (["end", "start"] as const)
+        : (["start", "end"] as const);
+      const anchor = fits[first] ? first : fits[second] ? second : undefined;
+      if (!anchor) continue;
       const [left, end] = anchor === "start" ? [after, after + width] : [before - width, before];
       placed.push(left, top, end, bottom);
       sides[anchor].coords.push(anchor === "start" ? after : before, y);
@@ -1249,9 +1495,7 @@ export class GraphMark implements LayoutMark {
     const budget = Math.round(
       LINK_LABELED * Math.min(1, Math.sqrt(LINK_LABELED / Math.max(1, named.length))),
     );
-    const candidates = named
-      .sort((a, b) => network.value[b]! - network.value[a]! || a - b)
-      .slice(0, budget);
+    const candidates = top(named, budget, (a, b) => network.value[b]! - network.value[a]! || a - b);
     const covers = (left: number, top: number, right: number, bottom: number) => {
       for (let i = 0; i < placed.length; i += 4)
         if (
@@ -1313,9 +1557,13 @@ export class GraphMark implements LayoutMark {
     links: readonly number[],
     degree: Int32Array,
     locale: string | undefined,
+    places: NodePositions,
   ): string {
     const { names, loops, overflowed } = network;
     let left = "";
+    if (places.reversed > 0)
+      left += ` ${plural(places.reversed, "link closes a cycle and runs", "links close cycles and run")} against the layers.`;
+    if (places.arranging) left += " The nodes are still being arranged.";
     if (loops > 0)
       left += ` ${plural(loops, "link from a node to itself is", "links from nodes to themselves are")} not drawn.`;
     if (overflowed > 0)
@@ -1344,15 +1592,6 @@ export class GraphMark implements LayoutMark {
   }
 }
 
-/**
- * Layout identities by links table, then nodes table (the links table
- * without one), then the fields and options the layout reads.
- */
-const layouts = new WeakMap<
-  Table,
-  WeakMap<Table, Map<string, { versions: string; identity: object }>>
->();
-
 /** The node a node's item key names, -1 for none. */
 function nodeOfKey(network: Network, id: string | number, key: string): number {
   let parts: unknown;
@@ -1366,8 +1605,9 @@ function nodeOfKey(network: Network, id: string | number, key: string): number {
 }
 
 /**
- * The way a link runs from (x0, y0) to (x1, y1): straight, or bowed to its
- * right through a quadratic curve's control point (cx, cy).
+ * The way a link runs from (x0, y0) to (x1, y1): straight, bowed to its
+ * right through a quadratic curve's control point (cx, cy), or along a
+ * curve through bend points, flattened into `path`.
  */
 interface Route {
   x0: number;
@@ -1377,6 +1617,8 @@ interface Route {
   bow: boolean;
   cx: number;
   cy: number;
+  /** For a curve through bend points: x, y of the points of its polyline, ends included. */
+  path?: Float64Array | undefined;
   /** The point `back` pixels before the end, along the way. */
   pointBack(back: number): [number, number];
   /** The way's direction at its end, a unit vector. */
@@ -1433,16 +1675,175 @@ function routeOf(x0: number, y0: number, x1: number, y1: number, bow: boolean): 
   };
 }
 
+/**
+ * The way of a link of a layered layout through its points (ends and bend
+ * points, x, y each): a curve leaving and reaching each point along the
+ * layers' direction (`vertical`, or across), as tidy trees draw links,
+ * flattened into a polyline of a few chords per span, more for longer ones;
+ * with `curved` false, one straight chord per span.
+ */
+function pathRoute(points: readonly number[], vertical: boolean, curved: boolean): Route {
+  const path: number[] = [points[0]!, points[1]!];
+  for (let i = 2; i < points.length; i += 2) {
+    const [ax, ay, bx, by] = [points[i - 2]!, points[i - 1]!, points[i]!, points[i + 1]!];
+    const pieces = curved
+      ? Math.min(8, Math.max(1, Math.round(Math.hypot(bx - ax, by - ay) / 10)))
+      : 1;
+    for (let k = 1; k <= pieces; k++) {
+      const t = k / pieces;
+      // Across the layers, the curve eases out of one point and into the next.
+      const b = 3 * t * t - 2 * t * t * t;
+      path.push(
+        vertical ? ax + (bx - ax) * b : ax + (bx - ax) * t,
+        vertical ? ay + (by - ay) * t : ay + (by - ay) * b,
+      );
+    }
+  }
+  const line = Float64Array.from(path);
+  const n = line.length / 2;
+  const [x0, y0, x1, y1] = [line[0]!, line[1]!, line[n * 2 - 2]!, line[n * 2 - 1]!];
+  const direction = (): [number, number] => {
+    // The last chord with any length.
+    for (let i = n - 2; i >= 0; i--) {
+      const dx = x1 - line[i * 2]!;
+      const dy = y1 - line[i * 2 + 1]!;
+      const d = Math.hypot(dx, dy);
+      if (d > 0) return [dx / d, dy / d];
+    }
+    return [1, 0];
+  };
+  return {
+    x0,
+    y0,
+    x1,
+    y1,
+    bow: false,
+    cx: (x0 + x1) / 2,
+    cy: (y0 + y1) / 2,
+    path: line,
+    pointBack(back) {
+      if (back <= 0) return [x1, y1];
+      const [ux, uy] = direction();
+      return [x1 - ux * back, y1 - uy * back];
+    },
+    direction,
+    middle() {
+      // Halfway along the polyline.
+      let total = 0;
+      for (let i = 1; i < n; i++)
+        total += Math.hypot(line[i * 2]! - line[i * 2 - 2]!, line[i * 2 + 1]! - line[i * 2 - 1]!);
+      let left = total / 2;
+      for (let i = 1; i < n; i++) {
+        const [ax, ay, bx, by] = [
+          line[i * 2 - 2]!,
+          line[i * 2 - 1]!,
+          line[i * 2]!,
+          line[i * 2 + 1]!,
+        ];
+        const d = Math.hypot(bx - ax, by - ay);
+        if (d >= left && d > 0) return [ax + ((bx - ax) * left) / d, ay + ((by - ay) * left) / d];
+        left -= d;
+      }
+      return [x1, y1];
+    },
+    distance(px, py) {
+      let best = Number.POSITIVE_INFINITY;
+      for (let i = 1; i < n; i++)
+        best = Math.min(
+          best,
+          distanceToSegment(
+            px,
+            py,
+            line[i * 2 - 2]!,
+            line[i * 2 - 1]!,
+            line[i * 2]!,
+            line[i * 2 + 1]!,
+          ),
+        );
+      return best;
+    },
+  };
+}
+
+/** SVG path data along a route, to outline a link. */
+function routePath(r: Route, half: number): string {
+  if (r.bow) return `M${n(r.x0)} ${n(r.y0)}Q${n(r.cx)} ${n(r.cy)} ${n(r.x1)} ${n(r.y1)}`;
+  if (!r.path) return band(r.x0, r.y0, r.x1, r.y1, half);
+  let d = "";
+  for (let i = 0; i < r.path.length; i += 2)
+    d += `${i ? "L" : "M"}${n(r.path[i]!)} ${n(r.path[i + 1]!)}`;
+  return d;
+}
+
 /** The legend key and color key of a group; `undefined` for nodes of a network without groups. */
 function groupKey(id: string | number, group: string | undefined): string {
   // An object, so no node's or link's key (arrays) can be the same.
   return JSON.stringify({ mark: id, group });
 }
 
+/** "network of 3 nodes and 2 links", "network of 50,001 nodes and 1 link". */
+function describeNetwork({ names, source }: Network): string {
+  const count = (n: number, one: string, many: string) =>
+    `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+  return `network of ${count(names.length, "node", "nodes")} and ${count(source.length, "link", "links")}`;
+}
+
 /** Why a network is too large to lay out, without a final period; undefined when it is not. */
-function overLimit({ names, source }: Network): string | undefined {
-  if (names.length <= MAX_NODES && source.length <= MAX_LINKS) return undefined;
-  return `Network of ${plural(names.length, "node", "nodes")} and ${plural(source.length, "link", "links")}: too many to lay out (a network draws at most ${MAX_NODES} nodes and ${MAX_LINKS} links)`;
+function overLimit(network: Network): string | undefined {
+  if (network.names.length <= MAX_NODES && network.source.length <= MAX_LINKS) return undefined;
+  const most = `${MAX_NODES.toLocaleString("en-US")} nodes and ${MAX_LINKS.toLocaleString("en-US")} links`;
+  return `N${describeNetwork(network).slice(1)}: too many to lay out (a network draws at most ${most})`;
+}
+
+/** The options of each layout, and what each option says when given to another. */
+const LAYOUT_OPTIONS = {
+  settle: { type: "force", does: "settles" },
+  sort: { type: "circular", does: "sorts" },
+  direction: { type: "layered", does: "has a direction" },
+} as const;
+
+/** A network's layout with its options filled in; throws for a layout or option it does not have. */
+function layoutOf(layout: GraphLayout | undefined): NetworkLayout {
+  const given: Record<string, unknown> =
+    typeof layout === "string" ? { type: layout } : { type: "force", ...layout };
+  const { type } = given;
+  if (type !== "force" && type !== "circular" && type !== "layered")
+    throw new Error(
+      `graph layout: expected "force", "circular", or "layered"; received ${JSON.stringify(type)}`,
+    );
+  for (const key of Object.keys(given)) {
+    if (key === "type" || given[key] === undefined) continue;
+    const option = LAYOUT_OPTIONS[key as keyof typeof LAYOUT_OPTIONS];
+    if (!option)
+      throw new Error(`graph layout.${key}: not an option of a ${type} layout; drop ${key}`);
+    if (option.type !== type)
+      throw new Error(
+        `graph layout.${key}: only a ${option.type} layout ${option.does}; drop ${key}, or use type "${option.type}"`,
+      );
+  }
+  const choice = <T extends string>(key: string, values: readonly T[], fallback: T): T => {
+    const value = given[key] ?? fallback;
+    if (!values.includes(value as T))
+      throw new Error(
+        `graph layout.${key}: expected ${values
+          .map((v) => JSON.stringify(v))
+          .join(", ")
+          .replace(/, ([^,]*)$/, ", or $1")}; received ${JSON.stringify(value)}`,
+      );
+    return value as T;
+  };
+  if (type === "circular")
+    return { type, sort: choice("sort", ["degree", "input", "name"] as const, "degree") };
+  if (type === "layered")
+    return {
+      type,
+      direction: choice("direction", ["down", "right", "up", "left"] as const, "down"),
+    };
+  if (given.settle !== undefined && typeof given.settle !== "boolean")
+    throw new Error(
+      `graph layout.settle: expected true or false; received ${JSON.stringify(given.settle)}`,
+    );
+  return { type, settle: given.settle !== false };
 }
 
 /** What a network draws when it cannot be drawn: nothing, and a sentence saying why. */
@@ -1497,6 +1898,27 @@ function distanceToSegment(
   return Math.hypot(px - (x0 + t * dx), py - (y0 + t * dy));
 }
 
+/** The first `count` of `items` in the order `compare` gives, without sorting them all. */
+function top(
+  items: readonly number[],
+  count: number,
+  compare: (a: number, b: number) => number,
+): number[] {
+  if (items.length <= count * 4) return [...items].sort(compare).slice(0, count);
+  const kept: number[] = [];
+  for (const item of items) {
+    if (kept.length === count && compare(item, kept[count - 1]!) >= 0) continue;
+    // Insertion into the few kept so far.
+    let at = Math.min(kept.length, count - 1);
+    kept[at] = item;
+    while (at > 0 && compare(kept[at]!, kept[at - 1]!) < 0) {
+      [kept[at], kept[at - 1]] = [kept[at - 1]!, kept[at]!];
+      at--;
+    }
+  }
+  return kept;
+}
+
 /** "1 link", "2 links". */
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
@@ -1527,6 +1949,7 @@ export function graph<S extends Schema, N extends Schema = Schema>(
   }
   if (options.labels !== undefined) spec.labels = options.labels;
   if (options.halo !== undefined) spec.halo = options.halo;
+  if (options.layout !== undefined) spec.layout = options.layout;
   if (options.id !== undefined) spec.id = options.id;
   if (options.panel !== undefined) spec.panel = options.panel;
   if (links.name !== undefined) spec.data = links.name;

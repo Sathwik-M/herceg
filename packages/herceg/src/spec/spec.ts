@@ -1404,12 +1404,32 @@ export interface SankeySpec {
 }
 
 /**
- * A network of nodes joined by links, laid out by a force simulation, from
- * a table with a row per link. Nodes are the names in `source` and `target`
- * and, with `nodes`, the rows of a table of nodes; links are undirected, as
- * thick as the sum of `value` over their rows when there is one. Rows
- * without a positive, finite value and links from a node to itself are left
- * out. A network draws at most 5,000 nodes and 20,000 links.
+ * How a network's nodes are placed: a name, or an object naming it in
+ * `type` with its options.
+ * - "force" (the default): a force simulation; `settle` (true by default)
+ *   lets the nodes near a node moved by hand settle around it.
+ * - "circular": one circle, by group (in legend order), then by `sort`:
+ *   "degree" (the default, most connected first), "input" (the nodes'
+ *   order in the data), or "name"; ties by name.
+ * - "layered": layers in the links' direction, from source to target, for
+ *   trees and directed acyclic networks: `direction` "down" (the default),
+ *   "right", "up", or "left". Links closing cycles run against it.
+ */
+export type GraphLayout =
+  | "force"
+  | "circular"
+  | "layered"
+  | { type: "force"; settle?: boolean }
+  | { type: "circular"; sort?: "degree" | "input" | "name" }
+  | { type: "layered"; direction?: "down" | "right" | "up" | "left" };
+
+/**
+ * A network of nodes joined by links, from a table with a row per link.
+ * Nodes are the names in `source` and `target` and, with `nodes`, the rows
+ * of a table of nodes; links are undirected, as thick as the sum of `value`
+ * over their rows when there is one. Rows without a positive, finite value
+ * and links from a node to itself are left out. A network draws at most
+ * 50,000 nodes and 200,000 links.
  */
 export interface GraphSpec {
   /** Set false to leave text without its readability outline. */
@@ -1443,6 +1463,8 @@ export interface GraphSpec {
   size?: Field;
   /** Names beside the most connected (or largest) nodes that have room; true by default. */
   labels?: boolean;
+  /** How nodes are placed: "force" by default (see `GraphLayout`). */
+  layout?: GraphLayout;
   /** With the chart's `panels`, the id of the panel the network has to itself. */
   panel?: string;
 }

@@ -45,8 +45,8 @@ function facetFit(
 /**
  * The coordinate system of each map's or network's view, by state: the
  * chart's one (""), without subplots, or each subplot's. A map's is
- * `mapPlaneKey`'s; a network's is "graph", since its data's epoch names
- * its layout.
+ * `mapPlaneKey`'s; a network's is "graph", since the item epoch (its
+ * marks and panels) names its layout.
  */
 export function planeKeys(config: ChartOptions): Map<string, string> {
   const keys = new Map<string, string>();

@@ -18,6 +18,7 @@ import type { Theme } from "../theme.ts";
 import type { Camera } from "../three/camera.ts";
 import type { MovedNodes, NodeMoves } from "./graph.ts";
 import type { ChartMark, Mark } from "./mark.ts";
+import type { LayoutClock, NodePositions } from "./node-positions.ts";
 import type { Drill } from "./tree-data.ts";
 
 /** The part of a map's or network's plane to show: x and y ranges in its units, each null for the fitted layout's. */
@@ -91,6 +92,13 @@ export interface LayoutFrame {
   drillable?: boolean | undefined;
   /** A network's nodes the chart's user moved (see `Chart.setItemPosition`). */
   moved?: MovedNodes | undefined;
+  /**
+   * Where a network's nodes are, kept with the chart's state of the panel
+   * (facet panels share one): the network keeps its layout there.
+   */
+  nodePositions?: { current: NodePositions | undefined } | undefined;
+  /** How much layout work the frame allows; without one, a network is laid out to the end at once. */
+  clock?: LayoutClock | undefined;
 }
 
 /** One thing a layout mark drew, as tooltips and the keyboard report it. */
@@ -158,8 +166,11 @@ export interface LayoutResult {
       }
     | undefined;
   /** A tree's drill root, the path to it, and its breadcrumbs, in charts that drill or are drilled. */
-  drill?: Drill | undefined /** For a network: what moving its nodes needs. */;
+  drill?: Drill | undefined;
+  /** For a network: what moving its nodes needs. */
   moves?: NodeMoves | undefined;
+  /** Whether layout work remains, which later frames do (see `LayoutFrame.clock`). */
+  pending?: boolean | undefined;
 }
 
 /** A mark that lays out its own geometry in a panel; internal, as `Mark` is. */
@@ -232,7 +243,8 @@ export interface LayoutMark extends ChartMark {
  * (dom/layout-controls.ts), and what their keys do.
  */
 export interface LayoutControls {
-  kind: "orbit" | "map" | "drill" | "drag";
+  /** "layout" draws the frames a network's layout takes, for a chart without other controls. */
+  kind: "orbit" | "map" | "drill" | "drag" | "layout";
   /** For the chart's description: what keys do beyond reading items. */
   hint: string;
 }

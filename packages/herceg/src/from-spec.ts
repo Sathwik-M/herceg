@@ -1,7 +1,7 @@
 // Charts from portable specifications, imported as `herceg/spec`: for specs
 // written by other languages (the Python package) or stored as JSON.
 
-import { type Chart, createChart } from "./dom/chart.ts";
+import { type Chart, createChart, MountedChart } from "./dom/chart.ts";
 import type { MeasureText } from "./layout/text.ts";
 import { type PdfExportOptions, type PdfOptions, renderToPDF } from "./pdf.ts";
 import { renderToSVG } from "./render/static.ts";
@@ -32,6 +32,23 @@ export function chartFromSpec(
   options: LoadOptions = {},
 ): Chart {
   return createChart(element, loadSpec(spec, buffers, options).config);
+}
+
+/**
+ * Gives `to`, a chart made again from a changed spec in place of `from`
+ * (as a Streamlit app remounts its chart on each run), where `from`'s
+ * networks have their nodes: nodes that remain stay where they were and new
+ * ones enter beside their neighbors, as when a live chart's data changes.
+ * Networks are matched by their mark's id (or index) and panel. Moved nodes
+ * travel apart, by `getItemPositions` and `setItemPosition`. Call it before
+ * `from` is destroyed; `to` draws again at once.
+ */
+export function carryNodePositions(from: Chart, to: Chart): void {
+  const before = MountedChart.modelOf(from).items;
+  const after = MountedChart.modelOf(to).items;
+  if (!before || !after) return;
+  after.adoptPositions(before);
+  to.render();
 }
 
 /**

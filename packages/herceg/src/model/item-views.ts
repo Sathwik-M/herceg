@@ -22,6 +22,7 @@ import type {
   Viewport as PlaneViewport,
 } from "../marks/layout-mark.ts";
 import type { ChartMark } from "../marks/mark.ts";
+import type { LayoutClock, NodePositions } from "../marks/node-positions.ts";
 import type { FieldReader } from "../marks/tooltip-fields.ts";
 import type { DrillRoot } from "../marks/tree-data.ts";
 import type { Panel, Rect, Scene } from "../scene/scene.ts";
@@ -67,9 +68,11 @@ interface ItemState {
    */
   root: DrillRoot;
   reconciled: DrillRoot | undefined;
-  /** A network's nodes moved, in the layout they were moved in, and the one being dragged. */
-  moved: { layout: object; at: Map<string, readonly [number, number]> } | undefined;
-  dragged: { key: string; at: readonly [number, number]; layout: object } | undefined;
+  /** A network's nodes moved, by key, in layout units, and the one being dragged. */
+  moved: Map<string, readonly [number, number]>;
+  dragged: { key: string; at: readonly [number, number] } | undefined;
+  /** Where a network's nodes are, which its mark keeps here (see `NodePositions`). */
+  positions: { current: NodePositions | undefined };
   /** The part of a map's or network's plane shown, in its units; null ranges fit it. */
   view: PlaneViewport;
 }
@@ -102,7 +105,10 @@ export interface ItemPanel {
 }
 
 /** What a layout mark draws with besides its room, identity, rows, and the user's changes. */
-export type ItemFrame = Omit<LayoutFrame, "bounds" | "id" | "rows" | "root" | "moved" | "viewport">;
+export type ItemFrame = Omit<
+  LayoutFrame,
+  "bounds" | "id" | "rows" | "root" | "moved" | "viewport" | "nodePositions" | "clock"
+>;
 
 /** The title and legends above a chart, and where the room below them starts. */
 export type Header = Pick<Scene, "title" | "legend" | "colorLegends" | "glyphLegends"> & {
@@ -118,6 +124,9 @@ const WHAT: Record<Has, string> = {
 };
 
 const NO_ROOT: DrillRoot = { key: null, path: [] };
+
+/** Milliseconds of a frame layout work may take, leaving the rest for drawing. */
+const LAYOUT_BUDGET = 12;
 
 /**
  * Whether a panel's view is of a map's or a network's plane, drawn or not
@@ -266,6 +275,12 @@ export class ItemViews {
   >();
   #controlsScene: Scene | undefined;
   #controlsDisposed = false;
+  /** How much layout work this scene allows: set once a chart mounts these, for every scene. */
+  #clock: LayoutClock | undefined;
+  #mounted = false;
+  #reducedMotion: MediaQueryList | undefined;
+  /** Settles once a frame drew no layout work left; renewed while some is. */
+  #settled: { promise: Promise<void>; resolve: () => void } | undefined;
 
   constructor(model: ChartModel) {
     this.#model = model;
@@ -363,6 +378,12 @@ export class ItemViews {
     if (this.#controlsDisposed) return;
     this.configureCameras();
     this.changed ??= changed;
+    // In the browser, layouts spread over frames, and `loading` waits for them.
+    if (!this.#mounted) {
+      this.#mounted = true;
+      this.#reducedMotion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)");
+      if (this.#model.layouts.some((mark) => mark.spec.type === "graph")) this.#unsettle();
+    }
     const model = this.#model;
     const kinds = new Set(this.asked().map(({ kind }) => kind));
     for (const [kind, slot] of this.#controls) {
@@ -402,10 +423,43 @@ export class ItemViews {
     return this.#controls.get(kind)?.controls;
   }
 
-  /** Pending while controls load. */
+  /** Pending while controls load, and while a network's layout has work left. */
   get controlsLoading(): Promise<void> | undefined {
     const pending = [...this.#controls.values()].flatMap(({ loading }) => loading ?? []);
+    if (this.#settled) pending.push(this.#settled.promise);
     return pending.length > 1 ? Promise.all(pending).then(() => {}) : pending[0];
+  }
+
+  /** Whether a panel last drawn has layout work left, for the next frame. */
+  get pending(): boolean {
+    return this.#views.some(({ result }) => result.pending);
+  }
+
+  /**
+   * Works on networks' layouts for a frame's share of time, between frames
+   * that draw them; whether a frame should draw now, to show how far they
+   * have come (see `NodePositions.due`).
+   */
+  workLayouts(): boolean {
+    const now = performance.now();
+    const clock = { deadline: now + LAYOUT_BUDGET, animate: !this.#reducedMotion?.matches, now };
+    let due = false;
+    for (const { positions } of this.#states.values()) {
+      const current = positions.current;
+      if (!current?.pending) continue;
+      current.work(clock);
+      due ||= current.due(performance.now(), clock.animate);
+    }
+    return due;
+  }
+
+  #unsettle(): void {
+    if (this.#settled) return;
+    let resolve = () => {};
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    this.#settled = { promise, resolve };
   }
 
   /** Whether controls are in a gesture (a drag turning, panning, or moving): no tooltip shows. */
@@ -415,6 +469,11 @@ export class ItemViews {
 
   drawControls(scene: Scene): void {
     this.#controlsScene = scene;
+    if (this.pending) this.#unsettle();
+    else {
+      this.#settled?.resolve();
+      this.#settled = undefined;
+    }
     for (const { controls } of this.#controls.values()) controls?.draw(scene);
   }
 
@@ -424,6 +483,9 @@ export class ItemViews {
     this.#controls.clear();
     this.#controlsScene = undefined;
     this.changed = undefined;
+    // Whoever waits for a layout the chart will not finish hears it is over.
+    this.#settled?.resolve();
+    this.#settled = undefined;
   }
 
   /** Whether the last scene was of one layout mark, without facets or panels. */
@@ -447,6 +509,13 @@ export class ItemViews {
       if (!used.has(state) && !this.#states.get(state)?.camera) this.#states.delete(state);
     this.#views = [];
     this.#named = named;
+    // A mounted chart's scenes share a frame's time with drawing; others
+    // (exports without a DOM, where there may be no clock) lay out at once.
+    if (!this.#mounted) this.#clock = undefined;
+    else {
+      const now = performance.now();
+      this.#clock = { deadline: now + LAYOUT_BUDGET, animate: !this.#reducedMotion?.matches, now };
+    }
   }
 
   /**
@@ -529,6 +598,8 @@ export class ItemViews {
         (step) => step !== null,
       ),
       moved: movedNow(state),
+      nodePositions: state.positions,
+      clock: this.#clock,
       viewport: state.view,
       camera,
     });
@@ -556,8 +627,9 @@ export class ItemViews {
       state = {
         root: NO_ROOT,
         reconciled: undefined,
-        moved: undefined,
+        moved: new Map(),
         dragged: undefined,
+        positions: { current: undefined },
         view: { x: null, y: null },
       };
       this.#states.set(key, state);
@@ -659,25 +731,26 @@ export class ItemViews {
 
   /**
    * Moves a network's node, keyed as its items are, to a place in layout
-   * units, or with null back to where the layout puts it, in `panel`'s
-   * network (or the chart's one); what changed, or undefined for nothing.
-   * Throws for a key of no node drawn, unless the move is one made in
-   * `layout` (a drag's), which then lands only in that layout, and in no
-   * other the network's data has changed it to.
+   * units, or with null back to the layout, in `panel`'s network (or the
+   * chart's one); what changed, or undefined for nothing. Throws for a key
+   * of no node of the network (a hidden group's are). In a force layout
+   * that settles, the nodes near it settle around it once the chart draws.
    */
   setItemPosition(
     key: string,
     position: { x: number; y: number } | null,
     panel?: string,
-    layout?: object,
   ): ItemChanges["itemMove"] | undefined {
     const owner = this.#owner("moves", panel, "setItemPosition");
     // Facet panels share one network, a node drawn in any of them.
     const view =
       (panel === undefined &&
-        this.#views.find(
+        (this.#views.find(
           ({ state, result }) => state === owner.state && result.moves?.movable(key),
-        )) ||
+        ) ??
+          this.#views.find(
+            ({ state, result }) => state === owner.state && result.moves?.inPanel(key),
+          ))) ||
       owner;
     const moves = view.result.moves!;
     const state = this.#state(view.state);
@@ -688,31 +761,50 @@ export class ItemViews {
       return scoped;
     };
     // A node moved before its group was hidden can go back all the same.
-    if (position === null && state.moved?.at.delete(key)) return report({ key, position: null });
-    if (layout && (layout !== moves.layout || !moves.current() || !moves.movable(key)))
-      return undefined;
-    if (!moves.movable(key))
+    if (position === null)
+      return state.moved.delete(key) ? report({ key, position: null }) : undefined;
+    // A hidden group's node too: it is drawn there once shown.
+    if (!moves.inPanel(key))
       throw new RangeError(`setItemPosition: no node ${JSON.stringify(key)} in the network`);
-    if (state.moved?.layout !== moves.layout) state.moved = { layout: moves.layout, at: new Map() };
-    const { at } = state.moved;
-    if (position === null) return undefined;
     const { x, y } = position;
     if (!(Number.isFinite(x) && Number.isFinite(y)))
       throw new RangeError(
         `setItemPosition position: expected finite x and y; received x ${x}, y ${y}`,
       );
-    const [px, py] = at.get(key) ?? [];
+    const [px, py] = state.moved.get(key) ?? [];
     if (px === x && py === y) return undefined;
-    at.set(key, [x, y]);
+    state.moved.set(key, [x, y]);
     return report({ key, position: { x, y } });
+  }
+
+  /**
+   * Puts every moved node of `panel`'s network (or the chart's one) back
+   * where the layout puts them, reporting each: the toolbar's and the
+   * keyboard's reset.
+   */
+  resetItemPositions(panel?: string): void {
+    const view = this.#owner("moves", panel, "resetItemPositions");
+    const state = this.#state(view.state);
+    state.dragged = undefined;
+    for (const key of [...state.moved.keys()])
+      this.setItemPosition(key, null, view.key || undefined);
+  }
+
+  /**
+   * Takes over where the networks of `other` (a chart this one replaces)
+   * have their nodes, state by state; they lay out from there once drawn.
+   */
+  adoptPositions(other: ItemViews): void {
+    for (const [key, state] of other.#states) {
+      const positions = state.positions.current;
+      if (positions) this.#state(key).positions.current = positions;
+    }
   }
 
   /** The nodes moved so far in `panel`'s network (or the chart's one), in layout units. */
   movedItems(panel?: string): ReadonlyMap<string, readonly [number, number]> {
     if (!this.#views.some(({ result }) => result.moves)) return new Map();
-    return (
-      this.#state(this.#owner("moves", panel, "getItemPositions").state).moved?.at ?? new Map()
-    );
+    return this.#state(this.#owner("moves", panel, "getItemPositions").state).moved;
   }
 
   /** `movedItems`, as `Chart.getItemPositions` gives them. */
@@ -765,9 +857,7 @@ export class ItemViews {
     }
     const view = this.#owner("moves", panel, "drag");
     const state = this.#state(view.state);
-    // In the layout drawn now, which a change of the network's data replaces.
-    const layout = view.result.moves!.layout;
-    state.dragged = key === null || !at ? undefined : { key, at, layout };
+    state.dragged = key === null || !at ? undefined : { key, at };
   }
 
   /**
@@ -988,29 +1078,26 @@ export class ItemViews {
 /**
  * Takes what a state's first panel drew as the state's: the drill root as
  * drawn (a node the data lost gives way to an ancestor, reported once), and
- * moves only of the layout it drew, of nodes it still has.
+ * moves of nodes its network still has, drawn or not (too large, or
+ * still being arranged).
  */
 function settle(state: ItemState, result: LayoutResult): void {
   const { drill, moves } = result;
   if (drill && drill.key !== state.root.key)
     state.reconciled = { key: drill.key, path: drill.path };
   state.root = drill ? { key: drill.key, path: drill.path } : NO_ROOT;
-  // Moves made in a layout the network no longer has (its data changed) go,
-  // and those of a mark with another identity.
-  if (state.moved && moves?.layout !== state.moved.layout) state.moved = undefined;
-  if (state.dragged && moves?.layout !== state.dragged.layout) state.dragged = undefined;
-  for (const key of state.moved?.at.keys() ?? [])
-    if (!moves?.owns(key)) state.moved!.at.delete(key);
+  if (!moves) return;
+  for (const key of state.moved.keys()) if (!moves.owns(key)) state.moved.delete(key);
+  if (state.dragged && !moves.owns(state.dragged.key)) state.dragged = undefined;
 }
 
-/** The moves to draw: those made, and the node being dragged, in one layout. */
+/** The moves to draw: those made, and the node being dragged, which is no move yet. */
 function movedNow(state: ItemState): MovedNodes | undefined {
   const dragged = state.dragged;
-  const layout = state.moved?.layout ?? dragged?.layout;
-  if (!layout) return undefined;
-  const at = new Map(state.moved?.at);
-  if (dragged && dragged.layout === layout) at.set(dragged.key, dragged.at);
-  return { layout, at };
+  if (state.moved.size === 0 && !dragged) return undefined;
+  const at = new Map(state.moved);
+  if (dragged) at.set(dragged.key, dragged.at);
+  return { at, held: state.moved };
 }
 
 /** An ascending range, or null for none or an empty one. */

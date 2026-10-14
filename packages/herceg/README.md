@@ -1452,7 +1452,7 @@ the notes), — not yet (refused with an error), · not applicable.
 | radar | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | ✓ | · | — |
 | funnel, sankey | ✓ | ✓ | · | · | — | — | — | ✓ | ✓ | · | ✓ | · | — |
 | gauge | ✓ | ✓ | · | · | — | — | — | — | — | · | ✓ | · | — |
-| graph | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ◐ | ✓ | — | — |
+| graph (force, circular, layered) | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ◐ | ✓ | — | — |
 | geoshape, geopoint | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | point3d, line3d | — | ✓ | · | · | turning | — | — | — | — | ✓ | ✓ | ✓ | — |
 | surface | — | ✓ | · | · | turning | — | — | — | — | · | ✓ | · | — |
@@ -1497,7 +1497,7 @@ the notes), — not yet (refused with an error), · not applicable.
   sunbursts drill into nodes with `interaction.zoom: true` (see
   [Drilling into trees](#drilling-into-trees)); networks' nodes move with
   `interaction.drag` (see [Moving nodes](#moving-nodes)), which no other
-  mark takes. All of them do so in panels too: facet panels share one view,
+  mark takes, in each of their layouts. All of them do so in panels too: facet panels share one view,
   drill root, and set of moved nodes, and each subplot has its own (see
   [Layout marks in panels](#layout-marks-in-panels)); beside panels with
   axes, which zoom and brush along x only, maps and networks pan and zoom
@@ -1759,6 +1759,8 @@ graph(messages, {
   color: "team", // colors and the legend
   size: "followers", // node areas
 });
+graph(reports, { source: "manager", target: "report", layout: "layered" }); // a tree, in layers
+graph(friendships, { source: "a", target: "b", layout: { type: "circular", sort: "name" } });
 ```
 
 A network draws nodes joined by links from a table with a row per link.
@@ -1776,16 +1778,61 @@ links where it covers no node or other label (as many as node labels); a
 link whose rows name it differently has none, and the description says how
 many.
 
-A force simulation places the nodes, after d3-force: springs along links pull
-linked nodes about one link length apart, every pair of nodes repels, and
-alpha decays over 300 ticks. Unlike d3's defaults, nodes start where pivot
-MDS puts them (positions whose distances follow distances in the network),
-so rings come out round and chains and trees unfolded, and separate pieces of
-the network are packed in rows rather than pulled toward the middle.
-Heavier links pull somewhat harder. The layout is deterministic: the same
-tables draw the same picture. It is scaled to fit the room (stretching one
-axis by up to 30%), small networks are not blown up past 2.5 px per unit of
-the simulation, and overlapping nodes are then pushed apart.
+`layout` places the nodes: a name, or an object naming one in `type` with
+its options.
+
+- `"force"` (the default): a force simulation, after d3-force: springs along
+  links pull linked nodes about one link length apart, every pair of nodes
+  repels, and alpha decays over 300 ticks. Unlike d3's defaults, nodes start
+  where pivot MDS puts them (positions whose distances follow distances in
+  the network), so rings come out round and chains and trees unfolded, and
+  separate pieces of the network are packed in rows rather than pulled
+  toward the middle. Heavier links pull somewhat harder. Overlapping nodes
+  are pushed apart where the room has space for them. `{ type: "force",
+  settle: false }` leaves the other nodes alone when one is moved (see
+  [Moving nodes](#moving-nodes)).
+- `"circular"`: one circle, neighbors on it a link length apart, by group
+  (in legend order, a gap between groups; nodes without one last), then by
+  `sort`: `"degree"` (the default, the most connected first), `"input"`
+  (the nodes' order in the data), or `"name"`; ties go by name. Links are
+  chords; names stand outside the circle.
+- `"layered"`: layers for trees and directed acyclic networks, after
+  Sugiyama: each link's rows run from source to target, layer after layer,
+  whether or not the network is `directed` (so a table of parents and
+  children draws a tree), with `direction` `"down"` (the default),
+  `"right"`, `"up"`, or `"left"`. A node's layer is its longest path from a
+  node nothing points to; links spanning layers bend through each layer
+  between; sweeps order each layer by its neighbors' places to cross few
+  links; and each node stands over the middle of its neighbors in the next
+  layer, as a tidy tree centers a parent over its children. Links curve
+  from layer to layer (straight between bend points in networks of more
+  than 20,000 links), a pair of directed links each way a few pixels apart,
+  and the room fits the links' bends too. Links closing a cycle are turned around for placing
+  only: they are drawn as they are, against the layers, and the
+  description counts them. Links that would need more than 500,000 bend
+  points in all draw nothing, and the description says why.
+
+Every layout is deterministic: the same tables draw the same picture, and a
+chart without a page (`specToSVG`, Python's static export, `ChartModel`)
+lays a network out to the end at once, so exports and tests repeat. In the
+browser, a layout spreads over frames, and data that changes while it is
+still being worked out goes on from how far it had come, which depends on
+the frames it had. A layout is scaled to fit the room (a force or layered layout
+stretching one axis by up to 30%, a circle staying round), and small
+networks are not blown up past 2.5 px per unit of the layout.
+
+Nodes keep their places as the data changes: an append, a replaced table,
+links added or removed. In a force layout, nodes that remain start where
+they were, new nodes beside their placed neighbors (wholly new pieces of the
+network beside the rest), and a short simulation moves only the nodes
+within two links of a change (all of them, for longer, when a change
+reaches more than half the network). A change of nothing the layout reads,
+such as a color, lays nothing out again; nor does a change of `value`, which
+sets how strongly links pull in later work and settles the nodes around
+moved ones again. A circle places its nodes in
+their order again, turned to move those that remain least; a layered
+layout is worked out again, nodes starting in the order they had across
+their layers. Moved nodes stay where they were put while their node remains.
 
 Nodes are circles of 5 px radius, or sized by area with `size` (3 to 14 px;
 missing or infinite sizes draw smallest),
@@ -1804,23 +1851,45 @@ links, the sum of their values, its group, and its size, or a link's value
 (the chart's description counts what is drawn too): nodes
 first (the nodes table's order, then names as links first mention them), then
 links. The pointer finds the node within 4 px of its edge, else the nearest
-link within 4 px. The simulation runs again whenever either table changes,
-about 0.1 s for 1,000 nodes and 1 s for 5,000 on a laptop, and resizing only
-refits it. `graph()` refuses networks of more than 5,000 nodes or 20,000
-links with an error: springs cost little next to repulsion up to that many
-links, but a dense network's millions would take seconds. A network that
-grows past the limits while drawn, or a spec loaded with more, draws nothing
-and its description says why, until its tables shrink again. Like a pie, a network has its chart to itself.
+link within 4 px.
+
+In the browser, a layout is worked out a slice of each animation frame (about
+12 ms, in steps of a few milliseconds), so the page stays responsive while a
+large network is laid out: the nodes move into place as the simulation
+runs, or, with reduced motion, show where they start and then where they
+end. Until a force layout has places to start from, the chart is empty and
+its description says the network is being arranged; it says so, too, while
+work remains. `chart.loading` settles once the finished layout is drawn.
+Exports show what is drawn; a chart without a page (`specToSVG`, Python's
+static export, `ChartModel`) lays the network out to the end at once.
+Resizing only refits the layout. Frames between those that draw do layout
+work only, and a network of more than 20,000 nodes and links draws how far
+its layout has come four times a second (smaller ones every frame). On an
+Apple M6 laptop in Chrome (one-off measurements, see
+[docs/comparison.md](../../docs/comparison.md)), a force layout of 5,000
+nodes and 20,000 links takes about 1.2 s, and of 50,000 nodes and 200,000
+links about 12 s, the page drawing 60 frames a second meanwhile but for
+the four a second that draw the network, which take 50 to 80 ms; circular layouts take
+milliseconds, and a layered one of 50,000 nodes and 200,000 links about
+1 s. A network draws at most 50,000 nodes and 200,000 links:
+`graph()` refuses more with an error, and a network that grows past the
+limits while drawn, or a spec loaded with more, draws nothing and its
+description says why, until its tables shrink again; its nodes keep their
+moves meanwhile, and can be moved with `setItemPosition`. Larger force layouts
+take minutes, and no layout of them is legible in a chart; filter or
+aggregate them first. Like a pie, a network has its chart to itself.
 
 A network pans and zooms with `interaction.zoom: true` (or `"xy"`), using
 map gestures: wheel at the pointer, drag to pan, double-click or `0` to
 reset, Shift+arrows to pan, plus/minus to zoom, and a toolbar. The
-`viewport` event and `setViewport({ x, y })` use the force layout's
-coordinates, with y increasing downwards. Node radii, rings, link widths,
-and arrowheads keep their pixel sizes. Resizing refits the base layout;
-navigation keeps its separated positions and does not run the simulation.
-Exports show the current view. Pointer lookup uses packed spatial grids
-for nodes and link routes, retaining the drawn order and nearest-edge rules.
+`viewport` event and `setViewport({ x, y })` use the layout's coordinates,
+with y increasing downwards. Node radii, rings, link widths, and arrowheads
+keep their pixel sizes. Resizing refits the layout; navigation keeps its
+separated positions and lays nothing out. Exports show the current view.
+Pointer lookup uses packed spatial grids for nodes and link routes,
+retaining the drawn order and nearest-edge rules; they are built for the
+layout as fitted to the room, before any zoom, so panning and zooming keep
+them.
 
 `interaction.brush: "lasso"` selects nodes at their visible centers through
 `rowSelection` bound to the nodes table. Every row naming a selected node
@@ -1845,27 +1914,58 @@ chart.getItemPositions(); // { '[0,"Ana"]': { x: 40, y: -12 } } of the nodes mov
 ```
 
 With `interaction.drag: true`, dragging a node moves it, its links
-following, and it stays where it is dropped: nothing else moves, and the
-layout does not run again. Shift with the arrow keys moves the node the
-keyboard reads 10 px when zoom is off, and 0 or a toolbar button puts every moved node back.
-With zoom enabled, Alt+Shift+arrows moves the node, Shift+arrows pans,
-and 0 resets the view; the toolbar restores moved nodes,
-and each move is announced; touches on the chart drag nodes rather than
-scroll the page. The first pointer press owns the gesture until it ends or
-is cancelled, so a second touch cannot pan during a node drag or start
-dragging a node during a pan. A move is kept in the network's layout units
-(links settle about 30 units long), so it follows a resize as the rest of
-the network does, including while zoomed; `setItemPosition` moves a node so too, and an `itemMove`
-event reports every move once it is dropped (`position` null for a node put
-back). Moves last while the network's tables are unchanged (a mark made
-again over them with other styles keeps them): a change lays the network
-out again, and a drag whose data or viewport changes ends without a move.
-Dragging stops at the view edge; `setItemPosition` keeps the given layout
-position even outside the view, so panning can bring it back. A row selection of the nodes table selects a node's
+following, and it stays where it is dropped. In a force layout, the nodes
+near it then settle around it: those within two links of a moved node, or
+close to where it was put, ease into place over about 0.3 s (at once with
+reduced motion), and the rest stay where they are; with `layout: { type:
+"force", settle: false }`, and in circular and layered layouts, nothing
+else moves. Nothing settles while a node is dragged, only once it is
+dropped, and Escape during a drag puts the node back and moves nothing.
+`setItemPosition` moves a node as a drop does (a node of a hidden group
+too, drawn there once shown), and putting a node back
+(null) lets it go back where the layout puts it, the nodes near it settling
+again. Where nodes settle depends only on the layout's own positions and on
+which nodes are moved where, not on the order of the moves, so every view
+of a chart, and a chart of the same data given saved moves again, draws the
+same picture. `getItemPositions` and `itemMove` report only the nodes that
+were moved, never those that settled around them.
+
+Shift with the arrow keys moves the node the keyboard reads 10 px when zoom
+is off, and 0 or a toolbar button puts every moved node back. With zoom
+enabled, Alt+Shift+arrows moves the node, Shift+arrows pans, and 0 resets
+the view; the toolbar restores moved nodes, and each move is announced;
+touches on the chart drag nodes rather than scroll the page. The first
+pointer press owns the gesture until it ends or is cancelled, so a second
+touch cannot pan during a node drag or start dragging a node during a pan.
+A move is kept in the network's layout units (links settle about 30 units
+long), so it follows a resize as the rest of the network does, including
+while zoomed; the view holds while nodes settle around a moved one. An
+`itemMove` event reports every move once it is dropped (`position` null for
+a node put back). Moves last as the data changes, while their node remains
+(a moved node the data no longer has is let go, and comes back unmoved);
+a drag goes on while the data changes under it, and ends without a move if
+its node goes, or when the view changes. Dragging stops at the view edge;
+`setItemPosition` keeps the given layout position even outside the view,
+so panning can bring it back. A row selection of the nodes table selects a node's
 rows when it is clicked, and one of the links table a link's rows; a node
 only links name stands for no row, and a click on it changes nothing.
 Networks in facet panels share one layout, so a node moved in one moves in
 every panel; each subplot's network has moves of its own.
+
+An application that makes a chart again from a changed spec (as a Streamlit
+app does on each run) keeps where the nodes were with `carryNodePositions`
+from `herceg/spec`: called with the old chart and the new one, before the
+old one is destroyed, it gives the new chart's networks (matched by their
+mark's id and panel) the old one's places, as if the data had changed in a
+chart drawn all along.
+
+```ts
+import { carryNodePositions, chartFromSpec } from "herceg/spec";
+
+const next = chartFromSpec(element, changedSpec, buffers);
+carryNodePositions(previous, next); // moves travel apart, by getItemPositions and setItemPosition
+previous.destroy();
+```
 
 ### Maps
 
@@ -3476,6 +3576,9 @@ to start with, which `specToSVG` and `specToPDF` draw: a condition,
 by position, `{ "kind": "rows", "rows": [0, 4, 9] }` (or a uint32 buffer's
 index); `"rows": []` selects none, dimming every row. A store given in the
 options keeps what it holds.
+A chart made again from a changed spec in place of another keeps where the
+old one's network nodes were with `carryNodePositions(old, new)` (see
+[Moving nodes](#moving-nodes)).
 
 Specs say which format `version` they are: 1 (`SPEC_VERSION`), the only one
 so far, also when left out. Loading refuses specs of later versions. Loading

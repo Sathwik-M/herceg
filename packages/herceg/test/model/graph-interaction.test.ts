@@ -131,8 +131,12 @@ describe("link labels", () => {
 const ring = () => table({ from: ["a", "b", "c", "d"], to: ["b", "c", "d", "a"], w: [1, 2, 3, 4] });
 
 describe("moved nodes", () => {
-  it("draw where they were put, in layout units, with their links, leaving the others", () => {
-    const { model } = build({ marks: [graph(ring(), { source: "from", target: "to" })] });
+  it("draw where they were put, in layout units, with their links, leaving the others without settling", () => {
+    const { model } = build({
+      marks: [
+        graph(ring(), { source: "from", target: "to", layout: { type: "force", settle: false } }),
+      ],
+    });
     const before = ["a", "b", "c", "d"].map((name) => at(model, name));
     const moves = model.items!.result()!.moves!;
     const [x, y] = moves.toLayout('[0,"a"]', 100, 120);
@@ -169,7 +173,7 @@ describe("moved nodes", () => {
     );
   });
 
-  it("follow a resize in layout units, and go when the network changes", () => {
+  it("follow a resize in layout units, stay as the network changes, and go with their node", () => {
     const links = ring();
     const { model } = build({ marks: [graph(links, { source: "from", target: "to" })] });
     const moves = model.items!.result()!.moves!;
@@ -180,6 +184,13 @@ describe("moved nodes", () => {
     const after = model.items!.result()!.moves!;
     expect(after.toLayout('[0,"c"]', ...at(model, "c"))[0]).toBeCloseTo(x, 6);
     links.append({ from: ["d"], to: ["e"], w: [1] });
+    model.scene(estimateText);
+    expect(model.items!.positions()).toEqual({ '[0,"c"]': { x, y } });
+    expect(model.items!.result()!.moves!.toLayout('[0,"c"]', ...at(model, "c"))[0]).toBeCloseTo(
+      x,
+      6,
+    );
+    links.reset({ from: ["a", "d"], to: ["b", "e"], w: [1, 1] });
     model.scene(estimateText);
     expect(model.items!.movedItems().size).toBe(0);
   });
@@ -470,19 +481,26 @@ describe("moves across charts, groups, and changes", () => {
     expect(model.items!.movedItems().size).toBe(0);
   });
 
-  it("leave a drag's place behind when the network changes under it", () => {
+  it("keep a drag going while the network changes under it, and end it when its node goes", () => {
     const links = ring();
     const { model } = build({ marks: [graph(links, { source: "from", target: "to" })] });
     const moves = model.items!.result()!.moves!;
-    model.items!.drag('[0,"a"]', moves.toLayout('[0,"a"]', 50, 50));
+    const place = moves.toLayout('[0,"a"]', 50, 50);
+    model.items!.drag('[0,"a"]', place);
     model.scene(estimateText);
     expect(at(model, "a")[0]).toBeCloseTo(50, 6);
-    links.append({ from: ["a"], to: ["e"], w: [1] });
+    links.append({ from: ["b"], to: ["e"], w: [1] });
     model.scene(estimateText);
-    const automatic = at(model, "a");
+    const plane = model.items!.result()!.plane!;
+    expect(at(model, "a")[0]).toBeCloseTo(plane.x.map(place[0]), 6);
+    expect(model.items!.movedItems().size).toBe(0);
+    links.reset({ from: ["b"], to: ["c"], w: [1] });
     model.scene(estimateText);
-    expect(at(model, "a")).toEqual(automatic);
-    expect(automatic[0]).not.toBeCloseTo(50, 0);
+    expect(model.inspectItem('[0,"a"]')).toBeUndefined();
+    links.append({ from: ["a"], to: ["b"], w: [1] });
+    model.scene(estimateText);
+    // The drag ended with its node; the node comes back where the layout puts it.
+    expect(at(model, "a")[0]).not.toBeCloseTo(plane.x.map(place[0]), 0);
   });
 });
 
@@ -497,7 +515,6 @@ describe("network navigation and lassos", () => {
     });
     const before = ["a", "b", "c", "d"].map((name) => at(model, name));
     const base = model.items!.result()!.plane!;
-    const identity = model.items!.result()!.moves!.layout;
     model.items!.setView({ x: half(base.x.domain), y: half(base.y.domain) }, undefined);
     const zoomed = model.scene(estimateText);
     const plane = model.items!.result()!.plane!;
@@ -512,7 +529,6 @@ describe("network navigation and lassos", () => {
       );
     }
     expect(plane.zoom).toBeCloseTo(2);
-    expect(model.items!.result()!.moves!.layout).toBe(identity);
     const radii = (s: Scene) =>
       marksOf<PointGeometry>(s, "point", "graph-nodes").map((g) => Array.from(g.radii!));
     expect(radii(zoomed)).toEqual(radii(scene));
@@ -527,7 +543,6 @@ describe("network navigation and lassos", () => {
   it("uses layout coordinates for moves while zoomed and lets moved nodes leave the view", () => {
     const { model } = build({ marks: [graph(ring(), { source: "from", target: "to" })] });
     const fitted = model.items!.result()!.plane!;
-    const layout = model.items!.result()!.moves!.layout;
     model.items!.setView({ x: half(fitted.x.domain), y: half(fitted.y.domain) }, undefined);
     model.scene(estimateText);
     const drawn = model.items!.result()!;
@@ -544,7 +559,6 @@ describe("network navigation and lassos", () => {
     expect(at(model, "a")[0]).toBeLessThan(0);
     model.items!.setView(null, undefined);
     model.scene(estimateText);
-    expect(model.items!.result()!.moves!.layout).toBe(layout);
     expect(at(model, "a")[0]).toBeCloseTo(fitted.x.map(fitted.x.domain[0] + 1));
   });
 

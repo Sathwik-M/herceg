@@ -74,7 +74,7 @@ class ChartState:
     #: Item keys from the top level through the root, or None for the whole tree:
     #: of the chart's treemap or sunburst (every facet panel's, which share one).
     drill_root: DrillRoot | None = None
-    #: Manual network-node positions in layout units; cleared when its data changes.
+    #: Manual network-node positions in layout units; those of nodes the data no longer has go.
     #: Of the chart's network (every facet panel's, which share one layout).
     item_positions: ItemPositions = field(default_factory=dict)
     #: Each treemap or sunburst subplot's drill root, by panel id.
@@ -188,7 +188,7 @@ def chart(
         if reaction != "ignore"
     }
     digest = epoch.hexdigest()[:16]
-    item_epoch = _item_epoch(spec, digest)
+    item_epoch = _item_epoch(spec)
     payload = _payload(spec, buffers, events, digest)
     result = _component()(key=key, data=payload, **callbacks)
     return _state(result, chart, digest, item_epoch)
@@ -207,16 +207,21 @@ _VALUES = {
 }
 
 
-def _item_epoch(spec: dict[str, Any], epoch: str) -> str | None:
-    """Moves belong to the networks' data and layout fields (and the facet or
-    panels laying them out), independent of styles; None without networks."""
-    graphs = [mark for mark in spec.get("marks", []) if mark["type"] == "graph"]
+def _item_epoch(spec: dict[str, Any]) -> str | None:
+    """Moves and node places belong to the networks' marks, by id (or place
+    among the marks) and panel, and to the facet or panels laying them out:
+    they last across changes of the data and styles, nodes that remain
+    keeping theirs. None without networks."""
+    marks = spec.get("marks", [])
+    graphs = [
+        [mark.get("id", i), mark.get("panel")]
+        for i, mark in enumerate(marks)
+        if mark["type"] == "graph"
+    ]
     if not graphs:
         return None
-    names = ("id", "data", "nodes", "source", "target", "value", "node", "panel")
-    fields = [[mark.get(name) for name in names] + [mark.get("directed", False)] for mark in graphs]
     layout = [spec.get("facet"), [panel["id"] for panel in spec.get("panels", [])]]
-    digest = hashlib.sha256(json.dumps([epoch, fields, layout], sort_keys=True).encode())
+    digest = hashlib.sha256(json.dumps([graphs, layout], sort_keys=True).encode())
     return digest.hexdigest()[:16]
 
 
@@ -235,7 +240,7 @@ def _payload(
     for buffer in buffers:
         offsets.append([end, len(buffer)])
         end = _aligned(end + len(buffer))
-    item_epoch = _item_epoch(spec, epoch)
+    item_epoch = _item_epoch(spec)
     header = json.dumps(
         {
             "spec": spec,
@@ -287,6 +292,10 @@ def _state(
             panel: _decoded(decode_item_positions, "itemMove", payload, {})
             for panel, payload in _panels(positions.get("panels")).items()
         }
+        # Moves of nodes this run's data no longer has go, as the browser lets them go.
+        if chart is not None:
+            moved = chart._remaining_moves(moved)
+            panel_moved = {panel: chart._remaining_moves(at) for panel, at in panel_moved.items()}
     view = result.get("viewport")
     viewport = None
     panel_views: dict[str, Viewport] = {}
