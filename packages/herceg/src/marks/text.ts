@@ -19,6 +19,8 @@ import {
 } from "./mark.ts";
 
 interface TextStyle {
+  /** Set false to leave text without its readability outline. */
+  halo?: boolean;
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
@@ -314,7 +316,7 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
     out.push({
       kind: "text",
       draw: textDrawing,
-      halo: true,
+      halo: this.spec.halo !== false,
       key: id,
       fill: spec.fill ?? theme.text,
       anchor,
@@ -351,6 +353,7 @@ export function text<S extends Schema>(
     x: position(options.x),
     y: position(options.y),
     ...definedFields(options, [
+      "halo",
       "id",
       "label",
       "textField",

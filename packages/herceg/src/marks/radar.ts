@@ -44,6 +44,8 @@ export type RadarOptions<S extends Schema> = (
       value?: never;
     }
 ) & {
+  /** Set false to leave text without its readability outline. */
+  halo?: boolean;
   /** Category field: a polygon per value. With `fields`, the polygon takes its last row. */
   series?: CategoryField<S>;
   /** Values at the center and at the rim; from 0 (or the smallest value) to a round number above the largest by default. */
@@ -538,7 +540,7 @@ export class RadarMark implements LayoutMark {
       key: "radar-ticks",
       fill: frame.theme.muted,
       anchor: "start",
-      halo: true,
+      halo: this.spec.halo !== false,
       coords: Float32Array.from(fitted.flatMap(({ x, y }) => [x, y])),
       labels: fitted.map(({ text }) => text),
       count: fitted.length,
@@ -688,6 +690,7 @@ export function radar<S extends Schema>(
   if (options.fillOpacity !== undefined) spec.fillOpacity = options.fillOpacity;
   if (options.points !== undefined) spec.points = options.points;
   if (options.label !== undefined) spec.label = options.label;
+  if (options.halo !== undefined) spec.halo = options.halo;
   if (options.id !== undefined) spec.id = options.id;
   if (options.panel !== undefined) spec.panel = options.panel;
   if (table.name !== undefined) spec.data = table.name;

@@ -35,6 +35,8 @@ import { insidePolygon } from "./layout-mark.ts";
 import { CATEGORY, type ChartMark, DIM, frozen, type MARK, requireField } from "./mark.ts";
 
 export type GraphOptions<S extends Schema, N extends Schema = Schema> = {
+  /** Set false to leave text without its readability outline. */
+  halo?: boolean;
   /** Category field naming one end of each row's link. */
   source: CategoryField<S>;
   /** Category field naming the other end; a name in both fields is one node. */
@@ -1216,7 +1218,7 @@ export class GraphMark implements LayoutMark {
             fill: theme.text,
             anchor,
             // Labels lie over links and other nodes; the halo keeps them readable.
-            halo: true,
+            halo: this.spec.halo !== false,
             coords: Float32Array.from(sides[anchor].coords),
             labels: sides[anchor].labels,
             count: sides[anchor].labels.length,
@@ -1297,7 +1299,7 @@ export class GraphMark implements LayoutMark {
         key: "graph-link-labels",
         fill: theme.text,
         anchor: "middle",
-        halo: true,
+        halo: this.spec.halo !== false,
         coords: Float32Array.from(coords),
         labels,
         count: labels.length,
@@ -1524,6 +1526,7 @@ export function graph<S extends Schema, N extends Schema = Schema>(
     if (options.size !== undefined) spec.size = options.size;
   }
   if (options.labels !== undefined) spec.labels = options.labels;
+  if (options.halo !== undefined) spec.halo = options.halo;
   if (options.id !== undefined) spec.id = options.id;
   if (options.panel !== undefined) spec.panel = options.panel;
   if (links.name !== undefined) spec.data = links.name;

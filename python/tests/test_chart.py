@@ -2316,3 +2316,48 @@ def test_nonnegative_stack_validation_and_gaps(stack):
     assert "NaN" not in chart.to_svg()
     with pytest.raises(ValueError, match="area stack_order:.*;.*give stack="):
         hg.area(data, x="t", y="v", stack_order="inside-out")
+
+
+@pytest.mark.parametrize("halo", [False, True])
+def test_halo_option_is_shared_by_all_text_drawing_marks(halo):
+    values = {"category": ["A", "B", "C"], "value": [10, 20, 30]}
+    links = {"source": ["A", "B"], "target": ["B", "C"], "value": [10, 5]}
+    charts = [
+        hg.Chart().text(x=1, y=1, label="note", halo=halo),
+        hg.Chart().region(x1=0, x2=2, label="note", halo=halo),
+        hg.bar(values, x="category", y="value", labels=True, halo=halo),
+        hg.funnel(values, category="category", value="value", halo=halo),
+        hg.radar(values, category="category", value="value", halo=halo),
+        hg.sankey(links, source="source", target="target", value="value", halo=halo),
+        hg.graph(links, source="source", target="target", halo=halo),
+    ]
+    for chart in charts:
+        spec, _ = chart.to_spec()
+        assert spec["marks"][0]["halo"] is halo
+    chart = hg.line(DATA, x="t", y="p50", navigator=hg.Navigator(halo=halo))
+    spec, _ = chart.to_spec()
+    assert spec["navigator"] == {"halo": halo}
+
+
+def test_halo_rejects_non_boolean_with_python_option_names():
+    with pytest.raises(ValueError, match="text halo: expected a boolean; use False"):
+        hg.Chart().text(x=1, y=1, label="note", halo="no")
+    with pytest.raises(ValueError, match="Navigator halo: expected a boolean; use False"):
+        hg.line(DATA, x="t", y="p50", navigator=hg.Navigator(halo=0))
+
+
+def test_text_surface_halo_and_opt_out_in_static_exports():
+    for halo in (True, False):
+        chart = hg.Chart(width=300, height=150).text(
+            x=1, y=1, label="note", fill="#e06600", halo=halo
+        )
+        svg = chart.to_svg()
+        assert ('stroke="#ffffff" stroke-opacity="1"' in svg) is halo
+        assert chart.to_pdf().startswith(b"%PDF")
+
+
+def test_static_isolated_rows_have_round_dots():
+    chart = hg.line({"x": [0, 1, 2, 3, 4], "y": [1, np.nan, 3, np.nan, 5]}, x="x", y="y")
+    svg = chart.to_svg()
+    assert len(re.findall(r"M([\d.-]+ [\d.-]+)L\1(?=[ML\"])", svg)) == 3
+    assert 'stroke-linecap="round"' in svg

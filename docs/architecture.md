@@ -2982,10 +2982,13 @@ stay in view; rectangles and text count toward y only where they overlap the
 visible x range. Regions are rectangles drawn with the data in mark order and
 clipped to the plot. Rules and text are guides: drawn as SVG above the data
 (over a canvas when the data is on one), not clipped, and left out when they
-fall outside the view. Text has a halo in the background color (white or
-black, by the text color, when the background is transparent) so it stays
-readable over lines (fills given by name, which would need the full CSS
-color table to classify, get the halo for the theme's text color). The SVG
+fall outside the view. Text halos use the background at full opacity when
+the text's WCAG contrast with it is at least 3:1, accounting for color alpha.
+Otherwise they use the existing light/dark fallback at 0.85 opacity.
+`scale/css-color.ts` parses colors for halo contrast and PDF without DOM APIs;
+its named color table is absent from charts without text or PDF output.
+`halo: false` disables halos on text, region, bar, funnel, radar, Sankey,
+graph node and link labels, and navigator labels. The SVG
 layer keeps each annotation's nodes by geometry key, so a changing label
 rebuilds neither the axes nor other annotations. Text with `overlap` places
 labels greedily in row order, measuring each with the chart's text measurer
@@ -3532,7 +3535,23 @@ is drawn to match the surface under it. The SVG layer, the canvas (when it
 holds the marks), and static SVG and PDF paint the background; PDF pages
 are white, so the PDF writer paints a transparent theme with light text in
 the dark surface `surface(theme)` assumes. Text halos take the background
-where text contrasts with it, else white or black against the text.
+at 3:1 text contrast or higher, else white or black against the text.
+
+Time-axis planning formats tick candidates before finalizing them. Repeated
+custom labels trigger coarser calendar intervals; remaining duplicates are
+removed together with their ticks, including default labels and repeats
+across DST or other nonadjacent positions. A coarser interval with no boundary
+in view leaves the preceding useful plan for deduplication. `tooltipFormat`
+remains independent of the tick plan.
+
+The shared line tracer emits a 0.001-pixel segment for a one-vertex run
+(WebKit Canvas omits exactly zero-length strokes);
+round stroke caps paint a dot of the stroke's diameter in SVG, Canvas, and
+PDF. LOD and step tracing preserve these runs. Area outlines use the same
+tracer; areas without outlines draw just the isolated upper-edge dots in
+their fill color. Bars whose series field is their category position field
+record a whole-band share, which geometry, inspection, selection, and the
+navigator all read. Palette and legend identities remain per category.
 
 ## Interaction
 

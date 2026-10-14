@@ -10,9 +10,9 @@
 // third-party drawings) are refused with an error.
 
 import { arcSweep, sectorsByColor, traceArcs } from "../draw/arc.ts";
-import { traceArea } from "../draw/area.ts";
+import { traceArea, traceAreaOutline } from "../draw/area.ts";
 import { type FaceSink, faceRuns, traceFace, traceOutline } from "../draw/faces.ts";
-import { traceLine } from "../draw/line.ts";
+import { hasIsolated, traceLine } from "../draw/line.ts";
 import { KAPPA, type PathSink } from "../draw/markup.ts";
 import { placeCloud } from "../draw/point.ts";
 import { tracePolygon } from "../draw/polygons.ts";
@@ -23,6 +23,7 @@ import { SYMBOLS, symbolPath } from "../draw/symbols.ts";
 import { HALO_WIDTH, textHalo } from "../draw/text.ts";
 import { parseFont } from "../layout/text.ts";
 import { isLightColor } from "../scale/color.ts";
+import { cssColor } from "../scale/css-color.ts";
 import {
   type Geometry,
   LEGEND_SWATCH,
@@ -34,7 +35,6 @@ import {
   tickLabelGap,
 } from "../scene/scene.ts";
 import { surface, type Theme } from "../theme.ts";
-import { cssColor } from "./css-color.ts";
 import { type DocumentInfo, language, literal, num, PdfPage, PdfWriter } from "./pdf-document.ts";
 import type { PdfFontResolver } from "./pdf-font-resolver.ts";
 import { encodeText, type PdfFont, standardFont, textWidth } from "./pdf-fonts.ts";
@@ -444,10 +444,16 @@ function paintGeometry(
     case "area":
       traceArea(path, mark);
       paint(page, path, { fill: mark.fill, fillOpacity: mark.fillOpacity });
-      if (mark.stroke) {
+      if (mark.strokeWidth === 0) return;
+      {
         const top = new PathBuilder();
-        traceLine(top, mark.upper);
-        paint(page, top, { stroke: mark.stroke, strokeWidth: mark.strokeWidth, join: "round" });
+        traceAreaOutline(top, mark);
+        paint(page, top, {
+          stroke: mark.stroke ?? mark.fill,
+          strokeWidth: mark.strokeWidth,
+          join: "round",
+          cap: hasIsolated(mark.upper) ? "round" : "butt",
+        });
       }
       return;
     case "arc": {

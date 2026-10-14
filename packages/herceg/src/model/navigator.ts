@@ -178,10 +178,13 @@ export class Navigator {
       if (repeated !== undefined)
         throw new TypeError(`navigator marks: "${repeated}" is listed twice`);
     }
+    if (options.halo !== undefined && typeof options.halo !== "boolean")
+      throw new TypeError("navigator halo: expected a boolean; use false to disable halos");
     this.height = height;
     this.marks = marks && Object.freeze([...marks]);
     this.#spec = {
       ...(options.height !== undefined && { height }),
+      ...(options.halo !== undefined && { halo: options.halo }),
       ...(this.marks && { marks: this.marks }),
     };
   }
@@ -336,7 +339,7 @@ export class Navigator {
       state.measure = frame.measure;
       state.overview = overview(drawn, sources, scale, strip, owner.config, context, state.buffers);
       ({ grid: state.grid, labels: state.labels } = labeled
-        ? stripTicks(rail, strip, frame)
+        ? stripTicks(rail, strip, frame, this.#spec.halo !== false)
         : { grid: [], labels: undefined });
     }
     state.drawn = { plot: strip, rail: scale, shown, panels: sources.map(({ key }) => key) };
@@ -699,6 +702,7 @@ function stripTicks(
   rail: AxisPlan,
   strip: Rect,
   frame: Frame,
+  halo: boolean,
 ): { grid: number[]; labels: TextGeometry | undefined } {
   const { theme, measure } = frame;
   const font = `${theme.fontSize}px ${theme.font}`;
@@ -730,7 +734,7 @@ function stripTicks(
       key: "navigator-labels",
       fill: theme.muted,
       anchor: "start",
-      halo: true,
+      halo,
       coords: Float32Array.from(shown.flatMap(({ at }) => [at + 4, y])),
       labels: shown.map(({ label }) => label),
       count: shown.length,

@@ -27,6 +27,8 @@ import {
 } from "./mark.ts";
 
 interface RegionStyle {
+  /** Set false to leave text without its readability outline. */
+  halo?: boolean;
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
@@ -205,7 +207,7 @@ export class RegionMark implements Mark<Frozen<RegionSpec>> {
       out.push({
         kind: "text",
         draw: textDrawing,
-        halo: true,
+        halo: this.spec.halo !== false,
         key: seriesKey(key, "region label"),
         fill: theme.text,
         anchor: "start",
@@ -293,6 +295,7 @@ export function region<S extends Schema>(
         y2: position(options.y2),
       },
       [
+        "halo",
         "id",
         "x1",
         "x2",

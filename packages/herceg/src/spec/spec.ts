@@ -531,6 +531,8 @@ export interface RowSelectionSpec {
 
 /** The range navigator's options. */
 export interface NavigatorSpec {
+  /** Set false to leave text without its readability outline. */
+  halo?: boolean;
   /**
    * The strip's height in CSS pixels, from 16 up: 40 by default, at most a
    * third of the height the plots and the strip share, and less where the
@@ -881,6 +883,8 @@ export type RegionRange<P> =
 export type RegionSpec = RegionStyle & RegionRange<Position>;
 
 interface RegionStyle extends MarkBase {
+  /** Set false to leave text without its readability outline. */
+  halo?: boolean;
   type: "region";
   /** Defaults to the theme's muted color. */
   fill?: string;
@@ -898,6 +902,8 @@ interface RegionStyle extends MarkBase {
  * point is outside the plot.
  */
 export interface TextSpec extends MarkBase {
+  /** Set false to leave text without its readability outline. */
+  halo?: boolean;
   type: "text";
   x: Position;
   y: Position;
@@ -927,6 +933,8 @@ export interface TextSpec extends MarkBase {
  * fields are drawn side by side or stacked.
  */
 export interface BarSpec extends SeriesBase, RowTooltip {
+  /** Set false to leave text without its readability outline. */
+  halo?: boolean;
   type: "bar";
   x: Field | readonly Field[];
   y: Field | readonly Field[];
@@ -1292,6 +1300,8 @@ export interface GaugeSpec {
  * count), with faint connectors between neighboring bars.
  */
 export interface FunnelSpec {
+  /** Set false to leave text without its readability outline. */
+  halo?: boolean;
   type: "funnel";
   data?: string;
   id?: string;
@@ -1315,6 +1325,8 @@ export interface FunnelSpec {
  * scale from the center.
  */
 export interface RadarSpec {
+  /** Set false to leave text without its readability outline. */
+  halo?: boolean;
   type: "radar";
   data?: string;
   id?: string;
@@ -1345,6 +1357,8 @@ export interface RadarSpec {
  * itself, and links that would close a cycle are left out.
  */
 export interface SankeySpec {
+  /** Set false to leave text without its readability outline. */
+  halo?: boolean;
   type: "sankey";
   data?: string;
   id?: string;
@@ -1377,6 +1391,8 @@ export interface SankeySpec {
  * out. A network draws at most 5,000 nodes and 20,000 links.
  */
 export interface GraphSpec {
+  /** Set false to leave text without its readability outline. */
+  halo?: boolean;
   type: "graph";
   data?: string;
   id?: string;

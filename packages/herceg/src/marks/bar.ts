@@ -48,6 +48,8 @@ import { checkTooltip, type MarkTooltip } from "./tooltip-fields.ts";
 import { unionExtent } from "./trace.ts";
 
 interface BarStyle<S extends Schema> {
+  /** Set false to leave text without its readability outline. */
+  halo?: boolean;
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
@@ -430,11 +432,16 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
     const across = horizontal ? frame.x : frame.y;
     // Grouped series take their slots (a legend group's marks by the group's
     // series), which picking, inspection, and selections read back.
-    this.#shares.split(series, frame, this.spec.legendGroup, !this.spec.stack);
+    this.#shares.split(
+      series,
+      frame,
+      this.spec.legendGroup,
+      !this.spec.stack && this.spec.series !== this.#position,
+    );
     const { share, width, groups, offset: offsetOf } = this.placement(visible, along);
     const out: (RectGeometry | TextGeometry)[] = [];
     const labels = this.spec.labels
-      ? new BarLabels(this.#format(frame.locale), frame, horizontal)
+      ? new BarLabels(this.#format(frame.locale), frame, horizontal, this.spec.halo !== false)
       : undefined;
     // The closest neighboring bar centers: within a group, a share apart;
     // with one series, a position step apart.
@@ -543,7 +550,13 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
    * With a frame, prepare the visible series' slots before placing them.
    */
   placement(visible: readonly Series[], along: PositionScale, frame?: Frame): BarPlacement {
-    if (frame) this.#shares.split(visible, frame, this.spec.legendGroup, !this.spec.stack);
+    if (frame)
+      this.#shares.split(
+        visible,
+        frame,
+        this.spec.legendGroup,
+        !this.spec.stack && this.spec.series !== this.#position,
+      );
     const slot = this.#slot(along);
     const stack = this.spec.stack;
     const shares = this.#shares;
@@ -670,17 +683,19 @@ class BarLabels {
   readonly #format: Formatter;
   readonly #frame: Frame;
   readonly #horizontal: boolean;
+  readonly #halo: boolean;
   readonly #size: number;
   readonly #font: string;
   /** What text inside a bar contrasts with: the background, or a page of the theme's kind. */
   readonly #backdrop: string;
   #groups = new Map<string, LabelGroup>();
 
-  constructor(format: Formatter, frame: Frame, horizontal: boolean) {
+  constructor(format: Formatter, frame: Frame, horizontal: boolean, halo: boolean) {
     const { theme } = frame;
     this.#format = format;
     this.#frame = frame;
     this.#horizontal = horizontal;
+    this.#halo = halo;
     this.#size = theme.fontSize;
     this.#font = `${theme.fontSize}px ${theme.font}`;
     this.#backdrop = surface(theme);
@@ -855,6 +870,7 @@ class BarLabels {
     y: number,
     text: string,
   ) {
+    halo &&= this.#halo;
     const stage = `labels ${anchor} ${fill} ${halo}`;
     let group = this.#groups.get(stage);
     if (!group) {
@@ -1017,6 +1033,7 @@ export function bar<S extends Schema>(
       "label",
       "legendGroup",
       "labels",
+      "halo",
       "id",
       "axis",
       "facet",

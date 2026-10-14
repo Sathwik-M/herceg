@@ -94,6 +94,17 @@ accepts one handle and optional paper, margin, font, and metadata settings
 rectangle; each chart's locale scopes its visible content while generated
 alternatives retain their English language.
 
+Text halos on `<Text>`, `<Region>`, `<Bar>`, `<Funnel>`, `<Radar>`, `<Sankey>`,
+and `<Graph>` accept `halo={false}`; graph node and link labels share it.
+Halos use the background at 3:1 text contrast or higher, then the light/dark
+fallback. The chart's navigator accepts `{ halo: false }` too. Isolated line
+and area rows draw stroke-sized round dots, including step curves and lines
+along y. Bars whose `series` names their category field keep full bands,
+category colors and legends, and value labels. Time axes choose intervals
+their `format` can distinguish and remove remaining duplicate labels;
+`tooltipFormat` independently formats tooltip, keyboard, and crosshair values.
+These behaviors carry through the engine's static SVG and PDF exports.
+
 ## Reusing groups of marks
 
 `<Chart>` reads its children's props to build marks; it does not render

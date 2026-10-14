@@ -52,10 +52,13 @@ describe("architecture", () => {
       "pdf-paper.ts",
       "pdf-fonts.ts",
       "deflate.ts",
-      "css-color.ts",
       "svg-path.ts",
     ];
-    for (const file of [join(SRC, "pdf.ts"), ...modules.map((name) => join(render, name))]) {
+    for (const file of [
+      join(SRC, "pdf.ts"),
+      join(SRC, "scale/css-color.ts"),
+      ...modules.map((name) => join(render, name)),
+    ]) {
       const source = readFileSync(file, "utf8").replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, "");
       // Types (the chart handle a mounted chart's export takes) load no code.
       const imports = [...source.matchAll(/^import (?!type )[^;]*?from "([^"]+)"/gm)].map(
