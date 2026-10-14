@@ -11,6 +11,10 @@ import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import { checkSpec, validateSpec } from "../../src/spec/validate.ts";
 
+// Several tests lay out networks of thousands of nodes so that the work spans
+// frames; that takes a few seconds on CI runners, past the default 5 s.
+vi.setConfig({ testTimeout: 30_000 });
+
 function build(config: ChartConfig) {
   const model = new ChartModel({ locale: "en-US", ...config });
   model.setSize(600, 400, 1);
