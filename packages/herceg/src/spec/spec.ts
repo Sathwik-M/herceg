@@ -603,6 +603,7 @@ export type MarkSpec =
   | HistogramSpec
   | PieSpec
   | BoxPlotSpec
+  | BoxenSpec
   | ViolinSpec
   | TreemapSpec
   | SunburstSpec
@@ -1088,12 +1089,17 @@ export type BoxPlotRawInput = {
    * Raw boxes use their finite observation count; precomputed boxes require a count field.
    */
   notch?: boolean;
+  /**
+   * Dots at the values beyond the whiskers; true by default. Hidden ones
+   * are still counted in tooltips, and leave the value axis' extent.
+   */
+  outliers?: boolean;
 };
 
 /** One precomputed box per row, on exactly one category axis. */
 export type BoxPlotPrecomputedInput = BoxPlotStatistics &
   BoxPlotNotchInput &
-  ({ x: Field; y?: never } | { y: Field; x?: never }) & { whiskers?: never };
+  ({ x: Field; y?: never } | { y: Field; x?: never }) & { whiskers?: never; outliers?: never };
 
 /** Raw values and precomputed statistics are mutually exclusive. */
 export type BoxPlotInput = BoxPlotRawInput | BoxPlotPrecomputedInput;
@@ -1114,6 +1120,49 @@ export type BoxPlotSpec = SeriesBase &
   BoxPlotInput & {
     type: "boxplot";
   } & BoxPlotStyle;
+
+/**
+ * Letter-value ("boxen") plots: per category, nested boxes between a number
+ * field's letter values (its quartiles, eighths, sixteenths, ...) out from
+ * the median, each level narrower and lighter than the one inside it, as
+ * Seaborn's `boxenplot` and Hofmann, Wickham, and Kafadar's letter-value
+ * plots draw them, with the values beyond the outermost box as dots. One
+ * of `x` and `y` is a category field, the other the values.
+ */
+export interface BoxenSpec extends SeriesBase {
+  type: "boxen";
+  x: Field;
+  y: Field;
+  /** Category field: a box per value in each category, side by side. */
+  series?: Field;
+  /**
+   * How many letter values each side (levels of boxes) a group draws:
+   * "tukey" (the default) leaves 5 to 8 values in each tail, "proportion"
+   * about `outlierProportion` of them, "trustworthy" stops where a letter
+   * value's confidence interval at `trustAlpha` would overlap the next one's,
+   * "full" reaches every value; or a whole number of levels from 1, the
+   * box of the quartiles.
+   */
+  depth?: "tukey" | "proportion" | "trustworthy" | "full" | number;
+  /** The share of values left beyond the boxes with `depth: "proportion"`; 0.007 by default. */
+  outlierProportion?: number;
+  /** The significance level `depth: "trustworthy"` stops at; 0.05 by default. */
+  trustAlpha?: number;
+  /**
+   * How a level's width shrinks from the quartile box's: by half each level
+   * ("exponential", the default), by the same step each level ("linear"),
+   * or so that each box's area is proportional to the share of values it
+   * holds ("area").
+   */
+  widthMethod?: "exponential" | "linear" | "area";
+  /** Dots at the values beyond the outermost boxes; true by default. */
+  outliers?: boolean;
+  /** Constant color for every shape; colors come from the palette otherwise. */
+  fill?: string;
+  /** Opacity of the quartile box's fill, which outer levels lighten; 0.7 by default. */
+  fillOpacity?: number;
+  label?: string;
+}
 
 /**
  * Violins: per category, the Gaussian kernel density of a number field's

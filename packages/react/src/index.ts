@@ -4,6 +4,7 @@ export { Chart, type ChartProps } from "./chart.tsx";
 export {
   Area,
   Bar,
+  Boxen,
   BoxPlot,
   Candlestick,
   Custom,

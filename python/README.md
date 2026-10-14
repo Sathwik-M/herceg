@@ -5,7 +5,7 @@ Charts for pandas, Polars, PyArrow, and NumPy data, rendered by the
 large-data handling as the TypeScript library.
 
 > Early development. Line, area, bar, scatter, heatmap, dendrogram, error bar,
-> candlestick, histogram, pie, box plot, violin, treemap, sunburst, gauge, funnel, radar, Sankey, network (graph), and map (choropleth and point) marks, rule, region, and text annotations; small multiples;
+> candlestick, histogram, pie, box plot, letter-value (boxen) plot, violin, treemap, sunburst, gauge, funnel, radar, Sankey, network (graph), and map (choropleth and point) marks, rule, region, and text annotations; small multiples;
 > HTML, notebook, SVG, PNG, and PDF output; live notebook charts; Streamlit apps.
 
 ```python
@@ -43,6 +43,7 @@ hg.histogram(requests, x="latency", series="region", bins={"step": 10})
 hg.histogram(requests, x="latency", series="region", stack="fill", element="step")
 hg.pie(sales, "region", "revenue", inner_radius=0.6)  # a donut; counts rows without a value
 hg.boxplot(requests, x="region", y="latency", series="version")
+hg.boxen(requests, x="region", y="latency")  # letter values: nested boxes out to the tails
 hg.violin(requests, x="region", y="latency")  # kernel densities, quartiles inside
 hg.treemap(sales, ["region", "country"], "revenue")
 hg.sunburst(org, node="team", parent="parent_team", value="cost")
@@ -482,8 +483,10 @@ hg.Chart(stats).boxplot(y="region", low="min", q1="p25", median="p50",
 
 Precomputed boxes take exactly one category `x` or `y` and all five numeric
 or time statistic fields, ordered `low ≤ q1 ≤ median ≤ q3 ≤ high`. They
-exclude raw values, have no outliers, and reject `whiskers`; missing or
-non-finite statistics omit the box. `count` names an optional number column
+exclude raw values, have no outliers, and reject `whiskers` and `outliers`;
+missing or non-finite statistics omit the box. Raw boxes draw values beyond
+the whiskers as dots unless `outliers=False`, which leaves them out of the
+drawing and the value axis' extent (tooltips still count them). `count` names an optional number column
 of positive safe integers, required for `notch=True`.
 
 Raw `whiskers` defaults to `"tukey"` (1.5 × IQR); `"range"` uses minimum and
@@ -497,6 +500,26 @@ clamped to the quartiles; small samples can produce a flipped outline. SVG,
 Canvas, static SVG, and PDF draw the same geometry. Tooltips, keyboard
 reading, legends, summaries, and facets work with both input forms; absent
 precomputed counts are omitted from tooltips.
+
+Letter-value plots (`hg.boxen`, `Chart.boxen`) draw each group's quartile
+box, then boxes out to its eighths, sixteenths, and so on, each level
+narrower and lighter than the one inside it, a line at the median, and the
+values beyond the outermost boxes as dots (unless `outliers=False`):
+
+```python
+hg.boxen(requests, x="region", y="latency", series="version", depth="trustworthy")
+hg.Chart(requests).boxen("latency", "region", depth=4, width_method="area", outliers=False)
+```
+
+`depth` chooses the levels: "tukey" (the default) leaves 5 to 8 values in
+each tail, "proportion" about `outlier_proportion` (0.007) of them,
+"trustworthy" stops where a letter value's confidence interval at
+`trust_alpha` (0.05) would overlap the next, "full" reaches the extremes,
+and a whole number gives the levels (1 is the quartile box alone).
+`width_method` narrows each level by half ("exponential", the default), by
+equal steps ("linear"), or makes each box's area proportional to its share
+of the values ("area"). `fill_opacity` (0.7) is the quartile box's; each
+level out is 2^(-1/3) as opaque.
 
 ### Dendrograms
 
@@ -602,28 +625,32 @@ herceg's marks, so they display, save as HTML, SVG, PNG, and PDF, and run in
 notebooks and Streamlit like any other chart:
 
 ```python
+import numpy as np
 import herceg.express as hx
 
-hx.barplot(tips, x="day", y="total_bill", series="sex", seed=1)
+hx.barplot(tips, x="day", y="total_bill", series="sex", estimator=np.median)
 hx.lineplot(fmri, x="timepoint", y="signal", series="event", errorbar=("se", 1))
+hx.pointplot(fmri, x="timepoint", y="signal", units="subject")  # repeated measures
 hx.regplot(tips, x="total_bill", y="tip", order=2, facet_column="smoker")
+hx.regplot(titanic, x="age", y="survived", logistic=True)
 hx.histplot(penguins, x="flipper_length_mm", series="species", kde=True)
 hx.swarmplot(tips, x="day", y="total_bill", series="sex", dodge=True)
+hx.boxenplot(diamonds, x="clarity", y="carat")
 hx.pairplot(penguins, series="species")
 hx.clustermap(flights_wide, z_score=1)
 ```
 
 | Function | Computes (NumPy) | Draws |
 | --- | --- | --- |
-| `barplot`, `pointplot` | an `estimator` ("mean" or "median") per category, and an interval | bars, or points joined by lines, with error bars dodged by `series` |
-| `lineplot` | the estimate and interval at each distinct x | lines, with bands (`error_style="band"`) or error bars |
-| `regplot` | least-squares polynomial fits (`order`), or `lowess`, with bootstrap bands | points, fit lines, bands |
-| `residplot` | residuals from a polynomial fit, optionally a lowess line through them | points around a rule at 0 |
+| `barplot`, `pointplot` | an `estimator` (named, or a function) per category, and an interval | bars, or points joined by lines, with error bars dodged by `series` |
+| `lineplot` | the estimate and interval at each distinct x, or a line per unit | lines, with bands (`error_style="band"`) or error bars |
+| `regplot` | polynomial (`order`), logistic, robust, log-x, or lowess fits, with bootstrap bands; estimates per x or bin | points (or estimates with error bars), fit lines, bands |
+| `residplot` | residuals from a polynomial or robust fit, optionally a lowess line through them | points around a rule at 0 |
 | `histplot` | Seaborn's bin edges; heights, and KDE overlays scaled to them | the histogram mark (counts in the browser) as bars, steps, or polygons, lines |
 | `kdeplot` | Gaussian kernel densities (SciPy's `gaussian_kde`), 1D or 2D | lines or filled areas, along x or y; a density heatmap for x and y |
 | `ecdfplot` | the empirical distribution | step lines, along x or y |
 | `rugplot`, `stripplot`, `swarmplot` | (none; for swarms, which points fit) | rug ticks; points jittered by row and seed, or packed in swarms |
-| `boxplot`, `violinplot` | quartiles and whiskers (also in `statistics`) | the box plot and violin marks |
+| `boxplot`, `boxenplot`, `violinplot` | quartiles and whiskers, letter values (also in `statistics`) | the box plot, boxen, and violin marks |
 | `pairplot`, `jointplot` | bins, densities, fits | subplots: scatter plots with histograms or densities |
 | `clustermap` | hierarchical clustering of rows and columns | a reordered heatmap with dendrograms in side panels |
 
@@ -639,10 +666,17 @@ colors), and the chart options of the one-call helpers (`title`, `width`,
 `facet` and `panels` are refused, and `pairplot`, `jointplot`,
 `clustermap`, and `residplot` take no facets. Options a mark also takes
 mean what they mean there: histplot's `normalize` ("count", "frequency",
-"probability", "percent", or "density"), `weight`, `element` ("bars",
-"step", or "poly"), and `common_norm` (off by default), boxplot's
-`whiskers` ("tukey", 1.5 IQR, by default; "range"; or an IQR multiple) and
-`outliers`, violinplot's `inner` ("box", "quartiles", or "none"), and
+"probability", "percent", or "density"), `element` ("bars", "step", or
+"poly"), and `common_norm` (off by default); `weight`, a column of numbers
+from 0 up weighting each row, in histplot, kdeplot, ecdfplot, regplot
+(weighted least squares), and barplot, pointplot, and lineplot (weighted
+means, with bootstrap intervals, as Seaborn's `WeightedAggregator`);
+boxplot's `whiskers` ("tukey", 1.5 IQR, by default; "range"; or an IQR
+multiple) and `outliers`; boxenplot's `depth` ("tukey", "proportion",
+"trustworthy", "full", or a number of levels), `outlier_proportion`,
+`trust_alpha`, `width_method` ("exponential", "linear", or "area"), and
+`outliers`, as the boxen mark takes them; violinplot's `inner` ("box",
+"quartiles", or "none"); and
 stripplot's `jitter`, the fraction of each category's band (or, with
 `dodge`, of each series' slot) the points spread across: `True` is 0.5,
 and an `hg.Jitter` brings its own seed. Statistical options keep Seaborn's
@@ -668,14 +702,50 @@ warning says. Axes are labeled with the columns' names unless `x_axis` or `y_axi
 say otherwise. Rows missing a value the chart uses are left out, and the
 chart's description says how many.
 
+Estimates take an `estimator`: "mean", "median", "sum", "min", or "max",
+computed for many resamples at once, or a function of a group's values
+returning one number (`numpy.median`, a lambda), called once per resample
+as Seaborn calls it, and checked on each group (a function returning
+several values, or none that is finite, is refused, naming the group).
 Intervals take Seaborn's `errorbar`: `("ci", 95)` resamples each group
 `n_boot` times (1,000) with `numpy.random.default_rng(seed)` and takes the
 percentile interval of the estimates, `("pi", 50)` the central percentiles
-of the values, `("se", 1)` and `("sd", 1)` multiples of the standard error
-and deviation (`ddof=1`) about the estimate, and `None` none. Each group's
-resampling starts from the seed, drawing its indices as Seaborn's
-`bootstrap` does, so a seed gives Seaborn's intervals exactly. Without a
-`seed`, one is drawn and recorded. Groups of one value have no interval.
+of the values, `("se", 1)` (of means) and `("sd", 1)` multiples of the
+standard error and deviation (`ddof=1`) about the estimate, a function of
+a group's values returning its interval's ends (low first), and `None`
+none. Each group's resampling starts from the seed, drawing its indices
+as Seaborn's `bootstrap` does, so a seed gives Seaborn's intervals exactly.
+The seed is 0 unless given; `seed=None` draws one and records it. Groups of
+one value have no interval. `units` names the sampling units of repeated
+measures (subjects, say): `("ci", ...)` intervals then resample units and
+the rows within each chosen unit, drawing as Seaborn's structured
+bootstrap does, in barplot, pointplot, and regplot. In lineplot, as in
+Seaborn, `units` draws instead a line per unit through its rows, in its
+series' color and legend entry (`estimator=None, errorbar=None`), the
+lines broken apart by missing values.
+
+`regplot` fits, per series and panel, a least-squares polynomial of
+`order` (rows weighted by `weight`, those of weight 0 left out of the fit), or with `logistic=True` a logistic
+regression of outcomes from 0 to 1 (statsmodels' GLM: IRLS from its
+starting means and its convergence and perfect-separation tests; a
+resample its x separates perfectly has no fit and is left out of the band,
+as Seaborn leaves it), with `robust=True` a line downweighting outliers
+(statsmodels' RLM: Huber's T, the scale re-estimated by the MAD each
+pass), with `logx=True` a line in log x, or with `lowess=True` a locally
+weighted line without a band. Logistic and robust fits run in NumPy, every
+resample of a chunk iterating together, so statsmodels is not needed (it
+is only what they were checked against). `x_estimator` (an estimator) and
+`x_bins` (a count, or bin centers; rows go to the nearest) draw an
+estimate of y at each distinct x or bin instead of the points, with
+intervals per `x_ci` ("ci", at `ci`'s level; "sd"; a level; or None), while
+the fit uses every row. `x_partial` and `y_partial` remove the linear
+effect of other columns from x and y first (not with `logx` or `logistic`,
+whose x or y it would move off their domain); `fit_reg=False` leaves out the
+fit, `scatter=False` the points, and `truncate=False` draws each fit over
+all the data's x range rather than its own rows'. `x_jitter` and
+`y_jitter` are refused: they would move points off the values tooltips
+read. `residplot` takes `order`, `robust`, `lowess`, and the partials.
+`lmplot` is regplot with `facet_row` and `facet_column`.
 
 The chart's description (its accessible text) ends with what was computed:
 the estimator and method, the resamples and seed, the bandwidth rule, and
@@ -694,28 +764,79 @@ hierarchical clustering when it is installed, and the same agglomeration in
 NumPy otherwise. Results were checked against Seaborn, SciPy, and
 statsmodels (`tests/test_express_numerics.py`, `tests/test_express.py`).
 Lowess fits take time proportional to the rows times the rows each local
-fit uses (`frac`): about 3 s for 10,000 rows with statsmodels' default
-`delta=0`, about 30 ms with `delta` 1% of the x range, which interpolates
-between fits as statsmodels does.
+fit uses (`frac`): about 0.8 s for 10,000 rows with statsmodels' default
+`delta=0`, about 10 ms with `delta` 1% of the x range, which interpolates
+between fits as statsmodels does. Resampling, densities, and fits work in
+chunks of about 8 MiB of arrays (or one resample, when that is larger), so
+small groups take little memory and large ones keep their speed: 1,000
+resamples of 100,000 values peak at about 3 MiB (Seaborn's about 2 MiB).
 
-Express charts are snapshots of what was computed: `widget.update(...)`
-changes their options, while `append` and `replace` change the tables the
-marks draw (a histogram recounts its bins, a box plot its quartiles), not
-the estimates, fits, or densities Python computed. To recompute, call the
-function again (Streamlit reruns do); a fixed seed keeps intervals from
-changing on every run. Live widgets refuse pair, joint, and cluster maps,
-whose panels have x scales of their own.
+### Computing again from new data
+
+An express chart remembers its call: the function, its arguments (copied
+when it is made), its seed, the columns it read, and its data (a reference,
+not a copy, from which a widget made later starts). `hx.recompute(chart,
+data)` makes a new chart as the function would from `data`, with those
+arguments and seed, and adds again the marks added to the chart after the
+function made it (`.rule(y=0)`), reading the new chart's table where they
+read the old one's:
+
+```python
+chart = hx.lineplot(signals, x="time", y="value", series="sensor")
+chart = hx.recompute(chart, signals_now)   # the same chart of the new rows
+```
+
+A recompute groups the new rows and computes every estimate, fit, and
+density again, except bootstrap work (intervals and bands) of groups whose
+values, weights, units, options, and seed, and for bands their grid, are
+the same as in the chart recomputed: a seed makes their results the same,
+so they are reused. Appending one timepoint to a lineplot of 1,000
+timepoints resamples one group, not 1,000. Results are kept for the groups
+the chart has, a few numbers each (a band, two of its grid's length).
+
+In a notebook, `chart.widget()` of an express chart takes the rows of the
+function's data: `live.append(rows, max_rows=...)` adds rows to them (a
+table like the data, or one row as a mapping), `live.replace(rows)`
+replaces them, and the function computes the chart again, keeping
+everything `live.update(...)` changed. The widget copies the columns the
+function read when it is made, so later changes to the dataframe are not
+its own. Where the new chart has the same marks, its changed tables and
+options travel in one message and replace the old ones at once, zoom,
+selection, and legend as they were; where its marks differ (a new series
+level adds a band), the whole chart is sent and each display draws it
+again, keeping its zoom, brush, the series hidden through its legend, and
+the keyboard focus. Rows selected in the tables replaced go. `data=` is
+refused: the marks draw tables computed from the function's data. Live
+widgets refuse pair, joint, and cluster maps, whose panels have x scales
+of their own.
+
+A Streamlit rerun calls the function again: the same data with the same
+seed makes the same chart, which Streamlit leaves as it is (zoom and brush
+included); new data remounts the chart where it was, restoring its zoom
+and brush. To reuse groups' bootstrap results across reruns, keep the
+chart in `st.session_state` and refresh it with `hx.recompute`.
 
 Differences from Seaborn: Seaborn's `hue`, `hue_order`, `row`, and `col`
 are `series`, `series_order`, `facet_row`, and `facet_column`; `stat` is
-`normalize` (its "proportion" is "probability"); histplot's `weights` is
-`weight`; boxplot's `whis` and
-`showfliers` are `whiskers` and `outliers`; kdeplot's `fill` is `filled`;
+`normalize` (its "proportion" is "probability"); `weights` is `weight`
+everywhere; boxplot's `whis` and `showfliers`, and boxenplot's `k_depth`,
+`outlier_prop`, and `showfliers`, are `whiskers`, `outliers`, `depth`,
+`outlier_proportion`, and `outliers`; kdeplot's `fill` is `filled`;
 `kde_kws`, `err_style`, and `gridsize` are `kde_options`, `error_style`,
 and `grid_size`; swarm plots' `size` (points) is `radius` (pixels); strip
 plots' `jitter` is a fraction of the band, not
 Seaborn's half-width in category spacing, and `common_norm` is off unless
-asked for (pair plots' diagonal densities each integrate to 1).
+asked for (pair plots' diagonal densities each integrate to 1). The seed
+is 0 unless given (Seaborn draws one each call); estimators named by
+string are "mean", "median", "sum", "min", and "max" only (not every pandas
+aggregation), and functions and interval functions receive NumPy arrays,
+not pandas Series; `("se", k)` takes the mean only (the standard error is
+the mean's), weights take the mean and `("ci", ...)` only (as Seaborn's),
+and weights and units together are refused (Seaborn ignores units with
+weights); regplot takes `weight` (Seaborn's does not), computes logistic and
+robust fits without statsmodels, refuses `x_jitter` and `y_jitter`, and with
+`truncate=False` reaches the data's x range, not the axes' limits;
+boxenplot shades levels by fill opacity, not a palette lightened per level.
 `pointplot` dodges with grouped bars' arithmetic, each series in its share
 of the category, not Seaborn's 0.025 of the category per series level, and
 takes no `markers`; swarms leave half a pixel between points where Seaborn's

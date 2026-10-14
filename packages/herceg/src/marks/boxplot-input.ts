@@ -10,6 +10,7 @@ export function boxPlotFormError(spec: {
   count?: unknown;
   whiskers?: unknown;
   notch?: unknown;
+  outliers?: unknown;
 }): string | undefined {
   const statistics = ["low", "q1", "median", "q3", "high"] as const;
   const provided = statistics.filter((name) => spec[name] !== undefined);
@@ -23,6 +24,8 @@ export function boxPlotFormError(spec: {
     if (missing.length) return `boxplot: precomputed statistics need ${missing.join(", ")}`;
     if (spec.whiskers !== undefined)
       return "boxplot whiskers: low and high give precomputed whisker ends; drop whiskers";
+    if (spec.outliers !== undefined)
+      return "boxplot outliers: precomputed boxes have none to draw; drop outliers";
     if (spec.notch === true && spec.count === undefined)
       return "boxplot notch: precomputed statistics need count for a notch";
   } else if (spec.x === undefined || spec.y === undefined) {
@@ -38,5 +41,7 @@ export function boxPlotFormError(spec: {
     return `boxplot whiskers: expected "tukey", "range", or a finite nonnegative IQR multiple; received ${typeof whiskers === "number" ? whiskers : JSON.stringify(whiskers)}`;
   if (spec.notch !== undefined && typeof spec.notch !== "boolean")
     return `boxplot notch: expected true or false; received ${JSON.stringify(spec.notch)}`;
+  if (spec.outliers !== undefined && typeof spec.outliers !== "boolean")
+    return `boxplot outliers: expected true or false; received ${JSON.stringify(spec.outliers)}`;
   return undefined;
 }

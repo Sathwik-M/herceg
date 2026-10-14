@@ -14,7 +14,7 @@ One name per concept, used the same way in code and docs.
 | **Column** | The typed storage behind a field: numbers, times (epoch ms), dictionary-encoded categories, or geometries (codes into a shared set of shapes). |
 | **Encoding** | A mark option naming a field whose values a visual property follows: `size` (point area, within `radiusRange`), `color` (a number or time field on a continuous scale, or a category field with a palette color per value), `fillOpacity`, and `symbol`. Constant counterparts name what they set: `radius` in pixels, `fill` and `stroke` for paint. |
 | **Text roles** | `label` is constant text (a series' or mark's name, every annotation's text); `labelField` and `textField` name fields with each record's or annotation's text; `title` heads a chart, a panel, or an axis; `labels` turns drawn labels on or off. Python spells every option in snake_case (`radius_range`, `label_field`, `facet_column`), and `herceg.express` takes the same names as the marks (`series`, `series_order`, `facet_row`, `facet_column`, `whiskers`, `normalize`). |
-| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `rug`, `dendrogram`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads; a network (`graph`) also reads a table of nodes. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`, `radar`, `sankey`, `graph`, the map layers `geoshape` and `geopoint`, and the 3D layers `point3d` and `surface`) place their own geometry instead of using x and y scales. |
+| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `rug`, `dendrogram`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `boxen`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads; a network (`graph`) also reads a table of nodes. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`, `radar`, `sankey`, `graph`, the map layers `geoshape` and `geopoint`, and the 3D layers `point3d` and `surface`) place their own geometry instead of using x and y scales. |
 | **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, a gauge's dial, a funnel's stage, a radar's value on one spoke, a Sankey diagram's or network's node or link, a map's region or point, or a 3D chart's point or surface grid point: what its tooltips and the keyboard visit. |
 | **Projection** | Maps longitudes and latitudes to the plane a map is drawn in (`projection`, a chart option): Equal Earth, Natural Earth, Mercator, equirectangular, or conic equal-area. |
 | **Camera** | Where a 3D chart is seen from: an azimuth about the vertical axis, an elevation above the floor, a zoom, and orthographic or perspective projection (`camera`, a chart option for the first view; then chart state the pointer and keyboard change). |
@@ -1226,7 +1226,7 @@ along x for the nearest-point search's pruning) read the same slots, so the
 pointer, tooltips, and the keyboard find points where they are drawn.
 Marks of a legend group take their slots from the group's roster, its
 visible names across the chart (`Frame.groups`), rather than from their own
-series: grouped bars, box plots, violins, dodged histograms, points, error
+series: grouped bars, box plots, boxen marks, violins, dodged histograms, points, error
 bars, lines, and areas of one group then stand alike even when one lacks a
 name.
 
@@ -1702,7 +1702,7 @@ same. Areas stacked by a series field do the same, each panel's layers on
 the x positions of that panel's rows, with edges of their own. Heatmaps split like row-aligned marks: each panel's raster and cell
 index read only its rows, so a cell takes the last row with a value among
 them, and equal cells of other panels never meet (see Points and rasters).
-Marks whose series summarize rows (histograms, box plots, violins) are
+Marks whose series summarize rows (histograms, box plots, boxen marks, violins) are
 split before they combine them: with `split`, their `series` lists only
 their series' keys, labels, and colors (the legend's, `model.series()`'s),
 and the splitter hands them each panel's rows of their table
@@ -1714,7 +1714,7 @@ rows without a series value do, as in one chart), then counts each panel's
 rows by series code in one pass; percent and density are over a panel
 series' own counts, stacks are of the visible series within a panel, and a
 series without rows in a panel has no bars there rather than empty bins.
-Box plots and violins summarize each panel's rows as one chart summarizes
+Box plots, boxen marks, and violins summarize each panel's rows as one chart summarizes
 all of them, and list series in one chart's order (each series value by
 the first category it has values in: a pass over the rows, nothing
 summarized). Every panel lists every series, absent ones empty, so slots
@@ -3568,7 +3568,7 @@ marks (each panel's inspector is given the index of every mark it inspects,
 since subplots inspect some marks only and one mark object may be listed
 twice) and `id`, the series key, and the row of the mark's table, which is
 `rowOf(series, position)` for every mark whose series index table rows.
-Marks whose series index rows of a summary (histograms, box plots, violins)
+Marks whose series index rows of a summary (histograms, box plots, boxen marks, violins)
 say so with `summarizes`, and their points have no row. Layout items carry a
 row where one row is the item (gauges, radar points, map shapes and points);
 a map of several layers tags its items with the layer's index. Building an
@@ -4002,6 +4002,21 @@ without an open output and advances its stale-report fence; other
 networks keep theirs. Map viewport restoration keeps x and y without requiring axis metadata.
 Replacements reset those tables in place, so points with `animationKey`
 animate across replacements, as they do in JavaScript apps.
+`herceg.express` charts remember their call (function, copied arguments,
+the seed used, the columns read, and the marks the function drew), so
+`hx.recompute(chart, data)` makes them again from new data, adding the
+marks added to them since; bootstrap results are memoized per call by a
+digest of their inputs (values, weights, units, options, seed, grid), and a
+recompute starts from the previous chart's, so unchanged groups are not
+resampled. A widget of an express chart keeps a copy of the function's
+columns: `append` and `replace` change those rows, the function makes the
+chart again, and when its marks, layout, and tables' columns are the
+same, one "tables" message carries the changed tables and options, which
+the browser decodes before resetting any; otherwise one "chart" message
+carries the whole new spec, which the browser loads without touching the
+interaction state (zoom, brush, and reports still waiting for the
+throttle stay), and each view, drawing it again, keeps the series its
+legend groups hid and its focus.
 The Streamlit component (`herceg.streamlit.chart`, components v2) has no
 connection that outlives a script run, so every run sends the whole chart as
 one binary payload: a uint32 header length, the JSON header (spec, buffer
@@ -4205,7 +4220,7 @@ mouse input, through Playwright's mouse.
   shrink instead), lines whose x positions or level of detail change,
   panels, categories that come or go, and the first appearance of a chart
   show at once.
-- Box plots and violins recompute every group's statistics (and violins
+- Box plots, boxen marks, and violins recompute every group's statistics (and violins
   their densities) when their table changes, in every panel of charts with
   facets. On a log axis, a box or violin
   whose median is zero or below has no tooltip or keyboard stop, though

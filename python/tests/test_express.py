@@ -114,8 +114,9 @@ def test_orders_of_numbers_and_times_name_levels_by_value():
     assert list(hx.statistics(ordered).tables["estimates"]["day"]) == ["2026-01-02"]
 
 
-def test_seeds_are_drawn_and_recorded_when_not_given():
-    first = hx.barplot(TIPS, x="day", y="tip")
+def test_seeds_are_0_by_default_or_drawn_and_recorded_for_none():
+    assert hx.statistics(hx.barplot(TIPS, x="day", y="tip")).seed == 0
+    first = hx.barplot(TIPS, x="day", y="tip", seed=None)
     seed = hx.statistics(first).seed
     assert isinstance(seed, int) and f"seed {seed}" in first.to_spec()[0]["description"]
     again = hx.barplot(TIPS, x="day", y="tip", seed=seed)
@@ -182,7 +183,7 @@ def test_regplot_lowess_and_polynomials():
     curved = hx.regplot(data, x="x", y="y", order=3, ci=None, scatter=False, grid_size=20)
     assert [mark["type"] for mark in marks(curved)] == ["line"]
     assert len(hx.statistics(curved).tables["fit"]["x"]) == 20
-    with pytest.raises(ValueError, match="no polynomial order"):
+    with pytest.raises(ValueError, match="regplot lowess: order and lowess each choose the fit"):
         hx.regplot(data, x="x", y="y", lowess=True, order=2)
     one = hx.regplot({"x": [1.0, 1.0], "y": [2.0, 3.0]}, x="x", y="y")
     assert "had no fit" in hx.statistics(one).description
@@ -287,8 +288,8 @@ def test_mistakes_are_refused_with_the_column_or_option_named():
         hx.barplot(TIPS, x="day", y="tip", seed=-1)
     with pytest.raises(ValueError, match="barplot series: column 'day' is the category axis"):
         hx.barplot(TIPS, x="day", y="tip", series="day")
-    with pytest.raises(ValueError, match='barplot estimator: expected "mean" or "median"'):
-        hx.barplot(TIPS, x="day", y="tip", estimator="sum")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match='barplot estimator: expected "mean", "median", "sum"'):
+        hx.barplot(TIPS, x="day", y="tip", estimator="mode")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="not made by a herceg.express function"):
         hx.statistics(hg.Chart(TIPS).bar(x="day", y="tip"))
 
@@ -616,7 +617,7 @@ def test_strip_box_and_violin_plots():
     assert boxes["low"][row][0] == inside[0] and boxes["high"][row][0] == inside[-1]
     summary = hx.boxplot(PENGUINS, x="species", y="flipper", outliers=False)
     (mark,) = marks(summary)
-    assert mark["median"] == "median" and mark["count"] == "n" and "y" not in mark
+    assert mark["outliers"] is False and mark["y"] == "flipper"
     violin = hx.violinplot(PENGUINS, x="flipper", y="species", bandwidth=2)
     (mark,) = marks(violin)
     assert mark["type"] == "violin" and mark["x"] == "flipper" and mark["bandwidth"] == 2
@@ -702,6 +703,18 @@ def test_one_column_on_both_axes():
     fit = hx.regplot(data, x="v", y="v", seed=0)
     table = hx.statistics(fit).tables["fit"]
     assert np.allclose(table["v_"], table["v"])
+    # Points keep x and y apart when a partial moves y.
+    same = {"v": [1.0, 2.0, 3.0, 4.0], "u": [1.0, 2.0, 3.0, 4.0]}
+    moved = hx.regplot(same, x="v", y="v", y_partial="u", ci=None)
+    spec, buffers = moved.to_spec()
+    points = spec["marks"][0]
+    assert points["x"] == "v" and points["y"] == "v_"
+    columns = spec["data"][points["data"]]["columns"]
+    assert list(np.frombuffer(buffers[columns["v"]["buffer"]], dtype="<f8")) == same["v"]
+    # Binned estimates keep the bins' centers apart from the estimates.
+    binned = hx.regplot({"v": [1.0, 2.0, 5.0, 6.0]}, x="v", y="v", x_bins=[0.0, 5.0], ci=None)
+    estimates = hx.statistics(binned).tables["estimates"]
+    assert list(estimates["v"]) == [0.0, 5.0] and list(estimates["v_"]) == [1.5, 5.5]
     line = hx.lineplot(data, x="v", y="v", seed=0)
     assert list(hx.statistics(line).tables["estimates"]["v_"]) == [0.0, 1.0, 2.0, 3.0]
     for chart in (fit, line):
@@ -863,8 +876,9 @@ def test_regressions_of_timestamps_and_tiny_samples():
 def test_statistic_names_stay_apart_from_the_datas():
     data = {"low": ["a", "a", "a", "b", "b", "b"], "n": [1.0, 2.0, 4.0, 3.0, 5.0, 6.0]}
     chart = hx.boxplot(data, x="low", y="n", outliers=False)
-    (mark,) = marks(chart)
-    assert mark["x"] == "low" and mark["low"] == "low_" and mark["count"] == "n_"
+    boxes = hx.statistics(chart).tables["boxes"]
+    assert list(boxes["low"]) == ["a", "b"] and list(boxes["low_"]) == [1.0, 3.0]
+    assert list(boxes["n_"]) == [3.0, 3.0]
     assert "<svg" in chart.to_svg()
     kde = hx.kdeplot(
         {"v": [1.0, 2.0, 2.5, 4.0], "density": ["a", "a", "b", "b"]}, x="v", series="density"
@@ -988,8 +1002,12 @@ def test_whiskers_take_the_box_plot_marks_values():
     assert marks(double)[0]["whiskers"] == 2.0
     assert "within 2 IQR of the box" in hx.statistics(double).description
     hidden = hx.boxplot(PENGUINS, x="species", y="flipper", outliers=False)
-    assert marks(hidden)[0]["type"] == "boxplot" and "y" not in marks(hidden)[0]
+    assert marks(hidden)[0]["outliers"] is False
     assert "points beyond them" not in hx.statistics(hidden).description
+    # Hidden outliers leave the whiskers where they are.
+    assert np.array_equal(
+        hx.statistics(hidden).tables["boxes"]["low"], hx.statistics(default).tables["boxes"]["low"]
+    )
     for refused, shown in ((math.inf, "inf"), (-1, "-1"), (True, "True"), ("iqr", '"iqr"')):
         with pytest.raises(
             ValueError,
@@ -1017,10 +1035,12 @@ def test_jitter_is_the_point_marks_fraction_of_the_band():
         "width": 0.5,
         "seed": 2,
     }
+    # Seed 0, the point mark's, by default.
+    assert jitter_of(hx.stripplot(PENGUINS, x="species", y="flipper")) == {"width": 0.5}
     narrow = hx.stripplot(PENGUINS, x="species", y="flipper", jitter=0.3, seed=1)
     assert jitter_of(narrow) == {"width": 0.3, "seed": 1}
     assert "jittered across 30% of each category" in hx.statistics(narrow).description
-    drawn = hx.stripplot(PENGUINS, x="species", y="flipper", jitter=0.3)
+    drawn = hx.stripplot(PENGUINS, x="species", y="flipper", jitter=0.3, seed=None)
     assert jitter_of(drawn)["seed"] == hx.statistics(drawn).seed
     given = hx.stripplot(PENGUINS, x="species", y="flipper", jitter=hg.Jitter(width=0.2, seed=9))
     assert jitter_of(given) == {"width": 0.2, "seed": 9} and hx.statistics(given).seed == 9
@@ -1310,3 +1330,357 @@ def test_histplot_fills_steps_frequencies_and_weights_follow_seaborn():
         hx.histplot({"v": [1.0, 2.0], "w": [1.0, -1.0]}, x="v", weight="w", bins=2)
     with pytest.raises(ValueError, match='histplot multiple: "dodge" places bars side by side'):
         hx.histplot(PENGUINS, x="flipper", series="species", multiple="dodge", element="step")
+
+
+# Weights, estimators, and units ------------------------------------------------------
+
+SUBJECTS = {
+    "time": np.repeat(np.arange(10.0), 12),
+    "event": np.tile(np.repeat(["cue", "stim"], 6), 10),
+    "subject": np.tile([f"s{i}" for i in (3, 1, 10, 7, 2, 5)], 20),
+}
+SUBJECTS["signal"] = np.sin(SUBJECTS["time"] / 3) + RNG.normal(0, 0.2, 120)
+SUBJECTS["w"] = RNG.uniform(0.2, 2, 120)
+
+
+def test_weighted_estimates_match_seaborns_weighted_aggregator():
+    pd = pytest.importorskip("pandas")
+    statistics = pytest.importorskip("seaborn._statistics")
+    frame = pd.DataFrame({**TIPS, "w": RNG.uniform(0, 3, N)})
+    chart = hx.barplot(frame, x="day", y="tip", series="sex", weight="w", seed=2)
+    estimates = hx.statistics(chart).tables["estimates"]
+    aggregate = statistics.WeightedAggregator("mean", ("ci", 95), n_boot=1000, seed=2)
+    for i in range(len(estimates["n"])):
+        rows = frame[(frame["day"] == estimates["day"][i]) & (frame["sex"] == estimates["sex"][i])]
+        expected = aggregate(rows.rename(columns={"w": "weight"}), "tip")
+        assert (estimates["tip"][i], estimates["low"][i], estimates["high"][i]) == pytest.approx(
+            tuple(expected), rel=1e-12
+        )
+    assert "the mean of tip weighted by w" in hx.statistics(chart).description
+    line = hx.lineplot(SUBJECTS, x="time", y="signal", weight="w", errorbar=None)
+    first = SUBJECTS["time"] == 0
+    expected = np.average(SUBJECTS["signal"][first], weights=SUBJECTS["w"][first])
+    assert hx.statistics(line).tables["estimates"]["signal"][0] == pytest.approx(expected)
+    for refused, message in (
+        ({"estimator": "median"}, "barplot weight: weighted estimates are means"),
+        ({"errorbar": ("sd", 1)}, "barplot errorbar: weighted means take bootstrap intervals only"),
+        ({"units": "sex"}, "barplot units: weighted means resample rows with their weights"),
+    ):
+        with pytest.raises(ValueError, match=re.escape(message)):
+            hx.barplot(frame, x="day", y="tip", weight="w", **refused)
+    with pytest.raises(ValueError, match="barplot weight: column 'w' holds negative values"):
+        hx.barplot({"g": ["a", "b"], "v": [1.0, 2.0], "w": [1.0, -1.0]}, x="g", y="v", weight="w")
+
+
+def test_estimators_and_intervals_may_be_functions():
+    pd = pytest.importorskip("pandas")
+    statistics = pytest.importorskip("seaborn._statistics")
+    frame = pd.DataFrame(TIPS)
+    spread = lambda v: (float(np.min(v)), float(np.max(v)))  # noqa: E731
+    chart = hx.pointplot(frame, x="day", y="tip", estimator=np.median, errorbar=spread)
+    estimates = hx.statistics(chart).tables["estimates"]
+    aggregate = statistics.EstimateAggregator(np.median, spread)
+    for i, day in enumerate(estimates["day"]):
+        expected = aggregate(frame[frame["day"] == day], "tip")
+        assert (estimates["tip"][i], estimates["low"][i], estimates["high"][i]) == pytest.approx(
+            tuple(expected)
+        )
+    description = hx.statistics(chart).description
+    assert "the median of tip" in description and "intervals from a function" in description
+    summed = hx.barplot(frame, x="day", y="tip", estimator="sum", errorbar=None)
+    totals = hx.statistics(summed).tables["estimates"]
+    assert totals["tip"][0] == pytest.approx(frame["tip"][frame["day"] == totals["day"][0]].sum())
+    with pytest.raises(ValueError, match=r'barplot errorbar: "se" is the standard error of'):
+        hx.barplot(frame, x="day", y="tip", estimator="median", errorbar="se")
+    with pytest.raises(ValueError, match=r"barplot estimator: returned nan for day 'thu'"):
+        hx.barplot(frame, x="day", y="tip", order=["thu"], estimator=lambda v: math.nan)
+    for returned in (np.complex128(2 + 3j), np.timedelta64(3, "D"), "2", 10**1000):
+        with pytest.raises(ValueError, match="barplot estimator: returned .* return one finite"):
+            hx.barplot(frame, x="day", y="tip", estimator=lambda v, r=returned: r)
+    with pytest.raises(ValueError, match=r"barplot estimator: returned array\(\[.*\]\) for day"):
+        hx.barplot(frame, x="day", y="tip", estimator=lambda v: np.percentile(v, [25, 75]))
+    with pytest.raises(ValueError, match=r"barplot errorbar: returned \(2.0, 1.0\) for day"):
+        hx.barplot(frame, x="day", y="tip", errorbar=lambda v: (2.0, 1.0))
+    for returned in (None, (1.0, 2.0, 3.0), (1.0, math.inf)):
+        with pytest.raises(ValueError, match="barplot errorbar: returned .* the interval's two"):
+            hx.barplot(frame, x="day", y="tip", errorbar=lambda v, r=returned: r)
+    points = {"x": [1.0, 1.0, 2.0, 2.0], "y": [1.0, 2.0, 3.0, 4.0]}
+    calls = iter([1.0] + [math.nan] * 10_000)
+    with pytest.raises(ValueError, match="barplot estimator: returned nan for a resample of day"):
+        hx.barplot(frame, x="day", y="tip", order=["thu"], estimator=lambda v: next(calls))
+    with pytest.raises(ValueError, match="regplot x_estimator: returned nan for x 1; return one"):
+        hx.regplot(points, x="x", y="y", x_estimator=lambda v: math.nan)
+    with pytest.raises(ValueError, match=r"regplot x_estimator: returned array\("):
+        hx.regplot(points, x="x", y="y", x_estimator=lambda v: np.array([1.0, 2.0]))
+    with pytest.raises(ValueError, match='regplot x_estimator: expected "mean"'):
+        hx.regplot(points, x="x", y="y", x_estimator="mode")  # type: ignore[arg-type]
+
+
+def test_units_resample_units_then_their_rows_as_seaborn_does():
+    pd = pytest.importorskip("pandas")
+    statistics = pytest.importorskip("seaborn._statistics")
+    frame = pd.DataFrame(SUBJECTS)
+    chart = hx.pointplot(frame, x="event", y="signal", units="subject", seed=4, n_boot=300)
+    estimates = hx.statistics(chart).tables["estimates"]
+    aggregate = statistics.EstimateAggregator("mean", ("ci", 95), n_boot=300, seed=4)
+    for i, event in enumerate(estimates["event"]):
+        rows = frame[frame["event"] == event].rename(columns={"subject": "units"})
+        expected = aggregate(rows, "signal")
+        assert (estimates["signal"][i], estimates["low"][i], estimates["high"][i]) == (
+            pytest.approx(tuple(expected), rel=1e-12)
+        )
+    assert "resamples of the units of subject and the rows within them" in (
+        hx.statistics(chart).description
+    )
+    with pytest.raises(ValueError, match="barplot units: units are what bootstrap intervals"):
+        hx.barplot(frame, x="event", y="signal", units="subject", errorbar=("sd", 1))
+    with pytest.raises(ValueError, match="barplot units: column 'event' is plotted"):
+        hx.barplot(frame, x="event", y="signal", units="event")
+
+
+def test_lineplot_units_draw_a_line_per_unit_in_its_series_color():
+    chart = hx.lineplot(
+        SUBJECTS,
+        x="time",
+        y="signal",
+        series="event",
+        units="subject",
+        estimator=None,
+        errorbar=None,
+    )
+    (line,) = marks(chart)
+    assert line["series"] == "event" and line["legendGroup"] == "series"
+    spec, buffers = chart.to_spec()
+    drawn = spec["data"]["data"]["columns"]
+    y = np.frombuffer(buffers[drawn["signal"]["buffer"]], dtype="<f8")
+    # Twelve units' lines, each broken from the next by a missing value.
+    assert np.isnan(y).sum() == 11 and len(y) == 120 + 11
+    rows = hx.statistics(chart).tables["rows"]
+    assert len(rows["signal"]) == 120 and "one line per subject" in hx.statistics(chart).description
+    with pytest.raises(ValueError, match="lineplot units: a line per unit draws each unit's rows"):
+        hx.lineplot(SUBJECTS, x="time", y="signal", units="subject")
+    assert "<svg" in chart.to_svg()
+
+
+def test_kde_and_ecdf_weights_follow_seaborn():
+    statistics = pytest.importorskip("seaborn._statistics")
+    flipper = PENGUINS["flipper"]
+    weights = RNG.uniform(0.1, 2, PENGUINS_N)
+    data = {**PENGUINS, "w": weights}
+    kde = hx.kdeplot(data, x="flipper", weight="w")
+    density = hx.statistics(kde).tables["density"]
+    expected, grid = statistics.KDE()(flipper, weights=weights)
+    assert np.allclose(density["flipper"], grid, rtol=1e-12)
+    assert np.allclose(density["density"], expected, rtol=1e-10)
+    ecdf = hx.ecdfplot(data, x="flipper", weight="w", normalize="count")
+    steps = hx.statistics(ecdf).tables["ecdf"]
+    heights, values = statistics.ECDF(stat="count")(flipper, weights=weights)
+    # Seaborn steps at every row; ours at each distinct value, as its last row does.
+    theirs = dict(zip(values[1:], heights[1:], strict=True))
+    assert np.allclose(steps["flipper"], list(theirs))
+    assert np.allclose(steps["Count"], list(theirs.values()), rtol=1e-12)
+    assert "each row weighted by w" in hx.statistics(ecdf).description
+    pair = hx.kdeplot(data, x="flipper", y="mass", weight="w", grid_size=40)
+    cells = hx.statistics(pair).tables["density"]
+    expected, (xs, ys) = statistics.KDE(gridsize=40)(flipper, PENGUINS["mass"], weights=weights)
+    assert np.allclose(np.unique(cells["flipper"]), xs) and np.allclose(
+        np.unique(cells["mass"]), ys
+    )
+    ours = cells["density"].reshape(40, 40)
+    # Both indexed [y, x]; ours sets tails below a billionth of the peak to 0.
+    theirs = np.where(expected < expected.max() * 1e-9, 0, expected)
+    assert np.allclose(ours, theirs, rtol=1e-9, atol=expected.max() * 1e-9)
+    # A covariance rounding leaves short of positive definite draws no density.
+    line = hx.kdeplot(
+        {"x": [0.0, 1.0, 2.0], "y": [0.0, 10.0, 20.0], "w": [1.0, 2.0, 3.0]},
+        x="x",
+        y="y",
+        weight="w",
+    )
+    assert len(hx.statistics(line).tables["density"]["density"]) == 0
+    # A panel of too few weighed rows has no density, rather than failing.
+    light = {**data, "w": np.where(PENGUINS["sex"] == "f", 0.0, weights)}
+    split = hx.kdeplot(light, x="flipper", y="mass", weight="w", facet_column="sex")
+    assert set(hx.statistics(split).tables["density"]["sex"]) == {"m"}
+    with pytest.raises(ValueError, match="kdeplot weight: column 'flipper' is plotted"):
+        hx.kdeplot(data, x="flipper", weight="flipper")
+
+
+# Regression variants ------------------------------------------------------------------
+
+
+def test_logistic_robust_and_logx_fits_follow_seaborn():
+    regression = pytest.importorskip("seaborn.regression")
+    pytest.importorskip("statsmodels")
+    x = RNG.uniform(0.5, 10, 150)
+    outcome = (RNG.uniform(size=150) < 1 / (1 + np.exp(-(x - 5)))).astype(float)
+    y = 1 + 2 * np.log(x) + RNG.standard_t(2, 150)
+    data = {"x": x, "outcome": outcome, "y": y}
+    for kind, column in (("logistic", "outcome"), ("robust", "y"), ("logx", "y")):
+        chart = hx.regplot(data, x="x", y=column, n_boot=100, seed=5, **{kind: True})
+        fit = hx.statistics(chart).tables["fit"]
+        plotter = regression._RegressionPlotter(x, data[column], n_boot=100, seed=5, **{kind: True})
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            _, yhat, (low, high) = plotter.fit_regression(grid=fit["x"])
+        assert np.allclose(fit[column], yhat, rtol=1e-8)
+        assert np.allclose(fit["low"], low, rtol=1e-6) and np.allclose(fit["high"], high, rtol=1e-6)
+    described = hx.statistics(hx.regplot(data, x="x", y="outcome", logistic=True)).description
+    assert "logistic regression fits" in described
+    with pytest.raises(ValueError, match="regplot robust: logistic and robust each choose"):
+        hx.regplot(data, x="x", y="outcome", logistic=True, robust=True)
+    with pytest.raises(ValueError, match="regplot logistic: column 'y' holds values outside"):
+        hx.regplot(data, x="x", y="y", logistic=True)
+    with pytest.raises(ValueError, match="regplot weight: weights weigh least-squares fits"):
+        hx.regplot({**data, "w": x}, x="x", y="y", robust=True, weight="w")
+    with pytest.raises(ValueError, match="regplot x_jitter: jitter would move points off"):
+        hx.regplot(data, x="x", y="y", x_jitter=0.1)
+
+
+def test_regplot_estimates_points_per_x_or_bin_as_seaborn_does():
+    regression = pytest.importorskip("seaborn.regression")
+    x = np.round(RNG.uniform(0, 10, 120))
+    y = x + RNG.normal(0, 1, 120)
+    data = {"x": x, "y": y}
+    for options in ({"x_estimator": np.mean}, {"x_bins": 4}, {"x_bins": 4, "x_ci": "sd"}):
+        chart = hx.regplot(data, x="x", y="y", n_boot=200, seed=6, **options)
+        points, errors, *_ = marks(chart)
+        assert points["type"] == "point" and errors["type"] == "errorbar"
+        estimates = hx.statistics(chart).tables["estimates"]
+        plotter = regression._RegressionPlotter(x, y, n_boot=200, seed=6, **options)
+        xs, ys, cis = plotter.estimate_data
+        assert np.allclose(estimates["x"], xs) and np.allclose(estimates["y"], ys)
+        assert np.allclose(estimates["low"], [c[0] for c in cis], rtol=1e-12)
+        assert np.allclose(estimates["high"], [c[1] for c in cis], rtol=1e-12)
+    # The fit still uses every row.
+    binned = hx.statistics(hx.regplot(data, x="x", y="y", x_bins=3, ci=None)).tables["fit"]
+    plain = hx.statistics(hx.regplot(data, x="x", y="y", ci=None)).tables["fit"]
+    assert np.allclose(binned["y"], plain["y"])
+    nothing = hx.regplot(data, x="x", y="y", x_bins=3, x_ci=None, fit_reg=False)
+    assert [mark["type"] for mark in marks(nothing)] == ["point"]
+
+
+def test_regplot_partials_units_and_weights():
+    sm = pytest.importorskip("statsmodels.api")
+    regression = pytest.importorskip("seaborn.regression")
+    x = RNG.uniform(0, 10, 90)
+    other = RNG.normal(0, 1, 90)
+    subject = RNG.choice(list("abcdef"), 90)
+    w = RNG.uniform(0.2, 3, 90)
+    y = 1 + 0.5 * x + 2 * other + RNG.normal(0, 0.5, 90)
+    data = {"x": x, "y": y, "other": other, "subject": subject, "w": w}
+    partial = hx.regplot(data, x="x", y="y", y_partial="other", ci=None)
+    plotter = regression._RegressionPlotter(x, y, y_partial=other, ci=None)
+    grid = hx.statistics(partial).tables["fit"]["x"]
+    _, yhat, _ = plotter.fit_regression(grid=grid)
+    assert np.allclose(hx.statistics(partial).tables["fit"]["y"], yhat, rtol=1e-9)
+    units = hx.regplot(data, x="x", y="y", units="subject", n_boot=100, seed=2)
+    plotter = regression._RegressionPlotter(x, y, units=subject, n_boot=100, seed=2)
+    fit = hx.statistics(units).tables["fit"]
+    _, _, (low, high) = plotter.fit_regression(grid=fit["x"])
+    assert np.allclose(fit["low"], low, rtol=1e-8) and np.allclose(fit["high"], high, rtol=1e-8)
+    weighted = hx.regplot(data, x="x", y="y", weight="w", ci=None)
+    wls = sm.WLS(y, sm.add_constant(x), weights=w).fit()
+    coefficients = hx.statistics(weighted).tables["coefficients"]
+    assert np.allclose([coefficients["x^0"][0], coefficients["x^1"][0]], wls.params, rtol=1e-9)
+    # Rows of no weight take no part in a fit, however far off their x.
+    far = hx.regplot(
+        {"x": [0.0, 1.0, 1e16], "y": [0.0, 1.0, 0.0], "w": [1.0, 1.0, 0.0]},
+        x="x",
+        y="y",
+        weight="w",
+        ci=None,
+    )
+    coefficients = hx.statistics(far).tables["coefficients"]
+    assert (coefficients["x^0"][0], coefficients["x^1"][0]) == pytest.approx((0.0, 1.0), abs=1e-12)
+    # Nor in the partials' effects.
+    base = {"x": [0.0, 1.0, 2.0, 3.0], "y": [1.0, 1.0, 5.0, 7.0], "p": [0.0, 1.0, 0.0, 1.0]}
+    weighed = {**base, "w": [1.0, 1.0, 1.0, 1.0]}
+    extra = {
+        name: [*column, value]
+        for (name, column), value in zip(weighed.items(), (100.0, 1000.0, 10.0, 0.0), strict=True)
+    }
+
+    def slope(data):
+        chart = hx.regplot(data, x="x", y="y", y_partial="p", weight="w", ci=None)
+        return hx.statistics(chart).tables["coefficients"]["x^1"][0]
+
+    assert slope(extra) == pytest.approx(slope(weighed), rel=1e-12)
+    # Without truncation, fits reach the x the fits were made over, partials removed.
+    shifted = {
+        "x": [0.0, 1001.0, 2.0, 1003.0],
+        "p": [0.0, 1.0, 0.0, 1.0],
+        "y": [1.0, 1.0, 3.0, 3.0],
+    }
+    wide = hx.regplot(shifted, x="x", y="y", x_partial="p", truncate=False, ci=None)
+    reach = hx.statistics(wide).tables["fit"]["x"]
+    assert (reach.min(), reach.max()) == pytest.approx((500.5, 502.5))
+    logged = {"x": [1.0, 2.0, 3.0, -1.0], "y": [1.0, 2.0, 3.0, 100.0], "w": [1.0, 1.0, 1.0, 0.0]}
+    assert (
+        "log x"
+        in hx.statistics(
+            hx.regplot(logged, x="x", y="y", weight="w", logx=True, ci=None)
+        ).description
+    )
+    zero = {"x": [1.0, 2.0, 3.0], "y": [1.0, 5.0, 2.0], "w": [1.0, 0.0, 0.0]}
+    nothing = hx.regplot(zero, x="x", y="y", weight="w", ci=None)
+    assert "1 group with too few distinct x values had no fit" in (
+        hx.statistics(nothing).description
+    )
+    with pytest.raises(ValueError, match="regplot x_partial: x with another column's effect"):
+        hx.regplot(data, x="x", y="y", x_partial="other", logx=True)
+    with pytest.raises(ValueError, match="regplot y_partial: outcomes with another column's"):
+        hx.regplot(
+            {**data, "b": (y > 6).astype(float)}, x="x", y="b", y_partial="other", logistic=True
+        )
+    robust = hx.residplot(data, x="x", y="y", robust=True)
+    rlm = sm.RLM(y, sm.add_constant(x)).fit()
+    assert np.allclose(hx.statistics(robust).tables["residuals"]["residual"], rlm.resid)
+
+
+# Letter values -------------------------------------------------------------------------
+
+
+def test_boxenplot_draws_the_boxen_mark_with_seaborns_letter_values():
+    statistics = pytest.importorskip("seaborn._statistics")
+    chart = hx.boxenplot(PENGUINS, x="species", y="flipper", series="sex", depth="trustworthy")
+    (mark,) = marks(chart)
+    assert mark == {
+        "type": "boxen",
+        "x": "species",
+        "y": "flipper",
+        "series": "sex",
+        "depth": "trustworthy",
+        "legendGroup": "series",
+        "data": "data",
+    }
+    tables = hx.statistics(chart).tables
+    boxes, groups = tables["boxes"], tables["groups"]
+    keys = zip(groups["species"], groups["sex"], groups["levels"], strict=True)
+    for species, sex, levels in keys:
+        values = PENGUINS["flipper"][(PENGUINS["species"] == species) & (PENGUINS["sex"] == sex)]
+        expected = statistics.LetterValues("trustworthy", 0.007, 0.05)(values)
+        assert levels == expected["k"]
+        rows = (boxes["species"] == species) & (boxes["sex"] == sex)
+        ends = np.r_[boxes["low"][rows], boxes["high"][rows][-1]]
+        assert np.array_equal(ends, expected["values"])
+    options = hx.boxenplot(
+        PENGUINS, x="flipper", y="species", depth=3, width_method="area", outliers=False
+    )
+    (mark,) = marks(options)
+    assert mark["depth"] == 3 and mark["widthMethod"] == "area" and mark["outliers"] is False
+    numpy_depth = hx.boxenplot(PENGUINS, x="species", y="flipper", depth=np.int64(2))
+    assert marks(numpy_depth)[0]["depth"] == 2
+    assert "<svg" in chart.to_svg() and "<svg" in options.to_svg()
+    with pytest.raises(ValueError, match="boxenplot depth: expected"):
+        hx.boxenplot(PENGUINS, x="species", y="flipper", depth="quartiles")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="boxenplot outlier_proportion: expected a number between"):
+        hx.boxenplot(PENGUINS, x="species", y="flipper", outlier_proportion=1.5)
+    for seaborn, ours in (("k_depth", "depth"), ("outlier_prop", "outlier_proportion")):
+        with pytest.raises(
+            TypeError, match=f"boxenplot: no option '{seaborn}'; did you mean '{ours}'"
+        ):
+            hx.boxenplot(PENGUINS, x="species", y="flipper", **{seaborn: 1})
+    for function in (hx.barplot, hx.regplot, hx.ecdfplot):
+        with pytest.raises(TypeError, match="no option 'weights'; did you mean 'weight'"):
+            function(PENGUINS, x="flipper", y="mass", weights="mass")

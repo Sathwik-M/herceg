@@ -1868,6 +1868,7 @@ class Chart:
         count: str | None = None,
         whiskers: Literal["tukey", "range"] | float | None = None,
         notch: bool | None = None,
+        outliers: bool | None = None,
         series: str | None = None,
         fill: str | None = None,
         fill_opacity: float | None = None,
@@ -1892,6 +1893,8 @@ class Chart:
         extend 1.57 IQR / sqrt(count) from the median, without clamping.
         Raw ``whiskers`` are "tukey" (default), "range", or a nonnegative
         IQR multiple; precomputed boxes already give their whisker ends.
+        ``outliers=False`` draws no dots beyond the whiskers (tooltips still
+        count them), and leaves them out of the value axis' extent.
         """
         statistics = {"low": low, "q1": q1, "median": median, "q3": q3, "high": high}
         precomputed = any(value is not None for value in statistics.values()) or count is not None
@@ -1916,6 +1919,10 @@ class Chart:
                 )
             if notch and count is None:
                 raise ValueError("boxplot notch: precomputed boxes need count to notch; give count")
+            if outliers is not None:
+                raise ValueError(
+                    "boxplot outliers: precomputed boxes have none to draw; drop outliers"
+                )
         elif x is None or y is None:
             raise ValueError(f"boxplot {'x' if x is None else 'y'}: raw values need both x and y")
         if (
@@ -1936,6 +1943,8 @@ class Chart:
             whiskers = float(whiskers)
         if notch is not None and not isinstance(notch, bool):
             raise TypeError(f"boxplot notch: expected True or False; received {shown(notch)}")
+        if outliers is not None and not isinstance(outliers, bool):
+            raise TypeError(f"boxplot outliers: expected True or False; received {shown(outliers)}")
         return self._distribution(
             {
                 "type": "boxplot",
@@ -1944,7 +1953,96 @@ class Chart:
                 "count": count,
                 "whiskers": whiskers,
                 "notch": notch,
+                "outliers": outliers,
                 "legendGroup": _legend_group(legend_group, "boxplot"),
+            },
+            x,
+            y,
+            data,
+            series,
+            fill_opacity,
+            label,
+            axis,
+            facet,
+            panel,
+            id,
+        )
+
+    def boxen(
+        self,
+        x: str,
+        y: str,
+        *,
+        data: Any = None,
+        series: str | None = None,
+        depth: Literal["tukey", "proportion", "trustworthy", "full"] | int | None = None,
+        outlier_proportion: float | None = None,
+        trust_alpha: float | None = None,
+        width_method: Literal["exponential", "linear", "area"] | None = None,
+        outliers: bool | None = None,
+        fill: str | None = None,
+        fill_opacity: float | None = None,
+        label: str | None = None,
+        legend_group: str | None = None,
+        axis: Literal["left", "right"] | None = None,
+        facet: Literal["repeat"] | None = None,
+        panel: str | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """Letter-value ("boxen") plots of a number column's values per category.
+
+        One of ``x`` and ``y`` is a category column, the other the values:
+        a category ``y`` lays the boxes along the y axis. Each group draws
+        nested boxes between its letter values, its quartiles, eighths,
+        sixteenths, ... out from the median, each level narrower and lighter
+        than the one inside it, and dots at the values beyond the outermost
+        boxes unless ``outliers=False``. ``depth`` chooses the levels:
+        "tukey" (the default) leaves 5 to 8 values in each tail,
+        "proportion" about ``outlier_proportion`` (0.007) of them,
+        "trustworthy" stops where a letter value's confidence interval at
+        ``trust_alpha`` (0.05) would overlap the next, "full" reaches every
+        value, or a whole number gives the levels (1 is the quartile box).
+        ``width_method`` narrows each level by half ("exponential", the
+        default), by equal steps ("linear"), or to its share of the values
+        over its height ("area"). ``series`` puts a group per value of a
+        category column side by side; ``fill`` gives every box one color.
+        """
+        if depth is not None and depth not in ("tukey", "proportion", "trustworthy", "full"):
+            if not (
+                isinstance(depth, numbers.Integral) and not isinstance(depth, bool) and depth >= 1
+            ):
+                raise ValueError(
+                    'boxen depth: expected "tukey", "proportion", "trustworthy", "full", or a '
+                    f"whole number of levels from 1; received {shown(depth)}"
+                )
+            depth = int(depth)
+        for name, value in (
+            ("outlier_proportion", outlier_proportion),
+            ("trust_alpha", trust_alpha),
+        ):
+            if value is not None and not (
+                isinstance(value, numbers.Real) and not isinstance(value, bool) and 0 < value < 1
+            ):
+                raise ValueError(
+                    f"boxen {name}: expected a number between 0 and 1; received {shown(value)}"
+                )
+        if width_method is not None and width_method not in ("exponential", "linear", "area"):
+            raise ValueError(
+                'boxen width_method: expected "exponential", "linear", or "area"; '
+                f"received {shown(width_method)}"
+            )
+        if outliers is not None and not isinstance(outliers, bool):
+            raise TypeError(f"boxen outliers: expected True or False; received {shown(outliers)}")
+        return self._distribution(
+            {
+                "type": "boxen",
+                "fill": fill,
+                "depth": depth,
+                "outlierProportion": outlier_proportion,
+                "trustAlpha": trust_alpha,
+                "widthMethod": width_method,
+                "outliers": outliers,
+                "legendGroup": _legend_group(legend_group, "boxen"),
             },
             x,
             y,
@@ -2045,7 +2143,8 @@ class Chart:
         panel: str | None,
         id: str | None,
     ) -> Chart:
-        """Adds a box plot or violin mark: a category column on one axis, values on the other."""
+        """Adds a box plot, boxen, or violin mark: a category column on one
+        axis, values on the other."""
         kind = spec["type"]
         table = self._mark_table(data)
         precomputed = spec.get("median") is not None
@@ -2064,7 +2163,7 @@ class Chart:
             self._require(table, values, _NUMERIC, f"{kind} {'x' if horizontal else 'y'}")
         self._require(table, series, ("category",), f"{kind} series")
         if horizontal and axis == "right":
-            noun = "box plots" if kind == "boxplot" else "violins"
+            noun = {"boxplot": "box plots", "boxen": "boxen plots", "violin": "violins"}[kind]
             raise ValueError(
                 f'{kind} axis: horizontal {noun} have no right axis; drop axis="right"'
             )
@@ -3487,7 +3586,7 @@ class Chart:
             kind = mark["type"]
             if table is None or table_name(table) != name:
                 continue
-            if brush == "lasso" and kind in ("histogram", "boxplot", "violin"):
+            if brush == "lasso" and kind in ("histogram", "boxplot", "boxen", "violin"):
                 raise ValueError(
                     f"SelectionBinding events: lassos cannot select the rows of {kind} marks "
                     'yet; leave out "lasso"'
@@ -3502,7 +3601,7 @@ class Chart:
                         f"brushed along {observed} only; received {shown(brush)}"
                     )
                 continue
-            if kind not in ("histogram", "boxplot", "violin"):
+            if kind not in ("histogram", "boxplot", "boxen", "violin"):
                 continue
             # A summary's value axis holds statistics: a histogram's counts,
             # across its binned axis, and box plots' values, which may lie along x.
@@ -4847,6 +4946,17 @@ _ELSEWHERE: dict[str, tuple[str, ...]] = {
     "facet_col_wrap": ("facet_columns",),
     "template": ("theme",),
     "labels": ("x_axis", "y_axis"),
+    # Seaborn's statistical options herceg names as its marks do.
+    "weights": ("weight",),
+    "stat": ("normalize",),
+    "whis": ("whiskers",),
+    "showfliers": ("outliers",),
+    "k_depth": ("depth",),
+    "outlier_prop": ("outlier_proportion",),
+    "fill": ("filled",),
+    "err_style": ("error_style",),
+    "kde_kws": ("kde_options",),
+    "gridsize": ("grid_size",),
 }
 
 
@@ -5503,6 +5613,7 @@ def boxplot(
     count: str | None = None,
     whiskers: Literal["tukey", "range"] | float | None = None,
     notch: bool | None = None,
+    outliers: bool | None = None,
     series: str | None = None,
     fill: str | None = None,
     fill_opacity: float | None = None,
@@ -5525,7 +5636,49 @@ def boxplot(
         count=count,
         whiskers=whiskers,
         notch=notch,
+        outliers=outliers,
         series=series,
+        fill=fill,
+        fill_opacity=fill_opacity,
+        label=label,
+        legend_group=legend_group,
+        axis=axis,
+        panel=panel,
+        id=id,
+    )
+
+
+@helper
+def boxen(
+    data: Any,
+    x: str,
+    y: str,
+    *,
+    series: str | None = None,
+    depth: Literal["tukey", "proportion", "trustworthy", "full"] | int | None = None,
+    outlier_proportion: float | None = None,
+    trust_alpha: float | None = None,
+    width_method: Literal["exponential", "linear", "area"] | None = None,
+    outliers: bool | None = None,
+    fill: str | None = None,
+    fill_opacity: float | None = None,
+    label: str | None = None,
+    legend_group: str | None = None,
+    axis: Literal["left", "right"] | None = None,
+    panel: str | None = None,
+    id: str | None = None,
+    **options: Unpack[HelperOptions],
+) -> Chart:
+    """Letter-value plots of ``y`` per category of ``x``, or of ``x`` per category of ``y``."""
+    return _chart_of(data, options).boxen(
+        x,
+        y,
+        series=series,
+        depth=depth,
+        outlier_proportion=outlier_proportion,
+        trust_alpha=trust_alpha,
+        width_method=width_method,
+        outliers=outliers,
         fill=fill,
         fill_opacity=fill_opacity,
         label=label,

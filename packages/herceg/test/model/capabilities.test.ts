@@ -13,6 +13,7 @@ import { estimateText } from "../../src/layout/text.ts";
 import { Polyline } from "../../src/lod/polyline.ts";
 import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
+import { boxen } from "../../src/marks/boxen.ts";
 import { boxplot } from "../../src/marks/boxplot.ts";
 import { candlestick } from "../../src/marks/candlestick.ts";
 import { monotonePolyline } from "../../src/marks/curve.ts";
@@ -176,6 +177,11 @@ const cartesian: MarkCase[] = [
   {
     name: "boxplot",
     make: (p) => boxplot(samples, { x: "category", y: "y", series: "group", ...p }),
+    kind: "rect",
+  },
+  {
+    name: "boxen",
+    make: (p) => boxen(samples, { x: "category", y: "y", series: "group", ...p }),
     kind: "rect",
   },
   {
@@ -434,7 +440,7 @@ describe("capabilities: facets", () => {
     const { scene, model } = build(facetConfig(c));
     expect(scene.panels.map((p) => p.key)).toEqual(["N", "S"]);
     for (const panel of scene.panels) expectGeometry(panel, c.kind);
-    if (!c.repeats && !["histogram", "boxplot", "violin"].includes(c.name)) {
+    if (!c.repeats && !["histogram", "boxplot", "boxen", "violin"].includes(c.name)) {
       // Source series really split: at most three of the six rows per panel.
       for (const panel of scene.panels) {
         expect(model.panelSeries(panel.key).every((s) => s.length <= 3)).toBe(true);
@@ -1070,7 +1076,9 @@ describe("capabilities: synced selection", () => {
   });
 
   it.each(
-    cartesian.filter((c) => ["bar", "point", "boxplot", "violin", "heatmap"].includes(c.name)),
+    cartesian.filter((c) =>
+      ["bar", "point", "boxplot", "boxen", "violin", "heatmap"].includes(c.name),
+    ),
   )("$name refuses sync when panel categories are independent", (c) => {
     const mark =
       c.name === "bar"
@@ -1104,6 +1112,7 @@ describe("capabilities: row selection", () => {
       "point swarm",
       "histogram",
       "boxplot",
+      "boxen",
       "violin",
       "rug",
     ]),
@@ -1402,6 +1411,7 @@ describe("capabilities: tooltip and keyboard reading", () => {
 
   it.each([
     { name: "boxplot", make: boxplot },
+    { name: "boxen", make: boxen },
     { name: "violin", make: violin },
   ])("$name skips nonpositive medians on log axes", (c) => {
     const signed = table({

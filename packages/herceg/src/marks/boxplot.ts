@@ -32,6 +32,7 @@ type StatisticsOptions<S extends Schema> = {
   q3: NumericField<S>;
   high: NumericField<S>;
   whiskers?: never;
+  outliers?: never;
 };
 
 type BoxPlotStyleOptions<S extends Schema> = Pick<
@@ -69,7 +70,7 @@ const SEGMENTS = 9;
  */
 export class BoxPlotMark extends DistributionMark<BoxPlotSpec, readonly number[]> {
   /** Room past the outermost whisker or outlier for an outlier's dot. */
-  readonly inset = this.horizontal ? { x: RADIUS + 1, y: 0 } : { x: 0, y: RADIUS + 1 };
+  readonly inset: { readonly x: number; readonly y: number };
   protected readonly noun = ["box", "boxes"] as const;
   protected readonly width = BOX;
 
@@ -89,6 +90,8 @@ export class BoxPlotMark extends DistributionMark<BoxPlotSpec, readonly number[]
     );
     if (this.horizontal && spec.axis === "right")
       throw new TypeError('boxplot axis: horizontal boxes have no right axis; drop axis: "right"');
+    const room = spec.outliers === false ? 0 : RADIUS + 1;
+    this.inset = this.horizontal ? { x: room, y: 0 } : { x: 0, y: room };
     if (precomputed) {
       for (const name of STATS) {
         const field = spec[name];
@@ -189,7 +192,7 @@ export class BoxPlotMark extends DistributionMark<BoxPlotSpec, readonly number[]
     add: (value: number) => void,
   ): void {
     for (const stat of ["low", "q1", "median", "q3", "high"] as const) add(stats[stat][row]!);
-    for (const value of groups[row]!) add(value);
+    if (this.spec.outliers !== false) for (const value of groups[row]!) add(value);
     if (this.spec.notch) {
       for (const value of this.notchBounds(stats, row)) add(value);
     }
@@ -227,8 +230,10 @@ export class BoxPlotMark extends DistributionMark<BoxPlotSpec, readonly number[]
       const { stats, groups: outliers } = this.summaryOf(s);
       const { q1, median, q3, low, high } = stats;
       const width = share * BOX;
+      // Outliers stay in the summary (tooltips count them) when not drawn.
+      const dotted = this.spec.outliers !== false;
       let points = 0;
-      for (let k = 0; k < s.length; k++) points += outliers[rowOf(s, k)]!.length;
+      if (dotted) for (let k = 0; k < s.length; k++) points += outliers[rowOf(s, k)]!.length;
       const rects = frame.floats(s.key, "box", s.length * 4);
       const lines = frame.floats(s.key, "lines", s.length * (this.spec.notch ? 15 : SEGMENTS) * 4);
       const coords = frame.floats(s.key, "outliers", points * 2);
@@ -312,6 +317,7 @@ export class BoxPlotMark extends DistributionMark<BoxPlotSpec, readonly number[]
           segment(center, box, center, end);
           segment(center - cap, end, center + cap, end);
         }
+        if (!dotted) continue;
         for (const value of outliers[row]!) {
           const c = across.map(value);
           if (!Number.isFinite(c)) continue;
@@ -372,8 +378,8 @@ export class BoxPlotMark extends DistributionMark<BoxPlotSpec, readonly number[]
   /** The whiskers, outliers, and notch interval bound a box's span. */
   span(series: Series, row: number): readonly [number, number] {
     const { stats, groups } = this.summaryOf(series);
-    // Outliers are ascending.
-    const outliers = groups[row]!;
+    // Outliers are ascending, and bound the span only when drawn.
+    const outliers = this.spec.outliers === false ? NO_OUTLIERS : groups[row]!;
     const low = stats.low[row]!;
     const high = stats.high[row]!;
     const [notchLow, notchHigh] = this.spec.notch
@@ -421,6 +427,7 @@ export function boxplot<S extends Schema>(
       "count",
       "whiskers",
       "notch",
+      "outliers",
       "series",
       "fill",
       "fillOpacity",

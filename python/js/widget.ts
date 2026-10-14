@@ -130,6 +130,8 @@ type Columns = Record<string, ColumnSpec>;
 export type Update = { revision: number } & (
   | { type: "append"; table: string; columns: Columns; maxRows?: number }
   | { type: "replace"; table: string; columns: Columns }
+  | { type: "tables"; tables: Record<string, Columns>; options: Record<string, unknown> }
+  | { type: "chart"; spec: ChartSpec; rows: Record<string, [number, number]> }
   | { type: "options"; options: Record<string, unknown> }
   | { type: "select"; selection: SelectionPayload | null; origin?: string }
   | { type: "viewport"; viewport: ViewportPayload | null; panel?: string; origin?: string }
@@ -203,7 +205,7 @@ class Widget {
       // that has applied as many changes already draws the same chart.
       if (!this.#resyncing && snapshot.revision <= this.#revision) return;
       this.#load(snapshot);
-      for (const view of this.#views) this.#mount(view);
+      for (const view of this.#views) this.#mount(view, true);
     });
     model.on("msg:custom", (message: Update, buffers: DataView[]) =>
       this.#receive(message, buffers ?? []),
@@ -256,17 +258,34 @@ class Widget {
     for (const [event, states] of Object.entries(snapshot.panel_states ?? {}))
       for (const [panel, state] of Object.entries(states))
         this.#states.set(stateKey(event as PanelEvent, panel), state);
+    this.#loadChart(snapshot.spec, snapshot.buffers, snapshot.rows ?? {});
+    for (const { table, channel, selection } of snapshot.rowSelections ?? []) {
+      const rows = selection?.kind === "rows" ? snapshot.buffers[selection.rows!] : undefined;
+      this.#setRows(table, channel, selection, rows && view(rows));
+    }
+  }
+
+  /**
+   * Loads a chart's spec: its tables, marks, and options, and the stores
+   * of its row selections, which Python numbers rows of as `numbering` says.
+   * Interaction state stays as it is.
+   */
+  #loadChart(
+    spec: ChartSpec,
+    buffers: readonly SpecBuffer[],
+    numbering: Record<string, [number, number]>,
+  ) {
     // Option updates never change the row selection: it binds the tables loaded here.
-    const { data, marks, version, facet, panels, grid, rowSelection, ...options } = snapshot.spec;
+    const { data, marks, version, facet, panels, grid, rowSelection, ...options } = spec;
     this.#structure = { data, marks, version, facet, panels, grid, rowSelection };
     this.#options = options;
     for (const stop of this.#unsubscribe) stop();
     this.#unsubscribe = [];
     try {
-      const loaded = loadSpec(snapshot.spec, snapshot.buffers);
+      const loaded = loadSpec(spec, buffers);
       this.#tables = loaded.tables;
       this.#config = loaded.config;
-      this.#networkTables = networkTables(snapshot.spec);
+      this.#networkTables = networkTables(spec);
       this.#stores = loaded.stores;
       this.#error = undefined;
     } catch (error) {
@@ -276,11 +295,7 @@ class Widget {
       this.#stores = new Map();
       this.#error = error;
     }
-    this.#numbering = snapshot.rows ?? {};
-    for (const { table, channel, selection } of snapshot.rowSelections ?? []) {
-      const rows = selection?.kind === "rows" ? snapshot.buffers[selection.rows!] : undefined;
-      this.#setRows(table, channel, selection, rows && view(rows));
-    }
+    this.#numbering = numbering;
     // Changes of the channels by any view go to Python, as Python numbers rows.
     for (const [name, store] of this.#stores) {
       const channels = (this.#config?.rowSelection?.bindings ?? [])
@@ -350,7 +365,16 @@ class Widget {
     }
   }
 
-  #mount(view: View) {
+  /**
+   * Draws the chart in a view. A chart drawn again (`again`, from a whole
+   * chart Python sent) keeps what was hidden through its legend groups,
+   * whose keys name series by label, and the keyboard focus.
+   */
+  #mount(view: View, again = false) {
+    const hidden = again
+      ? (view.chart?.getHiddenKeys() ?? []).filter((key) => key.startsWith('{"legendGroup":'))
+      : [];
+    const focused = again && view.element.contains(view.element.ownerDocument.activeElement);
     view.chart?.destroy();
     view.chart = undefined;
     view.error?.remove();
@@ -369,6 +393,8 @@ class Widget {
     }
     view.chart = chart;
     view.positions = new Map();
+    if (hidden.length) chart.setHiddenKeys(hidden);
+    if (focused) view.element.querySelector<HTMLElement>("[tabindex]")?.focus();
     const config = this.#config;
     // Each subplot's map, network, or tree has a state of its own.
     const planes = config.panels ? statePanels(config, PLANES) : [];
@@ -633,6 +659,36 @@ class Widget {
         this.#keepCategorySelection();
         return;
       }
+      case "tables": {
+        // An express chart computed again: every table is read before any
+        // changes, so one that cannot be read changes nothing.
+        const tables = Object.entries(message.tables).map(([name, columns]) => {
+          const table = this.#table(name);
+          return [table, resetColumns(table, decode(columns, buffers))] as const;
+        });
+        for (const [table, columns] of tables) table.reset(columns);
+        for (const name of Object.keys(message.tables)) this.#dropPositions(name);
+        this.#keepMapView();
+        this.#keepCategorySelection();
+        if (Object.keys(message.options).length) this.#updateOptions(message.options);
+        return;
+      }
+      case "chart":
+        // An express chart computed again with other marks: its data and
+        // marks are new, not its interaction state, so the views draw it
+        // again keeping their zoom and brush, and reports still on their
+        // way to Python go on.
+        this.#loadChart(message.spec, buffers, message.rows);
+        // Its networks' data is new, so their moved nodes go, as Python lets
+        // go of them, with any moves still waiting to be reported.
+        this.#cancelItems();
+        for (const key of this.#states.keys())
+          if (key === "itemMove" || key.startsWith("itemMove:")) this.#states.set(key, {});
+        for (const view of this.#views) {
+          view.positions.clear();
+          this.#mount(view, true);
+        }
+        return;
       case "options":
         this.#updateOptions(message.options);
         return;

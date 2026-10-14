@@ -21,15 +21,15 @@
 //   along a stack's value axis selects the rows drawn in it, as a row set,
 //   and then the table's whole selection is a row set. So do calendar
 //   heatmaps, whose weekdays and months no field holds.
-// - Histograms are brushed along their bins' axis, box plots and violins
-//   along their categories' (the chart refuses the others; see `check` in
-//   row-selection.ts).
+// - Histograms are brushed along their bins' axis, box plots, boxen marks,
+//   and violins along their categories' (the chart refuses the others; see
+//   `check` in row-selection.ts).
 // - A lasso selects the rows whose drawn point is inside it: a point's
 //   center, a line's or area's vertex, a bar's end, a span's middle, a
 //   cell's center. Rows not drawn (a point missing a value it encodes, a
 //   time inside an axis break) are not selected by lassos or clicks.
 // - A click selects the row of the point or bar under the pointer, the
-//   rows a histogram bin counts, those of a box plot's or violin's group,
+//   rows a histogram bin counts, those of a box plot's, boxen's, or violin's group,
 //   or those of a heatmap's cell. A summary's index is never a row.
 // - In a chart of one layout mark (a map, a tree, a network), items say
 //   which rows they stand for (`LayoutResult.rowsOf`): a region's or a
@@ -82,13 +82,14 @@ const SELECTS = new Set([
   "candlestick",
   "histogram",
   "boxplot",
+  "boxen",
   "violin",
   "heatmap",
   "rug",
 ]);
 
 /** Marks drawing areas of the plot, whose rows are clicked inside them. */
-const REGIONS = new Set(["bar", "histogram", "boxplot", "violin", "heatmap"]);
+const REGIONS = new Set(["bar", "histogram", "boxplot", "boxen", "violin", "heatmap"]);
 
 /** Pixels from a point's edge a click may land and still select it. */
 const CLICK_SLOP = 4;
@@ -176,6 +177,7 @@ function readingsOf(mark: Mark): Reading[] {
       return [{ x: field(spec.x as string), y: { low: f("low"), high: f("high") } }];
     case "histogram":
     case "boxplot":
+    case "boxen":
     case "violin":
     case "rug":
       return [{ [along]: field(spec[along] as string) }];

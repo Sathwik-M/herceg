@@ -13,7 +13,7 @@ import {
 } from "../data/table.ts";
 import { insetDomain } from "../model/axis.ts";
 import type { Geometry } from "../scene/scene.ts";
-import type { BoxPlotSpec, Frozen, ViolinSpec } from "../spec/spec.ts";
+import type { BoxenSpec, BoxPlotSpec, Frozen, ViolinSpec } from "../spec/spec.ts";
 import { BandShares } from "./dodge.ts";
 import {
   type AxisFormat,
@@ -112,7 +112,7 @@ const NO_KEYS: readonly string[] = [];
  * for drawing, such as its outliers or its density. Split by facets, each
  * panel summarizes its own rows.
  */
-export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
+export abstract class DistributionMark<T extends BoxPlotSpec | BoxenSpec | ViolinSpec, G>
   implements Mark<Frozen<T>>
 {
   declare readonly [MARK]: true;

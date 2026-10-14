@@ -7,6 +7,7 @@ import type { ComponentProps } from "svelte";
 import {
   Area,
   Bar,
+  Boxen,
   BoxPlot,
   type Chart,
   Custom,
@@ -207,6 +208,13 @@ Rug(internals, { data: metrics, x: "service" });
 Rug(internals, { data: metrics, x: "time", side: "left" });
 // @ts-expect-error y rugs cannot use the right value axis
 Rug(internals, { data: metrics, y: "p50", axis: "right" });
+
+Boxen(internals, { data: metrics, x: "service", y: "p50", depth: "trustworthy" });
+Boxen(internals, { data: metrics, x: "p50", y: "service", depth: 4, outliers: false });
+// @ts-expect-error widthMethod takes the supported rules
+Boxen(internals, { data: metrics, x: "service", y: "p50", widthMethod: "square" });
+// @ts-expect-error boxen takes no whiskers
+Boxen(internals, { data: metrics, x: "service", y: "p50", whiskers: "tukey" });
 
 Violin(internals, {
   data: metrics,

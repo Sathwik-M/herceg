@@ -4,6 +4,7 @@
 // its `$props`, so these lines check what templates check.
 import { type Chart as HercegChart, table, time } from "herceg";
 import {
+  Boxen,
   BoxPlot,
   type Chart,
   Custom,
@@ -172,6 +173,13 @@ Rug({ data: metrics, x: "service" });
 Rug({ data: metrics, x: "time", side: "left" });
 // @ts-expect-error y rugs cannot use the right value axis
 Rug({ data: metrics, y: "p50", axis: "right" });
+
+Boxen({ data: metrics, x: "service", y: "p50", series: "service", depth: "trustworthy" });
+Boxen({ data: metrics, x: "p50", y: "service", depth: 4, widthMethod: "area", outliers: false });
+// @ts-expect-error widthMethod takes the supported rules
+Boxen({ data: metrics, x: "service", y: "p50", widthMethod: "square" });
+// @ts-expect-error boxen takes no whiskers
+Boxen({ data: metrics, x: "service", y: "p50", whiskers: "tukey" });
 
 Violin({
   data: metrics,

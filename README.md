@@ -54,7 +54,8 @@ beeswarms on category axes), heatmap (cells along number and time
 axes that zoom and pan, or in bands, and calendars by week or by month),
 error bar, candlestick (and
 OHLC bars), histogram (weighted, stacked as shares of each bin, or drawn as
-steps or polygons), pie (and donut), box plot, violin, treemap, sunburst, gauge,
+steps or polygons), pie (and donut), box plot (outliers shown or hidden),
+letter-value (boxen) plot, violin, treemap, sunburst, gauge,
 funnel, radar, Sankey, network (graph), and map marks (choropleth regions and
 points on Equal Earth, Natural Earth, Mercator, equirectangular, and conic
 equal-area projections, from GeoJSON or packed geometry columns), 3D scatter,
@@ -91,7 +92,7 @@ series (whole columns or split by a series field), WebGL drawing of large
 point series, chart specs with binary columns, a Python package, a second
 y axis (in facets and subplots too, shared or per panel), small multiples
 (wrapped or by row and column, with shared or per-panel x and y scales,
-histograms, box plots, and violins summarizing each panel's rows,
+histograms, box plots, boxen plots, and violins summarizing each panel's rows,
 annotations over a table drawing each row in its own panel, and categories
 per panel for every mark on a category axis), points on category axes,
 subplots (with weighted rows and columns), pies, treemaps, sunbursts, gauges, funnels, radars, Sankey

@@ -5,8 +5,10 @@ import {
   type AreaOptions,
   area,
   type BarOptions,
+  type BoxenOptions,
   type BoxPlotOptions,
   bar,
+  boxen,
   boxplot,
   type CandlestickOptions,
   type ChartMark,
@@ -221,8 +223,15 @@ export const Pie = /* @__PURE__ */ markComponent(
 export const BoxPlot = /* @__PURE__ */ markComponent(
   "BoxPlot",
   ({ data, ...options }: WithData<BoxPlotOptions<Schema>, Schema>) => boxplot(data, options),
-  ["notch"],
+  ["notch", "outliers"],
 ) as unknown as <S extends Schema>(props: WithData<BoxPlotOptions<S>, S>) => null;
+
+/** Letter-value plots: a category field on `x` or `y` and the values on the other. */
+export const Boxen = /* @__PURE__ */ markComponent(
+  "Boxen",
+  ({ data, ...options }: WithData<BoxenOptions<Schema>, Schema>) => boxen(data, options),
+  ["outliers"],
+) as unknown as <S extends Schema>(props: WithData<BoxenOptions<S>, S>) => null;
 
 /** Violins: a category field on `x` or `y` and the values on the other. */
 export const Violin = /* @__PURE__ */ markComponent(

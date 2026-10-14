@@ -3,6 +3,11 @@
 Updates change the data and options kept here and return the message that
 brings a browser up to date, with the new columns as binary buffers. A
 browser that connects later gets the whole current chart from ``to_spec``.
+
+An express chart's live data is the data its function was given
+(``ExpressData``): updates change those rows, the function makes the chart
+again from them, and the new chart's tables replace the old ones
+(``LiveChart.adopt``).
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ from ._chart import (
 )
 from ._data import Column, Table, shown
 from ._rows import bound_tables
+from .express._common import Call, call_of, remake
 
 if TYPE_CHECKING:
     from ._chart import Chart
@@ -33,10 +39,13 @@ Message = tuple[dict[str, Any], list[bytes]]
 
 
 class LiveChart:
-    def __init__(self, chart: Chart) -> None:
-        _check_live(chart._settings)
+    def __init__(self, chart: Chart, overrides: Mapping[str, Any] | None = None) -> None:
+        #: The options ``update`` changed, which a chart made again keeps.
+        self.overrides = dict(overrides or {})
+        settings = {**chart._settings, **self.overrides}
+        _check_live(settings)
         chart._check_spec()
-        self._settings = dict(chart._settings)
+        self._settings = settings
         self._options = spec_options(self._settings)
         self._layout = chart._layout_spec()
         self._marks = chart._mark_specs()
@@ -136,13 +145,7 @@ class LiveChart:
 
     def append(self, rows: Any, data: Any = None, max_rows: int | None = None) -> Message | None:
         """Adds rows to a table, keeping at most `max_rows` of them; None when there are none."""
-        if max_rows is not None and not (
-            isinstance(max_rows, int) and not isinstance(max_rows, bool) and max_rows >= 1
-        ):
-            raise ValueError(
-                "widget.append max_rows: expected a whole number of at least 1; "
-                f"received {shown(max_rows)}"
-            )
+        _check_max_rows(max_rows)
         name = self._table_name(data, "widget.append")
         if any(column.kind == "geometry" for column in self._tables[name].values()):
             raise ValueError(
@@ -216,13 +219,53 @@ class LiveChart:
             check_y_zoom(settings, right=any(on_right_axis(mark) for mark in self._marks))
         check_layout_options(settings, self._layouts, self._subplots)
         options = spec_options(settings)
-        changed = {
+        changed = self._changed_options(options)
+        self._settings, self._options = settings, options
+        self.overrides.update(changes)
+        return ({"type": "options", "options": changed}, []) if changed else None
+
+    def _changed_options(self, options: Mapping[str, Any]) -> dict[str, Any]:
+        """The spec options that differ from this chart's, None for removed ones."""
+        return {
             key: options.get(key)
             for key in sorted(set(options) | set(self._options))
             if options.get(key) != self._options.get(key)
         }
-        self._settings, self._options = settings, options
-        return ({"type": "options", "options": changed}, []) if changed else None
+
+    def drawn_alike(self, other: LiveChart) -> bool:
+        """Whether `other`, the same chart made again from other data, has
+        this chart's marks, layout, and tables' columns, so that its tables
+        can replace these in place (see `adopt`)."""
+        return (
+            self._layout == other._layout
+            and self._marks == other._marks
+            and self._derived == other._derived
+            and self._row_selection == other._row_selection
+            and {name: list(columns) for name, columns in self._tables.items()}
+            == {name: list(columns) for name, columns in other._tables.items()}
+        )
+
+    def adopt(self, other: LiveChart) -> Message | None:
+        """Takes the tables and options of `other`, drawn alike: the message
+        replaces the tables that changed and the options, at once (None
+        when nothing did)."""
+        buffers: list[bytes] = []
+        tables = {
+            name: columns_spec(columns, buffers)
+            for name, columns in other._tables.items()
+            if not _same_columns(columns, self._tables[name])
+        }
+        changed = self._changed_options(other._options)
+        for name in tables:
+            # The browser resets the table: rows are numbered from its first again.
+            self.dropped[name] = 0
+            self.generation[name] += 1
+        self._tables = {**self._tables, **{name: other._tables[name] for name in tables}}
+        self._settings, self._options = other._settings, other._options
+        self._sources, self._default = other._sources, other._default
+        if not tables and not changed:
+            return None
+        return {"type": "tables", "tables": tables, "options": changed}, buffers
 
     def _table_name(self, data: Any, method: str) -> str:
         """The table `data` names, for `method` (as messages name it)."""
@@ -279,6 +322,87 @@ class LiveChart:
         if len(set(lengths.values())) > 1:
             raise ValueError(f"{method} rows: expected columns of one length; received {lengths}")
         return batch
+
+
+class ExpressData:
+    """The rows an express chart's function computes from, as a live chart
+    keeps them: the columns the call read, copied when the widget is made
+    (so later changes to the caller's dataframe are not taken), and the
+    call, with the chart it made last (whose added marks a new chart keeps)."""
+
+    def __init__(self, chart: Chart, call: Call) -> None:
+        self.chart, self.call = chart, call
+        table = Table(call.data)
+        self.columns = {
+            name: _copied(table.column(name)) for name in table.names if name in call.read
+        }
+
+    def appended(self, rows: Any, max_rows: int | None) -> dict[str, Column]:
+        """The columns with `rows` after them, the oldest beyond `max_rows` dropped."""
+        _check_max_rows(max_rows)
+        batch = self._batch(rows, "widget.append")
+        if max_rows is not None and _length(batch) > max_rows:
+            batch = {field: _tail(column, max_rows) for field, column in batch.items()}
+        out = {}
+        for field, column in self.columns.items():
+            joined = _concatenate(column, batch[field])
+            out[field] = _tail(joined, max_rows) if max_rows is not None else joined
+        return out
+
+    def replaced(self, rows: Any) -> dict[str, Column]:
+        return self._batch(rows, "widget.replace")
+
+    def make(self, columns: dict[str, Column]) -> Chart:
+        """The chart made again from `columns`; nothing changes until `keep`."""
+        return remake(self.chart, self.call, columns)
+
+    def keep(self, columns: dict[str, Column], chart: Chart) -> None:
+        call = call_of(chart)
+        assert call is not None
+        self.columns, self.chart, self.call = columns, chart, call
+
+    def _batch(self, rows: Any, method: str) -> dict[str, Column]:
+        table = Table(_one_row(rows))
+        missing = [field for field in self.columns if field not in table.names]
+        if missing:
+            raise KeyError(
+                f"{method} rows: no column {', '.join(map(repr, missing))}; the "
+                f"{self.call.function.__name__} chart is computed from "
+                f"{', '.join(map(repr, self.columns))}"
+            )
+        batch = {
+            field: _as_kind(table.column(field), column, field, method)
+            for field, column in self.columns.items()
+        }
+        lengths = {field: len(column) for field, column in batch.items()}
+        if len(set(lengths.values())) > 1:
+            raise ValueError(f"{method} rows: expected columns of one length; received {lengths}")
+        return batch
+
+
+def _copied(column: Column) -> Column:
+    return Column(column.kind, column.values.copy(), column.dictionary, column.shapes)
+
+
+def _same_columns(a: Mapping[str, Column], b: Mapping[str, Column]) -> bool:
+    """Whether two tables hold the same values."""
+    return all(
+        a[name].kind == b[name].kind
+        and a[name].dictionary == b[name].dictionary
+        and a[name].values.dtype == b[name].values.dtype
+        and np.array_equal(a[name].values, b[name].values, equal_nan=a[name].kind != "category")
+        for name in a
+    )
+
+
+def _check_max_rows(max_rows: int | None) -> None:
+    if max_rows is not None and not (
+        isinstance(max_rows, int) and not isinstance(max_rows, bool) and max_rows >= 1
+    ):
+        raise ValueError(
+            "widget.append max_rows: expected a whole number of at least 1; "
+            f"received {shown(max_rows)}"
+        )
 
 
 def check_live_rows(chart: Chart) -> None:
