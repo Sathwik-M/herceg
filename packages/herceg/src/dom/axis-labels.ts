@@ -6,7 +6,7 @@
 
 import type { MeasureText } from "../layout/text.ts";
 import type { ChartModel, Inspection } from "../model/model.ts";
-import type { AxisGeometry, Rect, Scene } from "../scene/scene.ts";
+import type { AxisGuide, Rect, Scene } from "../scene/scene.ts";
 
 /** A value on an axis. */
 interface AxisLabel {
@@ -94,20 +94,20 @@ export class CrosshairLabels {
         panels.filter((p) => p.xGroup === panel.xGroup && p.plot.x === plot.x).map((p) => p.key),
       );
       const axisOf = (side: AxisLabel["side"]) => {
-        const own = drawn.axes.find((axis) => axis.orient === side);
+        const own = drawn.axes.find((axis) => axis.side === side);
         if (own || side !== "bottom") return own;
-        let lowest: AxisGeometry | undefined;
+        let lowest: AxisGuide | undefined;
         for (const p of scene.panels) {
           if (!sameX.has(p.key)) continue;
-          const axis = p.axes.find(({ orient }) => orient === "bottom");
-          if (axis && !(lowest && lowest.offset > axis.offset)) lowest = axis;
+          const axis = p.axes.find(({ side }) => side === "bottom");
+          if (axis && !(lowest && lowest.edge > axis.edge)) lowest = axis;
         }
         return lowest;
       };
       const along = inspection.axis;
       const label = (side: AxisLabel["side"], at: number, text: string) => {
         const axis = axisOf(side);
-        if (axis) labels.push({ side, at, edge: axis.offset, text });
+        if (axis) labels.push({ side, at, edge: axis.edge, text });
       };
       label(along === "x" ? "bottom" : "left", inspection.position, inspection.label);
       if (inspection !== active || !pointer) continue;

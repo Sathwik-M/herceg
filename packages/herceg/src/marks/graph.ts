@@ -3,7 +3,7 @@ import { n } from "../draw/markup.ts";
 import { pointDrawing } from "../draw/point.ts";
 import { segmentDrawing } from "../draw/segments.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
-import { textDrawing } from "../draw/text.ts";
+import { labelHalo, textDrawing } from "../draw/text.ts";
 import { formatNumber } from "../format/format.ts";
 import { fitLayout, type LayoutFit, layoutFit, separate } from "../layout/force.ts";
 import { graphView } from "../layout/graph-view.ts";
@@ -23,6 +23,7 @@ import type {
   TextGeometry,
 } from "../scene/scene.ts";
 import type { Frozen, GraphLayout, GraphSpec } from "../spec/spec.ts";
+import type { Halo } from "../spec/style.ts";
 import { surface } from "../theme.ts";
 import type {
   LayoutControls,
@@ -41,8 +42,8 @@ import {
 } from "./node-positions.ts";
 
 export type GraphOptions<S extends Schema, N extends Schema = Schema> = {
-  /** Set false to leave text without its readability outline. */
-  halo?: boolean;
+  /** The outline that keeps text readable: "auto" (the default), false for none, or a color of its own. */
+  halo?: Halo;
   /** Category field naming one end of each row's link. */
   source: CategoryField<S>;
   /** Category field naming the other end; a name in both fields is one node. */
@@ -1464,7 +1465,7 @@ export class GraphMark implements LayoutMark {
             fill: theme.text,
             anchor,
             // Labels lie over links and other nodes; the halo keeps them readable.
-            halo: this.spec.halo !== false,
+            halo: labelHalo(this.spec.halo, theme.text, frame),
             coords: Float32Array.from(sides[anchor].coords),
             labels: sides[anchor].labels,
             count: sides[anchor].labels.length,
@@ -1543,7 +1544,7 @@ export class GraphMark implements LayoutMark {
         key: "graph-link-labels",
         fill: theme.text,
         anchor: "middle",
-        halo: this.spec.halo !== false,
+        halo: labelHalo(this.spec.halo, theme.text, frame),
         coords: Float32Array.from(coords),
         labels,
         count: labels.length,

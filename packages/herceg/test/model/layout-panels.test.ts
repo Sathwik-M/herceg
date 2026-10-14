@@ -20,6 +20,7 @@ import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { panels } from "../../src/model/panels.ts";
 import type { Rect, SegmentGeometry, TextGeometry } from "../../src/scene/scene.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", ...config });
@@ -65,8 +66,8 @@ describe("pies in facet panels", () => {
 
   it("give a category one key, one color, and one legend entry in every panel", () => {
     const { model, scene } = build({ marks: [shares()], facet: facet("region") });
-    expect(scene.legend.map(({ label }) => label)).toEqual(["a", "b", "c"]);
-    const colors = new Map(scene.legend.map(({ key, color }) => [key, color]));
+    expect(legendOf(scene).map(({ label }) => label)).toEqual(["a", "b", "c"]);
+    const colors = new Map(legendOf(scene).map(({ key, color }) => [key, color]));
     for (const panel of ["North", "South"])
       for (const { key, color } of items(model, panel)) expect(color).toBe(colors.get(key));
     expect(new Set(colors.values()).size).toBe(3);
@@ -207,10 +208,8 @@ describe("a layout mark in a subplot", () => {
     for (const columns of [1, 2]) {
       const { scene, model } = build(subplots(marks, columns));
       const [trend, share] = scene.panels;
-      expect(trend!.axes.map(({ orient }) => orient).sort()).toEqual(["bottom", "left"]);
-      expect(trend!.axes.find(({ orient }) => orient === "bottom")!.ticks.length).toBeGreaterThan(
-        0,
-      );
+      expect(trend!.axes.map(({ side }) => side).sort()).toEqual(["bottom", "left"]);
+      expect(trend!.axes.find(({ side }) => side === "bottom")!.ticks.length).toBeGreaterThan(0);
       expect(share!.axes).toEqual([]);
       expect(share!.grid).toEqual({ x: [], y: [] });
       expect(model.panels().map(({ key }) => key)).toEqual(["trend"]);
@@ -238,7 +237,7 @@ describe("a layout mark in a subplot", () => {
         x: { title: "Week" },
       });
       const [trend, share] = scene.panels;
-      const title = trend!.axes.find(({ orient }) => orient === "bottom")!.title!;
+      const title = trend!.axes.find(({ side }) => side === "bottom")!.title!;
       expect(title.text).toBe("Week");
       // Below the line's plot, and clear of the pie's (and of its header's line).
       expect(title.y).toBeGreaterThan(trend!.plot.y + trend!.plot.height);
@@ -283,7 +282,7 @@ describe("a layout mark in a subplot", () => {
           [{ id: "trend" }, { id: "share" }],
           across ? { columns: 2, columnWidths: [10, 1] } : { rowHeights: [10, 1] },
         ),
-        resolve: { y: "shared" },
+        y: { scope: "chart" },
       });
       const [trend] = model.panels();
       const { plot, x, y } = trend!;

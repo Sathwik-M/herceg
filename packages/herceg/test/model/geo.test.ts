@@ -12,6 +12,7 @@ import { type ChartConfig, ChartModel, type ItemInspection } from "../../src/mod
 import { renderToSVG } from "../../src/render/static.ts";
 import type { PointGeometry, PolygonGeometry, Scene } from "../../src/scene/scene.ts";
 import { LIGHT, surface } from "../../src/theme.ts";
+import { keysOf, legendOf, rampsOf } from "../helpers/guides.ts";
 
 /** A square [lon, lat] ring, closed. */
 const ring = (x: number, y: number, s: number) => [
@@ -83,8 +84,8 @@ describe("geoshape", () => {
     // Cor has no value: the theme's grid color, index 0.
     expect(shapes.colorIndex[2]).toBe(0);
     expect(shapes.colors[0]).toBe(LIGHT.grid);
-    expect(scene.colorLegends).toHaveLength(1);
-    expect(scene.colorLegends[0]!.title.text).toBe("gdp");
+    expect(rampsOf(scene)).toHaveLength(1);
+    expect(rampsOf(scene)[0]!.title.text).toBe("gdp");
     const read = items(model);
     expect(read.map((item) => item.points[0]!.label)).toEqual(["Ada", "Bel", "Cor", "Dun"]);
     expect(read[1]!.label).toBe("gdp");
@@ -126,9 +127,9 @@ describe("geoshape", () => {
       marks: [geoshape(world, { color: "region" })],
     };
     const { model, scene } = build(config);
-    expect(scene.legend.map((entry) => entry.label)).toEqual(["North", "South", "East"]);
+    expect(legendOf(scene).map((entry) => entry.label)).toEqual(["North", "South", "East"]);
     const before = polygons(scene);
-    model.hidden.add(scene.legend[0]!.key);
+    model.hidden.add(legendOf(scene)[0]!.key);
     const after = polygons(model.scene(estimateText));
     expect(after.colorIndex[0]).toBe(0);
     expect(after.colorIndex[2]).toBe(0);
@@ -211,8 +212,8 @@ describe("geopoint", () => {
     expect(Array.from(layer!.radii!)).toEqual([...layer!.radii!].sort((a, b) => b - a));
     expect(layer!.ring).toEqual({ color: surface(LIGHT), width: 1 });
     expect(layer!.opaque).toBe(false);
-    expect(scene.glyphLegends).toHaveLength(1);
-    expect(scene.glyphLegends[0]!.title.text).toBe("people");
+    expect(keysOf(scene)).toHaveLength(1);
+    expect(keysOf(scene)[0]!.title.text).toBe("people");
   });
 
   it("finds the last-drawn point whose disc holds the pointer", () => {
@@ -252,8 +253,8 @@ describe("geopoint", () => {
       projection: "equirectangular",
       marks: [geopoint(cities(), { longitude: "lon", latitude: "lat", series: "kind" })],
     });
-    expect(scene.legend.map((entry) => entry.label)).toEqual(["capital", "town"]);
-    model.hidden.add(scene.legend[1]!.key);
+    expect(legendOf(scene).map((entry) => entry.label)).toEqual(["capital", "town"]);
+    model.hidden.add(legendOf(scene)[1]!.key);
     const shown = points(model.scene(estimateText));
     expect(shown.map((p) => p.count)).toEqual([1]);
     expect(items(model)).toHaveLength(1);
@@ -312,7 +313,7 @@ describe("geopoint", () => {
         }),
       ],
     });
-    expect(scene.legend.map((entry) => entry.color)).toEqual([LIGHT.muted, LIGHT.muted]);
+    expect(legendOf(scene).map((entry) => entry.color)).toEqual([LIGHT.muted, LIGHT.muted]);
   });
 
   it("color by a category, with a color key, and read the category", () => {
@@ -323,7 +324,7 @@ describe("geopoint", () => {
     expect(g!.colors!.categorical).toBe(true);
     const colors = Array.from(g!.colors!.index.subarray(0, g!.count), (i) => g!.colors!.palette[i]);
     expect(new Set(colors)).toEqual(new Set([LIGHT.palette[0], LIGHT.palette[1]]));
-    expect(scene.glyphLegends[0]!.entries.map((e) => [e.label.text, e.fill])).toEqual([
+    expect(keysOf(scene)[0]!.entries.map((e) => [e.label.text, e.fill])).toEqual([
       ["capital", LIGHT.palette[0]],
       ["town", LIGHT.palette[1]],
     ]);
@@ -344,8 +345,8 @@ describe("geopoint", () => {
         geopoint(cities(), { longitude: "lon", latitude: "lat", series: "kind", color: "kind" }),
       ],
     });
-    expect(scene.glyphLegends).toEqual([]);
-    expect(scene.legend.map((entry) => entry.color)).toEqual(LIGHT.palette.slice(0, 2));
+    expect(keysOf(scene)).toEqual([]);
+    expect(legendOf(scene).map((entry) => entry.color)).toEqual(LIGHT.palette.slice(0, 2));
   });
 
   it("keep their rings inside the plot", () => {

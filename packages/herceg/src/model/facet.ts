@@ -7,13 +7,13 @@
 
 import type { NumericArray } from "../data/column.ts";
 import type { Table } from "../data/table.ts";
+import { type Align, aligned } from "../layout/place.ts";
 import type { CustomSpec } from "../marks/custom.ts";
 import type { LayoutMark } from "../marks/layout-mark.ts";
 import { type BandContext, type Bands, type Mark, usesY } from "../marks/mark.ts";
 import type { Series } from "../marks/series.ts";
-import type { Rect, SceneText } from "../scene/scene.ts";
-import type { AxisSpec, FacetSpec, ResolveSpec, ScaleResolution } from "../spec/spec.ts";
-import type { AxisType } from "./axis.ts";
+import type { Rect } from "../scene/scene.ts";
+import type { AxisSpec, FacetSpec, ScaleScope } from "../spec/spec.ts";
 import type { MarkSeries } from "./inspect.ts";
 import {
   type AnnotatedPanel,
@@ -26,6 +26,7 @@ import {
   type DescribeAnnotation,
   groups,
   groupsOf,
+  type HeaderPlace,
   type LayoutConfig,
   leastHeight,
   type PanelAxis,
@@ -36,11 +37,12 @@ import {
   type PanelRoom,
   type PanelSplit,
   type RowSpace,
-  resolutionOf,
   rowGap,
   type ScaleGroups,
   trackSizes,
+  typedGroups,
 } from "./panel-layout.ts";
+import { type ScaledConfig, type Scopes, scopesOf } from "./scales.ts";
 
 export interface FacetOptions {
   /** Panels per row; by default about as many columns as rows. */
@@ -168,19 +170,21 @@ export class Facet implements PanelLayout {
           `${type} facet: every layer of the map repeats, so none splits into facet panels; drop facet from one`,
         );
     }
-    checkBands(marks, options, this.yDefault);
+    const scopes = this.scopes(options);
+    checkBands(marks, options, scopes);
     // A y zoom moves both y scales through the same pixels, so every panel must share each.
     const { zoom } = options.interaction ?? {};
     if (typeof zoom === "string" && zoom.includes("y")) {
-      const y = options.resolve?.y ?? "shared";
-      const right = options.resolve?.yRight ?? y;
-      if (y !== "shared")
+      if (scopes.y !== "chart")
         throw new Error(
           'chart interaction.zoom: panels with y scales of their own cannot zoom along y yet; share y or zoom along "x"',
         );
-      if (right !== "shared" && marks.some((mark) => mark.spec.axis === "right" && usesY(mark)))
+      if (
+        scopes.yRight !== "chart" &&
+        marks.some((mark) => mark.spec.axis === "right" && usesY(mark))
+      )
         throw new Error(
-          `chart interaction.zoom: panels with right y scales of their own (resolve.yRight "${right}") cannot zoom along y yet; share them or zoom along "x"`,
+          `chart interaction.zoom: panels with right y scales of their own (yRight.scope "${scopes.yRight}") cannot zoom along y yet; share them or zoom along "x"`,
         );
     }
     for (const mark of marks) {
@@ -239,8 +243,8 @@ export class Facet implements PanelLayout {
     };
   }
 
-  get yDefault(): ScaleResolution {
-    return "shared";
+  scopes(config: ScaledConfig): Scopes {
+    return scopesOf(config, "chart");
   }
 
   /** A grid's rows and columns are its fields' values; wrapped panels can be rearranged. */
@@ -269,21 +273,15 @@ export class Facet implements PanelLayout {
     return trackSizes(free, count, weights, panels, columns, room, this.remedy);
   }
 
-  resolution(axis: PanelAxis, resolve: ResolveSpec | undefined): ScaleResolution {
-    return resolutionOf(axis, resolve, this.yDefault);
-  }
-
-  /** Every panel's axes are the chart's. */
+  /** Every panel's axes are the chart's, and draw every mark. */
   groups(
-    resolution: ScaleResolution,
+    scope: ScaleScope,
     split: PanelSplit,
     columns: number,
     axis: PanelAxis,
     chart: AxisSpec | undefined,
-    type: AxisType,
   ): ScaleGroups {
-    const found = groups(resolution, split, columns, axis);
-    return { ...found, axes: found.drawn.map(() => ({ type, spec: chart })) };
+    return typedGroups(groups(scope, split, columns, axis), axis, () => chart);
   }
 
   across(
@@ -315,6 +313,11 @@ export class Facet implements PanelLayout {
    * row's beside the last column (past its right axis' labels, `aside`),
    * reading top to bottom.
    */
+  /**
+   * A wrapped panel's values above it, at its start unless `align` says;
+   * a grid's column values centered above its top row and its row values
+   * beside its last column, turned, unless `align` says.
+   */
   headers(
     _index: number,
     values: readonly string[],
@@ -324,24 +327,28 @@ export class Facet implements PanelLayout {
     grid: PanelGrid,
     fit: (text: string, room: number) => string,
     aside: number,
-  ): SceneText[] {
-    const out: SceneText[] = [];
+    align: Align | undefined,
+  ): HeaderPlace[] {
+    const out: HeaderPlace[] = [];
     // The one panel of a facet without values has nothing to name.
     if (values.length === 0) return out;
     const { header, columnHeader, rowHeader } = grid;
     if (header) {
       const text = fit(values.join(", "), plot.width);
-      out.push({ text, x: plot.x, y: plot.y - header / 2, anchor: "start", angle: 0 });
+      const { at, anchor } = aligned(align ?? "start", plot.x, plot.width);
+      out.push({ text, x: at, y: plot.y - header / 2, anchor, angle: 0 });
     }
     if (columnHeader && row === 0) {
       const text = fit(values.at(-1)!, plot.width);
-      const x = plot.x + plot.width / 2;
-      out.push({ text, x, y: plot.y - columnHeader / 2, anchor: "middle", angle: 0 });
+      const { at, anchor } = aligned(align ?? "center", plot.x, plot.width);
+      out.push({ text, x: at, y: plot.y - columnHeader / 2, anchor, angle: 0 });
     }
     if (rowHeader && column === grid.columns - 1) {
       const text = fit(values[0]!, plot.height);
       const x = plot.x + plot.width + aside + rowHeader / 2 + 4;
-      out.push({ text, x, y: plot.y + plot.height / 2, anchor: "middle", angle: 90 });
+      // Turned clockwise, the text's start is at the top.
+      const { at, anchor } = aligned(align ?? "center", plot.y, plot.height);
+      out.push({ text, x, y: at, anchor, angle: 90 });
     }
     return out;
   }
@@ -408,7 +415,7 @@ interface PanelValues {
 
 export class Splitter {
   readonly fields: readonly string[];
-  readonly #facet: Pick<Facet, "fields" | "splits" | "yDefault" | "remedy">;
+  readonly #facet: Pick<Facet, "fields" | "splits" | "scopes" | "remedy">;
   readonly #shape: (counts: readonly number[]) => { rows: number; columns: number };
   /** Each field's values, in order of first appearance across the split tables. */
   #dimensions: string[][];
@@ -427,7 +434,7 @@ export class Splitter {
   readonly #bands = new PanelBands();
 
   constructor(
-    facet: Pick<Facet, "fields" | "splits" | "yDefault" | "remedy">,
+    facet: Pick<Facet, "fields" | "splits" | "scopes" | "remedy">,
     shape: (counts: readonly number[]) => { rows: number; columns: number },
   ) {
     this.fields = facet.fields;
@@ -478,12 +485,9 @@ export class Splitter {
     for (const key of this.#bySeries.keys()) if (!used.has(key)) this.#bySeries.delete(key);
     // Marks that summarize rows read each panel's rows of their table, and
     // choose bins over the panels sharing their binned axis scale.
-    const xGroupOf = groupsOf(chart.config.resolve?.x ?? "shared", keys.length, columns);
-    const yGroupOf = groupsOf(
-      chart.config.resolve?.y ?? this.#facet.yDefault,
-      keys.length,
-      columns,
-    );
+    const scopes = this.#facet.scopes(chart.config);
+    const xGroupOf = groupsOf(scopes.x, keys.length, columns);
+    const yGroupOf = groupsOf(scopes.y, keys.length, columns);
     const summaries = base.map(({ mark, series }) =>
       splits(mark) && mark.summarizePanels
         ? mark.summarizePanels(
@@ -546,7 +550,7 @@ export class Splitter {
           : { mark: layout, index, rows: byPart[0]![p] },
       );
     }
-    this.#bands.place(split, columns, bands, chart.config.resolve, this.#facet.yDefault, context);
+    this.#bands.place(split, columns, bands, scopes, context);
     return split;
   }
 

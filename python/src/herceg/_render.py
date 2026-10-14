@@ -7,6 +7,7 @@ import base64
 import html as _html
 import json
 import math
+import re
 import tempfile
 import uuid
 import webbrowser
@@ -25,6 +26,10 @@ if TYPE_CHECKING:
 FontData = bytes | str | PathLike[str]
 FontWeight = Literal["normal", "bold"]
 Fonts = Mapping[str, FontData | Mapping[FontWeight, FontData]]
+#: How a standalone SVG sizes: at the chart's size, or as CSS or its container says.
+SvgSizing = Literal["fixed", "fluid"]
+#: How SVG strokes scale with the SVG: with it, or keeping their width in pixels.
+StrokeScaling = Literal["scale", "fixed"]
 PdfPageSize = Literal["A4", "Letter"]
 PdfOrientation = Literal["portrait", "landscape"]
 _FONT_LIMIT = 32 * 1024 * 1024
@@ -78,7 +83,8 @@ def html(spec: dict[str, Any], buffers: list[bytes], *, full_page: bool = True) 
     )
     if not full_page:
         return body
-    title = _html.escape(spec.get("title", "Chart"))
+    given = spec.get("title", "Chart")
+    title = _html.escape(given["text"] if isinstance(given, dict) else given)
     return (
         '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
         f"<title>{title}</title>\n"
@@ -125,9 +131,44 @@ def _call(function: str, *args: Any) -> str:
     raise ValueError(result["error"])
 
 
-def svg(spec: dict[str, Any], buffers: list[bytes], *, fonts: Fonts | None = None) -> str:
+_ASPECT = re.compile(r"none|x(Min|Mid|Max)Y(Min|Mid|Max)( (meet|slice))?")
+
+
+def svg(
+    spec: dict[str, Any],
+    buffers: list[bytes],
+    *,
+    fonts: Fonts | None = None,
+    sizing: SvgSizing | None = None,
+    preserve_aspect_ratio: str | None = None,
+    stroke_scaling: StrokeScaling | None = None,
+) -> str:
     """Standalone SVG, rendered by herceg's DOM-free renderer in an embedded V8."""
-    return _svg(spec, buffers, _font_faces(fonts, "to_svg"), location="to_svg")
+    if sizing not in (None, "fixed", "fluid"):
+        raise ValueError(f'to_svg sizing: expected "fixed" or "fluid"; received {shown(sizing)}')
+    if preserve_aspect_ratio is not None and not (
+        isinstance(preserve_aspect_ratio, str) and _ASPECT.fullmatch(preserve_aspect_ratio)
+    ):
+        raise ValueError(
+            'to_svg preserve_aspect_ratio: expected "none" or an alignment such as '
+            f'"xMidYMid meet"; received {shown(preserve_aspect_ratio)}'
+        )
+    if stroke_scaling not in (None, "scale", "fixed"):
+        raise ValueError(
+            f'to_svg stroke_scaling: expected "scale" or "fixed"; received {shown(stroke_scaling)}'
+        )
+    options = {
+        "sizing": sizing,
+        "preserveAspectRatio": preserve_aspect_ratio,
+        "strokeScaling": stroke_scaling,
+    }
+    return _svg(
+        spec,
+        buffers,
+        _font_faces(fonts, "to_svg"),
+        location="to_svg",
+        sizing={key: value for key, value in options.items() if value is not None},
+    )
 
 
 def _svg(
@@ -137,10 +178,16 @@ def _svg(
     *,
     location: str,
     raster: bool = False,
+    sizing: dict[str, str] | None = None,
 ) -> str:
     try:
         return _call(
-            "hercegStatic.svg", json.dumps(spec), _encoded(buffers), json.dumps(faces), raster
+            "hercegStatic.svg",
+            json.dumps(spec),
+            _encoded(buffers),
+            json.dumps(faces),
+            raster,
+            json.dumps(sizing or {}),
         )
     except ValueError as error:
         message = str(error)

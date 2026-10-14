@@ -1,34 +1,36 @@
-import { colorContrast, isLightColor } from "../scale/color.ts";
+import { cssColor } from "../scale/css-color.ts";
 import type { Drawing, TextGeometry } from "../scene/scene.ts";
+import type { Halo } from "../spec/style.ts";
+import { haloOf, type ResolvedHalo } from "../style/style.ts";
 import type { Theme } from "../theme.ts";
 import { escapeXml, n } from "./markup.ts";
 
 /**
- * The halo that keeps labels readable over lines and fills, an outline
- * drawn below the text: the background color at contrast of at least 3:1,
- * else (and without a background) white behind dark text and
- * black behind light text. Fills given by name are taken to be as light as
- * the theme's text.
+ * The halo that keeps a mark's labels colored `fill` readable over lines
+ * and fills, as the mark's `halo` asks ("auto" when left out; see
+ * `haloOf`), over what its frame draws on: the plot's fill, or the chart's
+ * background. Colors given by name are read with the CSS color table.
  */
-export function textHalo(fill: string, theme: Theme): { color: string; opacity: number } {
-  const { background } = theme;
-  if ((colorContrast(fill, background) ?? 0) >= 3) return { color: background, opacity: 1 };
-  const light = isLightColor(fill) ?? isLightColor(theme.text);
-  return { color: light ? "#000000" : "#ffffff", opacity: 0.85 };
+export function labelHalo(
+  halo: Halo | undefined,
+  fill: string,
+  frame: { theme: Theme; surface?: string | undefined },
+): ResolvedHalo | undefined {
+  const { theme } = frame;
+  return haloOf(halo ?? "auto", fill, frame.surface ?? theme.background, theme.text, cssColor);
 }
 
-/** Width of a text halo in pixels: it extends half of this around each glyph. */
-export const HALO_WIDTH = 3;
+/** SVG attributes of a halo, drawn under the text's fill. */
+export function haloAttributes(halo: ResolvedHalo): string {
+  return ` stroke="${escapeXml(halo.color)}" stroke-opacity="${halo.opacity}" stroke-width="${halo.width}" stroke-linejoin="round" paint-order="stroke"`;
+}
 
 /** Text labels, with a halo when asked. */
 export const textDrawing: Drawing<TextGeometry> = {
   guide: true,
   size: () => 0,
-  svg(mark, { theme }) {
-    const { color, opacity } = textHalo(mark.fill, theme);
-    const halo = mark.halo
-      ? ` stroke="${escapeXml(color)}" stroke-opacity="${opacity}" stroke-width="${HALO_WIDTH}" stroke-linejoin="round" paint-order="stroke"`
-      : "";
+  svg(mark) {
+    const halo = mark.halo ? haloAttributes(mark.halo) : "";
     const c = mark.coords;
     let out = `<g fill="${escapeXml(mark.fill)}" text-anchor="${mark.anchor}"${halo}>`;
     for (let i = 0; i < mark.count; i++) {

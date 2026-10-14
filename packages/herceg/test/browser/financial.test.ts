@@ -17,7 +17,7 @@ import type { SegmentGeometry } from "../../src/scene/scene.ts";
 import { MOUSE, modelOf } from "./helpers.ts";
 
 /** Without a background, the canvas holds what marks paint alone. */
-const CLEAR = { background: "transparent" } as const;
+const CLEAR = { tokens: { background: "transparent" } } as const;
 
 let host: HTMLDivElement;
 
@@ -89,7 +89,7 @@ describe("time axes with breaks", () => {
       marks: [line(table({ t: time([0, 20]), v: [0, 0] }), { x: "t", y: "v" })],
       x: { domain: [0, 20], breaks: timeBreaks([{ from: 4, to: 8 }]), seams: true, grid: false },
       y: { domain: [0, 1], grid: false },
-      theme: { ...CLEAR, grid: "#ff0000" },
+      theme: { tokens: { ...CLEAR.tokens, grid: "#ff0000" } },
     });
     const seam = chart.root.querySelector('path[data-kind="segments"]')!;
     expect(seam.getAttribute("stroke-width")).toBe("1");
@@ -467,7 +467,7 @@ describe("crosshair labels", () => {
     const chart = createChart(host, {
       tooltip: { axisLabels: true },
       panels: panels([{ id: "a", x: { show: false } }, { id: "b" }]),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
       marks: [
         line(times, { x: "t", y: "v", panel: "a" }),
         line(numbers, { x: "n", y: "v", panel: "b" }),

@@ -12,6 +12,7 @@ import { brushedRows, clickedRows } from "../../src/model/selected-rows.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { RasterGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
+import { rampsOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -50,16 +51,16 @@ describe("2D histograms", () => {
     expect(model.xScale()!.domain).toEqual([0, 10]);
     expect(model.yScale()!.domain).toEqual([0, 10]);
     // A ramp from 0 to the fullest cell.
-    expect(scene.colorLegends).toHaveLength(1);
-    expect(scene.colorLegends[0]!.low.text).toBe("0");
-    expect(scene.colorLegends[0]!.high.text).toBe("3");
-    expect(scene.colorLegends[0]!.title.text).toBe("Count");
+    expect(rampsOf(scene)).toHaveLength(1);
+    expect(rampsOf(scene)[0]!.low.text).toBe("0");
+    expect(rampsOf(scene)[0]!.high.text).toBe("3");
+    expect(rampsOf(scene)[0]!.title.text).toBe("Count");
     // Without colors of their own, cells take the theme's ramp.
     const dark = build({
       theme: "dark",
       marks: [histogram(pairs, { x: "x", y: "y", bins: { x: [0, 5, 10], y: 2 } })],
     });
-    expect(dark.scene.colorLegends[0]!.stops).not.toEqual(scene.colorLegends[0]!.stops);
+    expect(rampsOf(dark.scene)[0]!.stops).not.toEqual(rampsOf(scene)[0]!.stops);
   });
 
   it("weight rows, and measure probability, percent, frequency, or density per bin area", () => {
@@ -147,7 +148,7 @@ describe("2D histograms", () => {
     );
     expect(counted.flat(2).reduce((a, b) => a + b, 0)).toBe(7);
     // One ramp for both panels, to the fullest cell of either.
-    expect(shared.scene.colorLegends).toHaveLength(1);
+    expect(rampsOf(shared.scene)).toHaveLength(1);
   });
 
   it("bin times by calendar intervals, load from specs, and draw in static SVG", () => {

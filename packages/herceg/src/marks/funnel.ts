@@ -7,7 +7,7 @@ import type { CategoryField, NumberField, Schema, Table } from "../data/table.ts
 import { n } from "../draw/markup.ts";
 import { rectDrawing } from "../draw/rect.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
-import { textDrawing } from "../draw/text.ts";
+import { labelHalo, textDrawing } from "../draw/text.ts";
 import { formatNumber, numberFormatter } from "../format/format.ts";
 import { fitText } from "../layout/text.ts";
 import { ItemViews } from "../model/item-views.ts";
@@ -15,6 +15,7 @@ import type { LegendEntry } from "../model/legend.ts";
 import { contrastingText } from "../scale/color.ts";
 import type { Geometry, RectGeometry, ShapesGeometry, TextGeometry } from "../scene/scene.ts";
 import type { Frozen, FunnelSpec } from "../spec/spec.ts";
+import type { Halo } from "../spec/style.ts";
 import {
   heldText,
   type LayoutFrame,
@@ -27,8 +28,8 @@ import {
 import { CATEGORY, type ChartMark, DIM, frozen, type MARK, requireField } from "./mark.ts";
 
 export interface FunnelOptions<S extends Schema> {
-  /** Set false to leave text without its readability outline. */
-  halo?: boolean;
+  /** The outline that keeps text readable: "auto" (the default), false for none, or a color of its own. */
+  halo?: Halo;
   /** Category field: a stage per value, in the field's order unless `sort` says otherwise. */
   category: CategoryField<S>;
   /** Number field summed per stage; without it, stages count rows. */
@@ -389,7 +390,7 @@ export class FunnelMark implements LayoutMark {
                 key: `funnel-${part}`,
                 fill: color,
                 anchor,
-                halo: halo && this.spec.halo !== false,
+                halo: halo ? labelHalo(this.spec.halo, color, frame) : undefined,
                 coords: Float32Array.from(coords),
                 labels,
                 count: labels.length,

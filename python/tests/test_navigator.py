@@ -41,16 +41,16 @@ def test_navigator_options_are_checked():
     with pytest.raises(TypeError, match="Chart navigator: expected True, False, an hg.Navigator"):
         hg.Chart(DATA, navigator=40)  # type: ignore[arg-type]
     # One window shows one x range, which every panel must share.
-    for resolution in ("independent", "rows", "columns"):
+    for scope in ("panel", "row", "column"):
         for layout in ({"facet": "k"}, {"panels": ["a", "b"]}):
             with pytest.raises(
                 ValueError,
                 match=(
-                    "Chart navigator: needs one x scale shared by every panel, and resolve_x is "
-                    f'"{resolution}"; set resolve_x="shared" or drop navigator'
+                    "Chart navigator: needs one x scale shared by every panel, and x's scope is "
+                    f'"{scope}"; give x scope "chart" or drop navigator'
                 ),
             ):
-                hg.Chart(KEYED, navigator=True, resolve_x=resolution, **layout)  # type: ignore[arg-type]
+                hg.Chart(KEYED, navigator=True, x=hg.Axis(scope=scope), **layout)  # type: ignore[arg-type]
 
 
 KEYED = {**DATA, "k": ["a", "b"] * 250, "r": ["x"] * 250 + ["y"] * 250}
@@ -66,7 +66,9 @@ def test_facets_and_panels_take_a_navigator():
     assert spec["navigator"] == {"marks": ["close"]}
     assert [panel["id"] for panel in spec["panels"]] == ["price", "volume"]
     for layout in ({"facet": "k", "facet_columns": 2}, {"facet_row": "r", "facet_column": "k"}):
-        chart = hg.line(KEYED, x="t", y="v", navigator=True, resolve_x="shared", **layout)
+        chart = hg.line(
+            KEYED, x="t", y="v", navigator=True, x_axis=hg.Axis(scope="chart"), **layout
+        )
         spec, _ = chart.to_spec()
         assert spec["navigator"] is True
         assert "facet" in spec

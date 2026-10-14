@@ -18,7 +18,7 @@ import { panels } from "../../src/model/panels.ts";
 import { bandBox, MOUSE, modelOf } from "./helpers.ts";
 
 /** Without a background, the canvas holds what marks paint alone. */
-const CLEAR = { background: "transparent" } as const;
+const CLEAR = { tokens: { background: "transparent" } } as const;
 
 let host: HTMLDivElement;
 
@@ -249,8 +249,8 @@ describe("facet panels with y scales of their own", () => {
       timeZone: "UTC",
       marks: [mark],
       facet: facet("f", { columns: 2 }),
-      resolve: { y: "independent" },
       ...options,
+      y: { scope: "panel", ...options.y },
     });
 
   it("announce a brushed range as the panel it was drawn in formats values", async () => {
@@ -283,7 +283,7 @@ describe("facet panels with y scales of their own", () => {
     });
     host.style.width = "1000px";
     const chart = grouped(line(data, { x: "x", y: "y" }), {
-      theme: { fontSize: 24 },
+      theme: { style: { text: { fontSize: 24 } } },
       x: { ticks: 2 },
       y: { format: { minimumFractionDigits: 4 } },
     });
@@ -362,8 +362,8 @@ describe("facet panels with x scales of their own", () => {
       locale: "en-US",
       marks: [line(spread(), { x: "t", y: "v" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
       ...options,
+      x: { scope: "panel", ...options.x },
     });
   const wheel = (chart: Chart, x: number, y: number) => {
     const rect = chart.root.getBoundingClientRect();
@@ -428,7 +428,7 @@ describe("facet panels with x scales of their own", () => {
       legend: true,
       marks: [line(data, { x: "t", y: "v" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     const [, b] = modelOf(chart).panels();
     const y = b!.plot.y + b!.plot.height / 2;
@@ -488,13 +488,13 @@ describe("facet panels with x scales of their own", () => {
   });
 
   it("report letting go of a y zoom when panels get y scales of their own", () => {
-    const chart = independent({ resolve: { x: "independent", y: "shared" } });
+    const chart = independent({ y: { scope: "chart" }, x: { scope: "panel" } });
     const events: ChartEvents["viewport"][] = [];
     chart.on("viewport", (event) => events.push(event));
     chart.setViewport({ y: [0, 10] });
-    chart.update({ resolve: { x: "independent", y: "independent" } });
+    chart.update({ y: { scope: "panel" }, x: { scope: "panel" } });
     expect(chart.getViewport({ panel: "a" }).y).toBeNull();
-    chart.update({ resolve: { x: "independent", y: "shared" } });
+    chart.update({ y: { scope: "chart" }, x: { scope: "panel" } });
     // The same zoom again is a change, and is reported.
     chart.setViewport({ y: [0, 10] });
     expect(events.map((e) => [e.y, e.panels])).toEqual([
@@ -516,7 +516,7 @@ describe("facet panels with x scales of their own", () => {
       chart.setViewport([101, 102], { panel: "a" });
     });
     pointer(chart.root, "pointermove", a!.plot.x + 10, a!.plot.y + 10);
-    chart.update({ resolve: { x: "independent", y: "independent" } });
+    chart.update({ y: { scope: "panel" }, x: { scope: "panel" } });
     expect(events.map((e) => [e.x, e.y, e.panels])).toEqual([
       [[101, 102], null, ["a"]],
       [null, null, ["b"]],
@@ -530,7 +530,7 @@ describe("facet panels with x scales of their own", () => {
       interaction: { brush: "x" },
       marks: [line(data, { x: "t", y: "v" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     // The brush loads on demand.
     await chart.loading;
@@ -567,7 +567,7 @@ describe("facet panels with x scales of their own", () => {
       interaction: { brush: "x", zoom: true },
       marks: [line(data, { x: "t", y: "v" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     chart.select([102, 104], { panel: "b" });
     // Clearing the selection, which Enter does first, takes b away.
@@ -596,7 +596,7 @@ describe("facet panels with x scales of their own", () => {
       interaction: { brush: "x", zoom: true },
       marks: [line(data, { x: "t", y: "v" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     const events: ChartEvents["viewport"][] = [];
     chart.on("viewport", (event) => events.push(event));
@@ -617,14 +617,14 @@ describe("facet panels with x scales of their own", () => {
 
   it("set views and selections by panel right after options change how panels share x", () => {
     const chart = independent();
-    chart.update({ resolve: { x: "shared" } });
+    chart.update({ x: { scope: "chart" } });
     chart.setViewport([100, 101], { panel: "b" });
     chart.select([100, 100.5], { panel: "b" });
     chart.render();
     expect(chart.getViewport().x).toEqual([100, 101]);
     expect(chart.selection!.x).toEqual([100, 100.5]);
     expect(chart.selectionPanels).toEqual(["a", "b"]);
-    chart.update({ resolve: { x: "independent" } });
+    chart.update({ x: { scope: "panel" } });
     chart.setViewport([1, 2], { panel: "a" });
     chart.render();
     expect([chart.getViewport({ panel: "a" }).x, chart.getViewport({ panel: "b" }).x]).toEqual([
@@ -725,7 +725,7 @@ describe("subplots with x scales of their own", () => {
         line(spread, { x: "ms", y: "n", panel: "spread" }),
       ],
       panels: panels([{ id: "series" }, { id: "spread" }], { rowHeights: [2, 1] }),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     const events: ChartEvents["viewport"][] = [];
     chart.on("viewport", (event) => events.push(event));
@@ -757,7 +757,7 @@ describe("facet panels with categories of their own", () => {
     locale: "en-US",
     marks: [bar(data, { x: "product", y: "units" })],
     facet: facet("region"),
-    resolve: { x: "independent" },
+    x: { scope: "panel" },
   });
 
   it("brush a panel's own categories, and clear the selection when they change", async () => {
@@ -821,7 +821,7 @@ describe("facet panels with categories of their own", () => {
     const chart = createChart(host, {
       ...options(),
       renderer: "canvas",
-      theme: { palette: ["#ff0000"] },
+      theme: { tokens: { palette: ["#ff0000"] } },
     });
     const canvas = host.querySelector("canvas")!;
     const ratio = canvas.width / chart.root.clientWidth;
@@ -862,7 +862,8 @@ describe("facet panels with heatmaps and points on categories of their own", () 
       }),
     ],
     facet: facet("region"),
-    resolve: { x: "independent", y: "independent" },
+    y: { scope: "panel" },
+    x: { scope: "panel" },
   });
 
   /** The color of a CSS pixel of a chart's canvas. */
@@ -911,9 +912,9 @@ describe("facet panels with heatmaps and points on categories of their own", () 
       locale: "en-US",
       marks: [point(load(), { x: "hour", y: "cpu", radius: 4 })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
       renderer: "canvas",
-      theme: { palette: ["#ff0000"] },
+      theme: { tokens: { palette: ["#ff0000"] } },
     });
     const pixel = pixelOf(chart);
     const [n, s] = modelOf(chart).panels();
@@ -942,7 +943,7 @@ describe("facet panels with histograms and box plots", () => {
       locale: "en-US",
       marks: [histogram(sales(), { x: "units", bins: { step: 5 } })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     const [n, s] = modelOf(chart).panels();
     expect(n!.x.domain).toEqual([0, 10]);
@@ -971,7 +972,7 @@ describe("facet panels with histograms and box plots", () => {
           ? {
               marks: [boxplot(data, { x: "units", y: "product" })],
               facet: facet("region"),
-              resolve: { y: "independent" },
+              y: { scope: "panel" },
             }
           : {
               // N's rows and S's, each in a panel of its own categories.
@@ -1007,9 +1008,9 @@ describe("facet panels with histograms and box plots", () => {
       locale: "en-US",
       marks: [boxplot(sales(), { x: "product", y: "units" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
       renderer: "canvas",
-      theme: { palette: ["#ff0000"] },
+      theme: { tokens: { palette: ["#ff0000"] } },
     });
     const [n, s] = modelOf(chart).panels();
     expect([n!.x.categories, s!.x.categories]).toEqual([
@@ -1122,7 +1123,7 @@ describe("right axes in panels", () => {
     const chart = createChart(host, {
       marks,
       facet: facet("region"),
-      resolve: { yRight: "independent" },
+      yRight: { scope: "panel" },
       interaction: { zoom: "x" },
     });
     const [a, b] = chart.getPanels();
@@ -1140,7 +1141,7 @@ describe("right axes in panels", () => {
       createChart(host, {
         marks,
         facet: facet("region"),
-        resolve: { yRight: "independent" },
+        yRight: { scope: "panel" },
         interaction: { zoom: "y" },
       }),
     ).toThrow("cannot zoom along y");

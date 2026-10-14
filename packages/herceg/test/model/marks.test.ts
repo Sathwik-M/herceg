@@ -16,6 +16,7 @@ import type {
   Scene,
   TextGeometry,
 } from "../../src/scene/scene.ts";
+import { legendOf, rampsOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig, width = 600, height = 300) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -38,7 +39,7 @@ describe("bar", () => {
     const x = model.xScale()!;
     expect(x.type).toBe("band");
     expect(
-      scene.panels[0]!.axes.find((a) => a.orient === "bottom")!.ticks.map((t) => t.label),
+      scene.panels[0]!.axes.find((a) => a.side === "bottom")!.ticks.map((t) => t.label),
     ).toEqual(["N", "S", "E"]);
     // q2 sits right of q1 in every band, both inside the band.
     for (let i = 0; i < 3; i++) {
@@ -105,7 +106,7 @@ describe("bar", () => {
       v: new Float64Array(200).fill(1),
     });
     const { scene } = build({ marks: [bar(many, { x: "name", y: "v" })] });
-    const ticks = scene.panels[0]!.axes.find((a) => a.orient === "bottom")!.ticks;
+    const ticks = scene.panels[0]!.axes.find((a) => a.side === "bottom")!.ticks;
     expect(ticks.length).toBeLessThan(20);
     for (let i = 1; i < ticks.length; i++) {
       const gap = ticks[i]!.position - ticks[i - 1]!.position;
@@ -206,7 +207,10 @@ describe("bar labels", () => {
     const { scene, model } = build({ marks: [bar(sales, { x: "region", y: "q2", labels: true })] });
     const [label] = texts(scene);
     expect(label!.labels).toEqual(["5", "-10", "15"]);
-    expect([label!.anchor, label!.halo]).toEqual(["middle", true]);
+    expect([label!.anchor, label!.halo]).toEqual([
+      "middle",
+      { color: "#ffffff", width: 3, opacity: 1 },
+    ]);
     const y = model.yScale()!;
     expect(label!.coords[1]).toBeLessThan(y.map(5));
     expect(label!.coords[3]).toBeGreaterThan(y.map(-10));
@@ -228,7 +232,7 @@ describe("bar labels", () => {
         {
           marks: [bar(full, { x: "region", y: "v", labels: true })],
           y: { domain: [0, 100000] },
-          theme: { barRadius },
+          theme: { style: { bar: { radius: barRadius } } },
         },
         360,
         200,
@@ -245,11 +249,11 @@ describe("bar labels", () => {
     const stacked = table({ region: ["N", "S"], a: [100, 100], b: [1, 50] });
     const { scene } = build({
       marks: [bar(stacked, { x: "region", y: ["a", "b"], stack: true, labels: true })],
-      theme: { palette: ["#0d366b", "#cde2fb"] },
+      theme: { tokens: { palette: ["#0d366b", "#cde2fb"] } },
     });
     const [a, b] = texts(scene);
     expect(a!.labels).toEqual(["100", "100"]);
-    expect([a!.fill, a!.halo]).toEqual(["#ffffff", false]);
+    expect([a!.fill, a!.halo]).toEqual(["#ffffff", undefined]);
     // The 1-high segment has no room for its label.
     expect(b!.labels).toEqual(["50"]);
     expect(b!.fill).toBe("#000000");
@@ -275,7 +279,7 @@ describe("bar labels", () => {
     expect(first("#000080", 0.2).fill).toBe("#000000");
     expect(first("#000080").fill).toBe("#ffffff");
     const named = first("white");
-    expect([named.fill, named.halo]).toEqual(["#1c2333", true]);
+    expect([named.fill, named.halo?.color]).toEqual(["#1c2333", "#ffffff"]);
   });
 
   it("leave room for labels in automatic domains", () => {
@@ -424,7 +428,7 @@ describe("bar labels", () => {
 
 describe("horizontal bar", () => {
   const sales = table({ region: ["N", "S", "E"], q1: [10, 20, 30], q2: [5, -10, 15] });
-  const left = (scene: Scene) => scene.panels[0]!.axes.find((a) => a.orient === "left")!;
+  const left = (scene: Scene) => scene.panels[0]!.axes.find((a) => a.side === "left")!;
 
   it("puts categories on y, top to bottom, and lengths on x from zero", () => {
     const { scene, model } = build({ marks: [bar(sales, { x: "q1", y: "region" })] });
@@ -740,7 +744,7 @@ describe("heatmap", () => {
     expect([raster.columns, raster.rows]).toEqual([2, 2]);
     const alpha = (c: number, r: number) => raster.pixels[(r * 2 + c) * 4 + 3];
     // "low" is the first category, so the top row; the missing cell (b, high) is transparent.
-    const ticks = scene.panels[0]!.axes.find((a) => a.orient === "left")!.ticks;
+    const ticks = scene.panels[0]!.axes.find((a) => a.side === "left")!.ticks;
     expect(ticks.map((t) => t.label)).toEqual(["low", "high"]);
     expect(ticks[0]!.position).toBeLessThan(raster.y + raster.height / 2);
     expect(alpha(1, 0)).toBe(255);
@@ -755,7 +759,7 @@ describe("heatmap", () => {
       marks: [heatmap(grid, { x: "x", y: "y", color: "v", yBanded: true })],
     });
     const raster = scene.panels[0]!.marks[0] as RasterGeometry;
-    const ticks = scene.panels[0]!.axes.find((a) => a.orient === "left")!.ticks;
+    const ticks = scene.panels[0]!.axes.find((a) => a.side === "left")!.ticks;
     expect(ticks.map((t) => t.label)).toEqual(["1", "2"]);
     expect(ticks[0]!.position).toBeGreaterThan(ticks[1]!.position);
     // y = 2 (the only value) is the top raster row.
@@ -769,7 +773,7 @@ describe("heatmap", () => {
       marks: [heatmap(grid, { x: "x", y: "y", color: "v", xBanded: true })],
     });
     expect(
-      scene.panels[0]!.axes.find((a) => a.orient === "bottom")!.ticks.map((t) => t.label),
+      scene.panels[0]!.axes.find((a) => a.side === "bottom")!.ticks.map((t) => t.label),
     ).toEqual(["1", "2", "3"]);
   });
 
@@ -852,17 +856,17 @@ describe("heatmap", () => {
     expect(() =>
       heatmap(cells, { x: "col", y: "row", color: "v", colors: ["white", "red"] }),
     ).toThrow(/heatmap colors: expected "#rrggbb" colors; received "white"/);
-    expect(() => build({ theme: { sequential: ["#fff", "#0008"] }, marks: [] })).toThrow(
-      /theme.sequential: expected "#rrggbb" colors; received "#0008"/,
-    );
+    expect(() =>
+      build({ theme: { tokens: { sequential: ["#fff", "#0008"] } }, marks: [] }),
+    ).toThrow(/theme.tokens.sequential: expected "#rrggbb" colors; received "#0008"/);
   });
 
   it("shows a color legend instead of series entries", () => {
     const { scene } = build({
       marks: [heatmap(cells, { x: "col", y: "row", color: "v", label: "Load" })],
     });
-    expect(scene.legend).toEqual([]);
-    expect(scene.colorLegends[0]).toMatchObject({
+    expect(legendOf(scene)).toEqual([]);
+    expect(rampsOf(scene)[0]).toMatchObject({
       title: { text: "Load" },
       low: { text: "0" },
       high: { text: "2" },

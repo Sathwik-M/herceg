@@ -1,5 +1,6 @@
 // Capability contract: change packages/herceg/README.md's "What each mark
 // supports" table and its notes together with these tests.
+
 import { describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { fromGeoJSON } from "../../src/data/geojson.ts";
@@ -46,6 +47,7 @@ import { text } from "../../src/marks/text.ts";
 import { treemap } from "../../src/marks/treemap.ts";
 import { violin } from "../../src/marks/violin.ts";
 import { planAxis } from "../../src/model/axis.ts";
+import { axisGuide } from "../../src/model/axis-guide.ts";
 import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
@@ -61,6 +63,7 @@ import type {
   SegmentGeometry,
   TextGeometry,
 } from "../../src/scene/scene.ts";
+import { legendOf, rampsOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -469,8 +472,8 @@ function itemKeys(model: ChartModel, panel?: string): string[] {
 }
 
 function facetConfig(c: MarkCase, extra: Partial<ChartConfig> = {}): ChartConfig {
-  // With resolve.yRight, the mark under test is on the right axis.
-  const right = extra.resolve?.yRight ? { axis: "right" as const } : {};
+  // With yRight.scope, the mark under test is on the right axis.
+  const right = extra.yRight?.scope ? { axis: "right" as const } : {};
   return {
     marks: [...(c.repeats ? [line(samples, { x: "x", y: "y" })] : []), c.make(right)],
     facet: facet("group"),
@@ -625,7 +628,7 @@ describe("capabilities: subplots", () => {
     const { scene } = build({
       marks: [c.make({ panel: "a" })],
       panels: subplot,
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(scene.panels.map((p) => p.key)).toEqual(["a", "b"]);
     expectGeometry(scene.panels[0]!, c.kind);
@@ -677,7 +680,7 @@ describe("capabilities: subplots", () => {
 describe("capabilities: per-panel scales", () => {
   it.each(cartesian)("$name accepts independent facet scales", (c) => {
     const { model, scene } = build(
-      facetConfig(c, { resolve: { x: "independent", y: "independent" } }),
+      facetConfig(c, { y: { scope: "panel" }, x: { scope: "panel" } }),
     );
     for (const panel of scene.panels) expectGeometry(panel, c.kind);
     expect(new Set(model.panels().map((p) => p.xGroup)).size).toBe(2);
@@ -693,13 +696,13 @@ describe("capabilities: per-panel scales", () => {
   });
 
   it.each(paneled)("$name's panel has no scales of its own; the others' may differ", (c) => {
-    const resolve = { x: "independent", y: "independent" } as const;
-    const { scene } = build(besideLine(c, { resolve }));
+    const scopes = { x: { scope: "panel" }, y: { scope: "panel" } } as const;
+    const { scene } = build(besideLine(c, scopes));
     expectGeometry(scene.panels[1]!, c.kind);
     expect(() =>
       build(
         besideLine(c, {
-          resolve,
+          ...scopes,
           panels: panels([
             { id: "a", y: { domain: [0, 10] } },
             { id: "b", y: { domain: [0, 1] } },
@@ -729,13 +732,13 @@ describe("capabilities: per-panel scales", () => {
   ];
   it.each(financial)("$name resolves its categories per panel, as its value scales", (c) => {
     const config = { marks: [c.make()], facet: facet("group") };
-    const { model } = build({ ...config, resolve: { x: "shared", y: "independent" } });
+    const { model } = build({ ...config, y: { scope: "panel" }, x: { scope: "chart" } });
     const [a, b] = model.panels();
     expect(a!.x.type).toBe("band");
     expect(a!.x.domain).toEqual(b!.x.domain);
     expect(a!.y.domain).not.toEqual(b!.y.domain);
     // The categories here are a, b, c in both panels: resolved apart, each holds its own.
-    const own = build({ ...config, resolve: { x: "independent" } });
+    const own = build({ ...config, x: { scope: "panel" } });
     for (const panel of own.scene.panels) expectGeometry(panel, "segments");
     expect(own.model.panels().map(({ x }) => x.categories)).toEqual([
       ["a", "b", "c"],
@@ -744,7 +747,7 @@ describe("capabilities: per-panel scales", () => {
     const stacked = build({
       marks: [c.make({ panel: "*" })],
       panels: subplot,
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     for (const panel of stacked.scene.panels) expectGeometry(panel, "segments");
   });
@@ -757,10 +760,10 @@ describe("capabilities: right axis", () => {
   const valued = cartesian.filter(
     (c) => !["heatmap", "histogram 2d", "contour", "rule", "rug", "line along y"].includes(c.name),
   );
-  const rightOf = (panel: Panel) => panel.axes.find((a) => a.orient === "right");
+  const rightOf = (panel: Panel) => panel.axes.find((a) => a.side === "right");
 
   it.each(valued)("$name draws on a right axis in every facet panel and in its subplot", (c) => {
-    const faceted = build(facetConfig(c, { resolve: { yRight: "independent" } }));
+    const faceted = build(facetConfig(c, { yRight: { scope: "panel" } }));
     for (const [i, panel] of faceted.scene.panels.entries()) {
       expectGeometry(panel, c.kind);
       expect(rightOf(panel)).toBeDefined();
@@ -792,13 +795,13 @@ describe("capabilities: zoom and pan", () => {
     const { model, scene } = build({ marks: [c.make()], interaction: { zoom: "xy" } });
     const alongY = model.xScale()!.type === "band";
     const orient = alongY ? "left" : "bottom";
-    const before = scene.panels[0]!.axes.find((a) => a.orient === orient)!.ticks;
+    const before = scene.panels[0]!.axes.find((a) => a.side === orient)!.ticks;
     if (alongY) model.setYViewport({ y: [2, 6], yRight: null });
     else model.setViewport([0.5, 1.5]);
     const next = model.scene(estimateText);
     const scale = alongY ? model.yScale()! : model.xScale()!;
     expect(scale.domain).toEqual(alongY ? [2, 6] : [0.5, 1.5]);
-    expect(next.panels[0]!.axes.find((a) => a.orient === orient)!.ticks).not.toEqual(before);
+    expect(next.panels[0]!.axes.find((a) => a.side === orient)!.ticks).not.toEqual(before);
   });
 
   it.each([
@@ -967,7 +970,7 @@ describe("capabilities: zoom and pan", () => {
     const config = {
       marks: [c.make({ panel: "*" })],
       panels: subplot,
-      resolve: { y: "shared" },
+      y: { scope: "chart" },
     } satisfies ChartConfig;
     const { scene } = build({ ...config, interaction: { zoom: "x" } });
     for (const panel of scene.panels) expectGeometry(panel, c.kind);
@@ -978,11 +981,9 @@ describe("capabilities: zoom and pan", () => {
 
   it.each(cartesian)("$name facets cannot zoom y when y scales differ", (c) => {
     expect(() =>
-      build(facetConfig(c, { resolve: { y: "independent" }, interaction: { zoom: "y" } })),
+      build(facetConfig(c, { y: { scope: "panel" }, interaction: { zoom: "y" } })),
     ).toThrow("cannot zoom along y yet");
-    const { scene } = build(
-      facetConfig(c, { resolve: { y: "independent" }, interaction: { zoom: "x" } }),
-    );
+    const { scene } = build(facetConfig(c, { y: { scope: "panel" }, interaction: { zoom: "x" } }));
     for (const panel of scene.panels) expectGeometry(panel, c.kind);
   });
 });
@@ -1041,7 +1042,7 @@ describe("capabilities: brushes", () => {
     const config = {
       marks: [c.make({ panel: "*" })],
       panels: subplot,
-      resolve: { y: "shared" },
+      y: { scope: "chart" },
     } satisfies ChartConfig;
     const { scene } = build({ ...config, interaction: { brush: "x" } });
     for (const panel of scene.panels) expectGeometry(panel, c.kind);
@@ -1056,7 +1057,7 @@ describe("capabilities: brushes", () => {
     const config = {
       marks: [point(samples, { x: "x", y: "category" })],
       facet: facet("group"),
-      resolve: { y: "independent" },
+      y: { scope: "panel" },
     } satisfies ChartConfig;
     expectGeometry(build({ ...config, interaction: { brush: "x" } }).scene.panels[0]!, "point");
     for (const brush of ["y", "xy", "lasso"] as const) {
@@ -1079,7 +1080,7 @@ describe("capabilities: synced selection", () => {
       const stacked = build({
         marks: [c.make({ panel: "*" })],
         panels: subplot,
-        resolve: { y: "shared" },
+        y: { scope: "chart" },
         interaction,
       });
       for (const panel of stacked.scene.panels) expectGeometry(panel, c.kind);
@@ -1116,7 +1117,7 @@ describe("capabilities: synced selection", () => {
       build({
         marks: [mark],
         facet: facet("group"),
-        resolve: { [axis]: "independent" },
+        [axis]: { scope: "panel" },
         interaction: { sync: "capability-contract" },
       }),
     ).toThrow("categories of their own");
@@ -1302,21 +1303,21 @@ describe("capabilities: row selection", () => {
 describe("capabilities: legend toggle", () => {
   it.each(cartesian.filter((c) => !c.noLegend))("$name hides a series through its legend", (c) => {
     const { model, scene } = build({ marks: [c.make()], legend: true });
-    const [entry] = scene.legend;
+    const [entry] = legendOf(scene);
     expect(entry).toBeDefined();
     const before = scene.panels[0]!.marks.reduce((n, m) => n + m.draw.size(m), 0);
     model.hidden.add(entry!.key);
     const next = model.scene(estimateText);
-    expect(next.legend.find((e) => e.key === entry!.key)!.hidden).toBe(true);
+    expect(legendOf(next).find((e) => e.key === entry!.key)!.hidden).toBe(true);
     expect(next.panels[0]!.marks.reduce((n, m) => n + m.draw.size(m), 0)).toBeLessThan(before);
     expect(model.keyboardStops("").some((s) => s.key === entry!.key)).toBe(false);
   });
 
   it.each(cartesian.filter((c) => c.noLegend))("$name has no series toggle", (c) => {
     const { scene } = build({ marks: [c.make()], legend: true });
-    expect(scene.legend).toEqual([]);
+    expect(legendOf(scene)).toEqual([]);
     expectGeometry(scene.panels[0]!, c.kind);
-    if (c.name === "heatmap") expect(scene.colorLegends).toHaveLength(1);
+    if (c.name === "heatmap") expect(rampsOf(scene)).toHaveLength(1);
   });
 
   // Gauges, funnels, and Sankey diagrams have no legend; a surface's is its color scale.
@@ -1324,21 +1325,21 @@ describe("capabilities: legend toggle", () => {
 
   it.each(layouts.filter((c) => noToggle.has(typeOf(c))))("$name has no series toggle", (c) => {
     const { scene } = build({ marks: [c.make()], legend: true });
-    expect(scene.legend).toEqual([]);
-    if (c.name === "surface") expect(scene.colorLegends).toHaveLength(1);
+    expect(legendOf(scene)).toEqual([]);
+    if (c.name === "surface") expect(rampsOf(scene)).toHaveLength(1);
   });
 
   it.each(layouts.filter((c) => !noToggle.has(typeOf(c))))(
     "$name offers the documented legend toggle",
     (c) => {
       const { model, scene } = build({ marks: [c.make()], legend: true });
-      expect(scene.legend.length).toBeGreaterThan(0);
-      const entry = scene.legend[0]!;
+      expect(legendOf(scene).length).toBeGreaterThan(0);
+      const entry = legendOf(scene)[0]!;
       const before = itemKeys(model);
       const colors = before.map((key) => model.inspectItem(key)!.points[0]!.color);
       model.hidden.add(entry.key);
       const next = model.scene(estimateText);
-      expect(next.legend.find((e) => e.key === entry.key)!.hidden).toBe(true);
+      expect(legendOf(next).find((e) => e.key === entry.key)!.hidden).toBe(true);
       if (c.name === "geoshape") {
         // Categorical map regions gray out while their shape remains.
         expect(itemKeys(model)).toEqual(before);
@@ -1354,9 +1355,9 @@ describe("capabilities: legend toggle", () => {
     (c) => {
       const { model, scene } = build({ marks: [c.make()], facet: facet("group"), legend: true });
       // One legend, its entries each once, for every panel.
-      const keys = scene.legend.map(({ key }) => key);
+      const keys = legendOf(scene).map(({ key }) => key);
       expect(new Set(keys).size).toBe(keys.length);
-      const entry = scene.legend.at(-1)!;
+      const entry = legendOf(scene).at(-1)!;
       const before = ["N", "S"].map((panel) => itemKeys(model, panel));
       const colors = ["N", "S"].map(
         (panel) =>
@@ -1377,7 +1378,7 @@ describe("capabilities: legend toggle", () => {
   it("graph toggles groups and has no toggle without a group field", () => {
     const ungrouped = graph(links, { source: "source", target: "target" });
     const { scene } = build({ marks: [ungrouped], legend: true });
-    expect(scene.legend).toEqual([]);
+    expect(legendOf(scene)).toEqual([]);
     expectGeometry(scene.panels[0]!, "point");
   });
 
@@ -1395,7 +1396,7 @@ describe("capabilities: legend toggle", () => {
       ],
       legend: true,
     });
-    expect(scene.legend).toEqual([]);
+    expect(legendOf(scene)).toEqual([]);
     expectGeometry(scene.panels[0]!, "shapes");
   });
 });
@@ -1556,7 +1557,7 @@ describe("capabilities: tooltip fields", () => {
 describe("capabilities: value animation preconditions", () => {
   // Pure snapshots/plans, as in test/dom/value-transition.test.ts; no frame
   // scheduler, timers, reduced-motion media queries, or browser gestures.
-  const builders = { planAxis, Polyline, monotonePolyline };
+  const builders = { planAxis, axisGuide, Polyline, monotonePolyline, measure: estimateText };
   it.each(all)("$name provides only its documented movable geometry", (c) => {
     const { scene, model } = build({ marks: [c.make()], animation: { values: true } });
     expectGeometry(scene.panels[0]!, c.kind);
@@ -1708,13 +1709,15 @@ describe("capabilities: dendrogram", () => {
         make({ facet: "repeat" }),
       ],
       facet: facet("group"),
-      resolve: { x: "independent", y: "independent" },
+      y: { scope: "panel" },
+      x: { scope: "panel" },
     });
     for (const panel of faceted.scene.panels) expectGeometry(panel, "segments");
     const subplots = build({
       marks: [make({ panel: "a" })],
       panels: subplot,
-      resolve: { x: "independent", y: "independent" },
+      y: { scope: "panel" },
+      x: { scope: "panel" },
     });
     expectGeometry(subplots.scene.panels[0]!, "segments");
     expect(subplots.scene.panels[1]!.marks).toEqual([]);
@@ -1734,7 +1737,7 @@ describe("capabilities: dendrogram", () => {
     model.setYViewport({ y: [10, 20], yRight: null });
     const next = model.scene(estimateText).panels[0]!.marks[0] as typeof geometry;
     expect(Array.from(next.coords.subarray(0, next.count * 4))).toEqual(before);
-    expect(scene.legend).toEqual([]);
+    expect(legendOf(scene)).toEqual([]);
     expect(model.keyboardStops("")).toEqual([]);
     expect(model.inspect(100, 100)).toBeUndefined();
     expect(describeChart(model)).toContain(
@@ -1747,7 +1750,7 @@ describe("capabilities: dendrogram", () => {
       build({
         marks: [make({ panel: "a" })],
         panels: subplot,
-        resolve: { x: "independent" },
+        x: { scope: "panel" },
         interaction: { sync: "dendrogram-contract" },
       }),
     ).toThrow("categories of their own");
@@ -1789,8 +1792,8 @@ describe("category-colored bars", () => {
         const s = model.series()[i]!;
         expect(model.inspectPosition(s.key, 0)!.points[0]!.label).toBe(s.label);
       });
-      expect(scene.legend.map((entry) => entry.label)).toEqual(["A", "B", "C"]);
-      expect(scene.legend.map((entry) => ("color" in entry ? entry.color : undefined))).toEqual(
+      expect(legendOf(scene).map((entry) => entry.label)).toEqual(["A", "B", "C"]);
+      expect(legendOf(scene).map((entry) => ("color" in entry ? entry.color : undefined))).toEqual(
         rects.map((g) => g.fill),
       );
       model.hidden.add(model.series()[1]!.key);

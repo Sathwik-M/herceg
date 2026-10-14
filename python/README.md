@@ -236,7 +236,7 @@ a column per day of the month.
 
 ```python
 hg.violin(requests, x="region", y="latency", series="version", split=True, inner="quartiles")
-hg.Chart(requests, facet="service", resolve_y="independent").violin(
+hg.Chart(requests, facet="service", y=hg.Axis(scope="panel")).violin(
     x="latency", y="region", series="version", split=True, inner="none"
 )
 ```
@@ -286,12 +286,14 @@ Chart options: `title`, `description`, `width`, `height`, `x` and `y`
 that draws them), `facet` and
 `facet_columns` (a panel per value of a category column, wrapped into rows),
 or `facet_row` and `facet_column` (a grid with a row per value of one category
-column and a column per value of another; either may be left out), with
-`resolve_x`, `resolve_y`, and `resolve_y_right` (`"shared"`,
-`"independent"`, `"rows"`, or `"columns"`) choosing which panels share an x,
-a y, or a right y scale (facets share them by default, subplots x; the right
-y as `resolve_y` unless given; on a category axis, panels that do not share
-it show only the categories their rows hold); histograms, box plots, and
+column and a column per value of another; either may be left out), with the
+`scope` of the chart's `x`, `y`, and `y_right` axes (`hg.Axis(scope=...)`:
+`"chart"`, `"panel"`, `"row"`, or `"column"`) choosing which panels share an
+x, a y, or a right y scale (facets share them by default, subplots x; the
+right y as y unless given; on a category axis, panels that do not share it
+show only the categories their rows hold, and a scale panels do not share
+takes its type from their own marks, so one subplot can show categories
+along y beside another showing numbers); histograms, box plots, and
 violins summarize each panel's rows (histograms in bins chosen from the rows
 of the panels sharing an x scale); annotations over a table draw each row in
 its own row's panel; marks with `facet="repeat"` draw all their rows in every
@@ -385,19 +387,56 @@ fields. Hover and click events carry them (`InspectedPoint.fields`).
 `theme` is `"light"` (the default), `"dark"`, `"high-contrast"`,
 `"high-contrast-dark"`, each with a background of its own, `"auto"`
 (light or dark to match the surface the chart is drawn on, in HTML output,
-with the surface showing through; light in static files), or a dict that
-overrides a theme's tokens (`"background": "transparent"` shows what the
-chart is drawn on): `extends`, `background`, `text`, `muted`, `grid`, `axis`,
-`font`, `font_size`, `title_size`, `grid_dash`, `line_width`, `bar_radius`,
-`tooltip_background`, `tooltip_border`, `palette`, `sequential`, `diverging`,
-`rise`, and `fall`. Colors may be CSS variables such as
-`"var(--brand, #3266d6)"`, which charts read from the HTML page that draws
-them. Notebook outputs are isolated frames that do not see the notebook's
-variables, and static output has no page: both use the fallback.
+with the surface showing through; light in static files), or an `hg.Theme`
+(or a dict of its options): a built-in theme it `extends`, with `tokens`
+(`hg.Tokens`: `background`, `text`, `muted`, `grid`, `axis`, `palette`,
+`sequential`, `diverging`, `rise`, `fall`; `background="transparent"` shows
+what the chart is drawn on) and role styles (`style`, an `hg.Style`). Colors
+and fonts may be CSS variables such as `"var(--brand, #3266d6)"`, which charts
+read from the HTML page that draws them. Notebook outputs are isolated frames
+that do not see the notebook's variables, and static output has no page:
+both use the fallback.
 
 ```python
-hg.Chart(data, theme={"extends": "dark", "bar_radius": 0, "palette": ["#5b8def", "#dc6f3a"]})
+hg.Chart(
+    data,
+    theme=hg.Theme(
+        extends="dark",
+        tokens=hg.Tokens(palette=["#5b8def", "#dc6f3a"]),
+        style=hg.Style(title=hg.TextStyle(align="center"), bar=hg.BarStyle(radius=0)),
+    ),
+)
 ```
+
+Each kind of text and line is a role with a style: `text` (the base of all
+text), `title`, `panel_title`, `axis_title`, `tick_label`, `legend_label`,
+`legend_title` (`hg.TextStyle`: `font`, `font_size`, `font_weight`,
+`font_style`, `color`, `opacity`, `line_height`, `align`, `halo`, and a
+`background` `hg.TextBox` with `padding`), `grid`, `axis_line`, `tick`
+(`hg.StrokeStyle`: `stroke`, `stroke_width`, `dash`, `opacity`), `plot`
+(`hg.PlotStyle`: `fill` behind the plot, `stroke` and `stroke_width` around
+it), and the marks' `line`, `bar`, and `tooltip` defaults. The theme's
+`style` sets every role; an axis' (`hg.Axis(style=...)`), the legend's,
+the title's, and a panel's change their own over it, the most specific
+winning. Text takes `color`, never `fill`.
+
+```python
+hg.Chart(
+    data,
+    title=hg.Title("Latency\nby service", style=hg.TextStyle(align="center")),
+    y=hg.Axis(title="ms", style=hg.Style(tick_label=hg.TextStyle(color="#3266d6"))),
+    legend=hg.Legend(place=hg.Place(inside="top-right")),
+    padding={"top": 4, "right": 12},
+).line(x="time", y="latency", series="service")
+```
+
+A title goes at the top or, with `place=hg.Place(side="bottom")`, below the
+plots, aligned by its style; `"\n"` breaks it into lines. A legend's place
+is a side (`hg.Place(side=..., align=..., offset=...)`) or a corner or edge
+inside a plot (`hg.Place(inside=..., inset=..., scope=..., panel=...)`);
+inside, it takes no room from the plots. Without `padding`, spacing is
+automatic; with it (pixels, or a dict of sides; `0` included), it is the
+whitespace around everything the chart draws.
 
 A time x axis can leave out time, so trading sessions sit side by side:
 `hg.Axis(breaks=[...])` takes `hg.Break` rules, each one of `weekdays`
@@ -441,7 +480,7 @@ pixels and the `id`s of the marks it draws. It works in static output too
 zooming does. With facets or panels, one strip goes under all of them,
 draws every panel's marks (each panel's part apart, over that panel's y
 scale), and moves the x range they share, so the panels must share x
-(`resolve_x="shared"`, the default).
+(x's scope `"chart"`, the default).
 The chart's text alternative, SVG description, and PDF alternative text
 describe the navigator's overview of the whole x range, current range in x tooltip
 format, and control of every panel's x when there are several. Live charts
@@ -540,7 +579,7 @@ count / series count in bins), `"percent"` (probability × 100), or
 `"density"` (probability / bin width). `common_norm=True` also weights each normalized series by its share
 of finite observations, before dropping values outside bins. Hidden series
 stay in that denominator; count normalization is unchanged. With facets,
-bins follow panels sharing the binned axis (`resolve_x` or `resolve_y`), and
+bins follow panels sharing the binned axis (its axis' `scope`), and
 normalization is local to each panel. Subplots draw whole marks.
 
 `cumulative=True` accumulates counts, probabilities, or percents through each
@@ -686,7 +725,8 @@ With facets, `facet="repeat"` is required.
 
 Compose a clustered heatmap with panels corner, top, left, matrix,
 `panel_columns=2`, `panel_row_heights=[1, 4]`,
-`panel_column_widths=[1, 4]`, `resolve_x="columns"`, and `resolve_y="rows"`.
+`panel_column_widths=[1, 4]`, `x=hg.Axis(scope="column")`, and
+`y=hg.Axis(scope="row")`.
 Put the heatmap in matrix with categories reordered by the dendrograms,
 the column tree in top with `side="bottom"`, and the row tree in left
 with `side="right"`; hide corner's axes, top's y axis, and left's x axis.
@@ -758,13 +798,18 @@ uses its full category band; category colors and legend entries are retained.
 Horizontal bars behave the same when `series` names their category y.
 
 `Chart.text`, `Chart.region`, and the bar, funnel, radar, Sankey, and graph
-methods and helpers accept `halo=False` to disable text outlines (both node
-and link labels for graphs). `hg.Navigator(halo=False)` disables navigator
-label outlines. Halos use the background at full opacity at 3:1 text contrast
-or higher, falling back to the light/dark choice otherwise. The option is
+methods and helpers take `halo`, the outline that keeps text readable over
+data: `"auto"` (the default) uses what the text is drawn on (the plot's fill
+or the chart's background) where the text contrasts with it at 3:1 or more,
+else white or black; `False` draws none; `hg.Halo(color, width=..., opacity=...)`
+draws one of your own. `hg.Navigator(halo=...)` takes the same. It is
 serialized as `halo` in the portable spec and works in every renderer and
 static export. Express charts are ordinary `Chart` objects: annotations
 added with `.text(..., halo=False)` use the same option.
+
+Marks on the chart's scales take `clip`: `"plot"` (data's
+default), `"chart"`, or `False` (the default for rules and text), what their
+drawing is cut to, so markers at the plot's edge can show whole.
 
 Time axes choose coarser intervals for coarse `format` options and drop
 remaining duplicate labels. `hg.Axis(tooltip_format=...)` formats tooltip,
@@ -860,8 +905,7 @@ Seaborn does, when more than `warn_thresh` (5%) of a category's points
 cannot be placed, from the same layout run in Python at the chart's `width`
 and `height` (640 by 320 pixels when not given) with the plot's margins
 estimated, on the value axis its options make (`type`, `domain`, `nice`,
-`ticks`, `zero`) and with facets sharing axes as `resolve_x` and
-`resolve_y` say, drawing only the points inside the plot, so a chart
+`ticks`, `zero`) and with facets sharing axes as their `scope` says, drawing only the points inside the plot, so a chart
 drawn larger or smaller than that may fit more or fewer points than the
 warning says. Axes are labeled with the columns' names unless `x_axis` or `y_axis`
 say otherwise. Rows missing a value the chart uses are left out, and the
@@ -1086,6 +1130,22 @@ HTML output and notebook display embed the herceg bundle (about 142 KiB,
 52 KiB gzipped), so they work offline. Notebooks show each chart in an
 isolated iframe.
 
+An SVG is the chart's size by default. `to_svg(sizing="fluid")` (and
+`save(path, sizing="fluid")` for `.svg` paths) leaves out its width and
+height, so CSS or its container sizes it and its viewBox scales the chart;
+`preserve_aspect_ratio="none"` stretches it to any box, and
+`stroke_scaling="fixed"` keeps lines their width in pixels however it
+scales. The layout is the one at the chart's size: stretching scales text
+too.
+
+```python
+spark = hg.Chart(df, width=140, height=48, padding=0, legend=False,
+                 x=hg.Axis(show=False, nice=False), y=hg.Axis(show=False, nice=False))
+svg = spark.line(x="t", y="v", clip=False).to_svg(
+    sizing="fluid", preserve_aspect_ratio="none", stroke_scaling="fixed"
+)
+```
+
 `hg.to_pdf(chart_or_charts, **settings)` returns PDF bytes, and
 `hg.save(chart_or_charts, path, **settings)` saves one chart using
 `Chart.save(path)`, choosing HTML, SVG, PNG, or PDF by extension. A nonempty
@@ -1141,7 +1201,8 @@ with the same `fonts=` mapping for SVG, PNG, and PDF:
 ```python
 from pathlib import Path
 
-chart = hg.Chart(data, title="Δ latency", theme={"font": "Inter"}).line(x="time", y="latency")
+theme = hg.Theme(style=hg.Style(text=hg.TextStyle(font="Inter")))
+chart = hg.Chart(data, title="Δ latency", theme=theme).line(x="time", y="latency")
 fonts = {
     "Inter": {"normal": Path("Inter-Regular.ttf"), "bold": Path("Inter-Bold.ttf")},
     "Symbols": Path("Symbols.ttf").read_bytes(),
@@ -1157,8 +1218,8 @@ chart.save("chart.pdf", fonts=fonts, fallback=["Symbols"])
 ```
 
 Python keeps these font arguments: its JavaScript bridge prepares them with
-`pdfFonts` before export. SVG and PNG use the PDF resolver's TrueType text
-measurement in embedded V8, so all three formats lay out labels with the
+`prepareFonts` (`herceg/fonts`) before export. SVG and PNG measure text with
+the same TrueType fonts in embedded V8, so all three formats lay out labels with the
 supplied faces' horizontal advances, without kerning. PNG also loads those
 faces into resvg, including byte inputs and families registered under an
 alias. It uses temporary local font files, removed after each export, and
@@ -1167,23 +1228,24 @@ rasterization; its text shaping can differ from PDF's unkerned glyph runs.
 SVG references families by name and embeds neither font files nor font URLs;
 its viewer must provide the same fonts to reproduce the measured layout.
 `fallback` and `missing_glyph` remain PDF-only options. For SVG and PNG,
-put covering families in `theme["font"]`, for example `"Inter, Symbols"`.
+put covering families in the theme's font, for example `"Inter, Symbols"`.
 `hg.save` forwards `fonts` for single charts; lists still require a PDF path.
 
-TypeScript callers use `fonts: pdfFonts(sources,
-{ fallback, missingGlyph })`; plain JavaScript PDF exports omit this helper
-and bundle no TrueType parser or subsetter.
+TypeScript callers use `fonts: prepareFonts(sources)` from `herceg/fonts`,
+with `fallback` and `missingGlyph` as PDF export settings, as here; plain
+JavaScript PDF exports omit it and bundle no TrueType parser or subsetter.
+Charts with fonts draw text unkerned, as it is measured.
 
 Each font is bytes or a filesystem path (`str` or `PathLike`). Nested family
 mappings accept `"normal"` and `"bold"`; a missing weight uses the available
-face without synthetic bold. Match `theme["font"]` to the registered families.
+face without synthetic bold. Match the theme's font to the registered families.
 CSS family lists are tried first, then PDF's `fallback`, with each grapheme cluster
 kept in one face. Simple accents use an NFC precomposed glyph with the
 original sequence preserved for extraction; sequences needing mark positioning
 are refused. PDF uses the same resolver to measure and draw: exact horizontal
 advances, no kerning, Unicode copy/search maps (including supplementary
 characters), and deterministic per-document subsets with composite dependencies.
-OS/2 embedding restrictions are enforced, including whole embedding when
+OS/2 embedding restrictions are enforced when a PDF embeds a face, including whole embedding when
 subsetting is forbidden. Python checks the 64-face and 32 MiB per-font limits
 before transport, checks byte inputs before reading paths, and bounds path reads
 to 32 MiB plus one byte. Bytes then cross the embedded-V8 boundary as base64;
@@ -1563,10 +1625,10 @@ npm run test:python    # build, then run pytest in a uv environment
   before the callback runs renumber the rest, so by then the row may name
   another record.
 - Live charts report one viewport and selection, so `chart.widget()` refuses
-  charts whose panels have x scales of their own (`resolve_x`); display them
-  statically. Charts whose panels have y scales of their own (`resolve_y`,
+  charts whose panels have x scales of their own (x's `scope`); display them
+  statically. Charts whose panels have y scales of their own (y's `scope`,
   subplots) take no y viewport, and those with right y scales of their own
-  (`resolve_y_right`) no right one.
+  (y_right's `scope`) no right one.
   In Streamlit they show (each panel keeping its zoom across reruns) and
   report clicks, but `on_select` is refused.
 - In Streamlit, a chart that changes between script runs is sent whole: its

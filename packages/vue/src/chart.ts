@@ -38,7 +38,7 @@ type Option<K extends keyof Options> = PropType<NonNullable<Options[K]>>;
  * and an absent boolean stays undefined so the chart's default applies.
  */
 const optionProps = {
-  title: String,
+  title: [String, Object] as Option<"title">,
   description: String,
   width: Number,
   height: Number,
@@ -47,8 +47,8 @@ const optionProps = {
   yRight: Object as Option<"yRight">,
   facet: Object as Option<"facet">,
   panels: Object as Option<"panels">,
-  resolve: Object as Option<"resolve">,
-  legend: { type: Boolean, default: undefined },
+  legend: { type: [Boolean, Object] as Option<"legend">, default: undefined },
+  padding: [Number, Object] as Option<"padding">,
   tooltip: { type: [Boolean, Object] as Option<"tooltip">, default: undefined },
   interaction: Object as Option<"interaction">,
   rowSelection: Object as Option<"rowSelection">,
@@ -62,6 +62,7 @@ const optionProps = {
   z: Object as Option<"z">,
   camera: Object as Option<"camera">,
   boxAspect: Array as unknown as Option<"boxAspect">,
+  fonts: Object as Option<"fonts">,
 } satisfies { [K in keyof Options]-?: unknown };
 
 const OPTION_KEYS = Object.keys(optionProps) as (keyof Options)[];

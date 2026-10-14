@@ -22,7 +22,7 @@ import { checkColorScale, checkRamp, rampOf, SequentialScale } from "../scale/co
 import type { PositionScale } from "../scale/scale.ts";
 import { linearTicks, niceDomain } from "../scale/ticks.ts";
 import type { LineGeometry, PolygonGeometry } from "../scene/scene.ts";
-import type { ContourSpec, Frozen } from "../spec/spec.ts";
+import type { Clip, ContourSpec, Frozen } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import { contourFormError } from "./contour-input.ts";
 import { bandRings, GridTracer, type ScalarGrid, type Traced } from "./contour-trace.ts";
@@ -77,6 +77,12 @@ export interface ContourOptions<S extends Schema> {
   label?: string;
   /** Draw every row in every facet panel instead of the panel's own. */
   facet?: "repeat";
+  /**
+   * What the mark's drawing is cut to: "plot", "chart", or false for
+   * nothing, so markers at the plot's edge show whole. Without it, data is
+   * cut to the plot and labels are drawn whole.
+   */
+  clip?: Clip;
   /** The subplot to draw in, or "*" for every panel. */
   panel?: string;
   id?: string;
@@ -609,7 +615,7 @@ export class ContourMark implements Mark<Frozen<ContourSpec>> {
         draw: lineDrawing,
         key: s.key,
         stroke: s.color,
-        strokeWidth: this.spec.strokeWidth ?? frame.theme.lineWidth,
+        strokeWidth: this.spec.strokeWidth ?? frame.theme.style.line.strokeWidth,
         dash: undefined,
         path,
       });
@@ -637,7 +643,7 @@ export class ContourMark implements Mark<Frozen<ContourSpec>> {
         continue;
       }
       const project = projector(grid, frame.x, frame.y);
-      const reach = LINE_REACH + (this.spec.strokeWidth ?? frame.theme.lineWidth) / 2;
+      const reach = LINE_REACH + (this.spec.strokeWidth ?? frame.theme.style.line.strokeWidth) / 2;
       // How many grid units the reach spans here, to look in the blocks it touches.
       const span = Math.max(
         Math.abs(gridUnit(grid.xs, frame.x.invert(px + reach)) - u),
@@ -1224,6 +1230,7 @@ export function contour<S extends Schema>(
       "label",
       "facet",
       "panel",
+      "clip",
       "id",
     ]),
   };

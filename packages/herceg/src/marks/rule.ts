@@ -1,9 +1,10 @@
 import type { NumericField, Schema, Table } from "../data/table.ts";
 import { ruleDrawing } from "../draw/rule.ts";
 import type { RuleGeometry } from "../scene/scene.ts";
-import type { Dash, Frozen, RulePosition, RuleSpec } from "../spec/spec.ts";
+import type { Clip, Dash, Frozen, RulePosition, RuleSpec } from "../spec/spec.ts";
+import { dashPattern } from "../style/style.ts";
 import { AnnotationData, position, readsTable, type TextField, valueAt } from "./annotation.ts";
-import { dashPattern, definedFields } from "./line.ts";
+import { definedFields } from "./line.ts";
 import type { AxisFormat, ChartMark, Frame, MARK, Mark, MarkKey, RowParts } from "./mark.ts";
 import { frozen } from "./mark.ts";
 
@@ -12,6 +13,8 @@ interface RuleStyle {
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /** What the rules are cut to: "plot", "chart", or false (the default: rules outside the plot are left out). */
+  clip?: Clip;
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
   stroke?: string;
@@ -182,6 +185,7 @@ export function rule<S extends Schema>(
         "axis",
         "facet",
         "panel",
+        "clip",
       ],
     ),
   } as unknown as RuleSpec;

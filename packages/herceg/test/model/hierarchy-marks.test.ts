@@ -6,6 +6,7 @@ import { treemap } from "../../src/marks/treemap.ts";
 import { type ChartConfig, ChartModel, type ItemInspection } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { ArcGeometry, RectGeometry, Scene, TextGeometry } from "../../src/scene/scene.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 const sales = table({
   region: ["Europe", "Europe", "Asia", "Asia", "Asia"],
@@ -28,10 +29,10 @@ describe("treemap", () => {
 
   it("gives leaves areas in proportion to their values, in their branch's color", () => {
     const { scene } = chart();
-    expect(scene.legend.map((entry) => entry.label)).toEqual(["Asia", "Europe"]);
+    expect(legendOf(scene).map((entry) => entry.label)).toEqual(["Asia", "Europe"]);
     const leaves = (marks(scene, "rect") as RectGeometry[]).filter((m) => m.fillOpacity === 1);
     expect(leaves.map((m) => m.count)).toEqual([3, 2]);
-    expect(leaves[0]!.fill).toBe(scene.legend[0]!.color);
+    expect(leaves[0]!.fill).toBe(legendOf(scene)[0]!.color);
     const areas = leaves.flatMap((m) =>
       Array.from({ length: m.count }, (_, i) => m.rects[i * 4 + 2]! * m.rects[i * 4 + 3]!),
     );
@@ -68,7 +69,7 @@ describe("treemap", () => {
 
   it("gives the room of hidden branches to the others", () => {
     const { model } = chart();
-    model.hidden.add(model.scene(estimateText).legend[0]!.key);
+    model.hidden.add(legendOf(model.scene(estimateText))[0]!.key);
     const scene = model.scene(estimateText);
     const leaves = (marks(scene, "rect") as RectGeometry[]).filter((m) => m.fillOpacity === 1);
     expect(leaves.map((m) => m.count)).toEqual([2]);

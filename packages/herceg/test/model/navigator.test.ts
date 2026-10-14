@@ -32,6 +32,7 @@ import type {
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ChartSpec } from "../../src/spec/spec.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
+import { headersOf } from "../helpers/guides.ts";
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -77,10 +78,10 @@ describe("a navigator's strip", () => {
       height: 40,
     });
     // The x title moves up with the axis, above the strip.
-    const title = scene.panels[0]!.axes.find((axis) => axis.orient === "bottom")!.title!;
+    const title = scene.panels[0]!.axes.find((axis) => axis.side === "bottom")!.title!;
     expect(title.y).toBeLessThan(strip.plot.y);
     expect(title.y).toBe(
-      without.scene.panels[0]!.axes.find((a) => a.orient === "bottom")!.title!.y - 52,
+      without.scene.panels[0]!.axes.find((a) => a.side === "bottom")!.title!.y - 52,
     );
     // The strip is not a panel the chart inspects, zooms, or reports.
     expect(model.panels()).toHaveLength(1);
@@ -104,7 +105,7 @@ describe("a navigator's strip", () => {
       expect(strip.height).toBeGreaterThanOrEqual(16);
       expect(strip.height).toBeLessThanOrEqual(40);
       expect(plot.height).toBeGreaterThanOrEqual(30);
-      const title = scene.panels[0]!.axes.find((axis) => axis.orient === "bottom")!.title!;
+      const title = scene.panels[0]!.axes.find((axis) => axis.side === "bottom")!.title!;
       expect(plot.y + plot.height).toBeLessThan(title.y);
       expect(title.y).toBeLessThan(strip.y);
     }
@@ -396,7 +397,7 @@ describe("a navigator's strip", () => {
     const data = waves(100);
     const { scene } = build({
       marks: [line(data, { x: "t", y: "a" })],
-      theme: { fontSize: 24 },
+      theme: { style: { text: { fontSize: 24 } } },
       navigator: rangeNavigator({ height: 16 }),
     });
     const strip = stripOf(scene);
@@ -519,7 +520,7 @@ describe("a navigator's strip under panels", () => {
       height: 40,
     });
     expect(volume!.plot.x).toBe(price!.plot.x);
-    const title = scene.panels[1]!.axes.find((axis) => axis.orient === "bottom")!.title!;
+    const title = scene.panels[1]!.axes.find((axis) => axis.side === "bottom")!.title!;
     expect(volume!.plot.y + volume!.plot.height).toBeLessThan(title.y);
     expect(title.y).toBeLessThan(strip.plot.y);
     // The weighted rows keep their shares of what the strip leaves.
@@ -682,7 +683,7 @@ describe("a navigator's strip under panels", () => {
         {
           marks: [line(data, { x: "t", y: "v" })],
           facet: facet("k"),
-          resolve: { y: "independent" },
+          y: { scope: "panel" },
           navigator: rangeNavigator(),
         },
         600,
@@ -699,14 +700,14 @@ describe("a navigator's strip under panels", () => {
       line(data, { x: "t", y: "v" }),
       line(level, { x: "t", y: "v", facet: "repeat", id: "level" }),
     ];
-    const strip = (resolve: NonNullable<ChartConfig["resolve"]> = {}) =>
+    const strip = (scopes: Pick<ChartConfig, "y"> = {}) =>
       stripOf(
-        build({ marks, facet: facet("k"), resolve, navigator: rangeNavigator() }, 600, 400).scene,
+        build({ marks, facet: facet("k"), ...scopes, navigator: rangeNavigator() }, 600, 400).scene,
       );
     // Once over the one y scale the panels share, and once in each of theirs.
     expect(linesOf(strip())).toHaveLength(4);
-    expect(linesOf(strip({ y: "independent" }))).toHaveLength(6);
-    expect(new Set(linesOf(strip({ y: "independent" })).map(({ key }) => key)).size).toBe(6);
+    expect(linesOf(strip({ y: { scope: "panel" } }))).toHaveLength(6);
+    expect(new Set(linesOf(strip({ y: { scope: "panel" } })).map(({ key }) => key)).size).toBe(6);
   });
 
   it("goes under a grid of facets, short of the row headers", () => {
@@ -731,7 +732,7 @@ describe("a navigator's strip under panels", () => {
     const right = Math.max(...views.map(({ plot }) => plot.x + plot.width));
     expect(strip.plot.x).toBe(Math.min(...views.map(({ plot }) => plot.x)));
     expect(strip.plot.x + strip.plot.width).toBe(right);
-    const rowHeaders = scene.headers.filter(({ angle }) => angle === 90);
+    const rowHeaders = headersOf(scene).filter(({ angle }) => angle === 90);
     expect(rowHeaders.length).toBeGreaterThan(0);
     for (const header of rowHeaders) expect(header.x).toBeGreaterThan(right);
     expect(linesOf(strip)).toHaveLength(4);
@@ -1006,13 +1007,13 @@ describe("navigators refuse", () => {
 
   it("panels with x scales of their own, layout marks, category x axes, and marks along y", () => {
     const hosts = table({ t: [0, 1], v: [1, 2], host: ["a", "b"] });
-    for (const x of ["independent", "rows", "columns"] as const) {
-      const message = `navigator: needs one x scale shared by every panel, and resolve.x is "${x}"; set resolve.x to "shared" or drop navigator`;
+    for (const x of ["panel", "row", "column"] as const) {
+      const message = `navigator: needs one x scale shared by every panel, and x.scope is "${x}"; set x.scope to "chart" or drop navigator`;
       expect(() =>
         build({
           marks: [line(hosts, { x: "t", y: "v" })],
           facet: facet("host"),
-          resolve: { x },
+          x: { scope: x },
           navigator: rangeNavigator(),
         }),
       ).toThrow(message);
@@ -1021,7 +1022,7 @@ describe("navigators refuse", () => {
         build({
           marks: [line(hosts, { x: "t", y: "v", panel: "p" })],
           panels: panels([{ id: "p" }]),
-          resolve: { x },
+          x: { scope: x },
           navigator: rangeNavigator(),
         }),
       ).toThrow(message);
@@ -1030,7 +1031,7 @@ describe("navigators refuse", () => {
       build({
         marks: [line(hosts, { x: "t", y: "v" })],
         facet: facet("host"),
-        resolve: { x: "shared" },
+        x: { scope: "chart" },
         navigator: rangeNavigator(),
       }),
     ).not.toThrow();
@@ -1097,10 +1098,10 @@ describe("navigators refuse", () => {
       model.update({
         marks: [line(hosts, { x: "t", y: "v" })],
         facet: facet("host"),
-        resolve: { x: "independent" },
+        x: { scope: "panel" },
         navigator: rangeNavigator(),
       }),
-    ).toThrow('resolve.x is "independent"');
+    ).toThrow('x.scope is "panel"');
   });
 });
 
@@ -1133,8 +1134,8 @@ describe("navigator specs", () => {
     };
     expect(stripOf(draw({ facet: { field: "k" }, navigator: true })).plot.height).toBe(40);
     expect(() =>
-      draw({ facet: { field: "k" }, resolve: { x: "columns" }, navigator: { height: 30 } }),
-    ).toThrow('resolve.x is "columns"');
+      draw({ facet: { field: "k" }, x: { scope: "column" }, navigator: { height: 30 } }),
+    ).toThrow('x.scope is "column"');
   });
 
   it("are checked", () => {

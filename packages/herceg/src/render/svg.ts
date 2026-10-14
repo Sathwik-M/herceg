@@ -1,108 +1,261 @@
 // Scene to SVG markup. Used directly for static output (server rendering,
 // exports) and piecewise by the live SVG renderer. Each mark's geometry is
-// drawn by the drawing it carries; this module draws the chart around it.
+// drawn by the drawing it carries; guides are drawn from their items, which
+// say where everything goes, so this module places nothing itself.
 
-import { escapeXml, n } from "../draw/markup.ts";
+import { dashAttribute, escapeXml, n, rectMarkup } from "../draw/markup.ts";
+import { haloAttributes } from "../draw/text.ts";
+import { gridStrokes } from "../scene/grid.ts";
 import {
-  type AxisGeometry,
+  clipOf,
   type Geometry,
-  LEGEND_SWATCH,
-  type LegendItem,
+  type Guide,
+  type GuideItem,
   type Panel,
+  type RampGuide,
   type Scene,
-  type SceneText,
+  type ShapeItem,
   type SvgContext,
-  tickLabelGap,
+  type TextItem,
+  type TitleGuide,
 } from "../scene/scene.ts";
+import type { StrokePaint } from "../style/style.ts";
 import type { Theme } from "../theme.ts";
 
-/** Markup of the guides (rules, text), drawn above the data. */
-export function guideElements(marks: readonly Geometry[], context: SvgContext): string {
-  let out = "";
-  for (const mark of marks) if (mark.draw.guide) out += mark.draw.svg(mark, context);
-  return out;
+/**
+ * Markup of a panel's geometry the plot does not cut: data, then guides
+ * (rules, text), each in a group cut to the plot (`plot`, a clip path's id)
+ * or the chart (`chart`) when its mark asks for that.
+ */
+export function uncutMarkup(
+  marks: readonly Geometry[],
+  context: SvgContext,
+  plot: string,
+  chart: string,
+): string {
+  let data = "";
+  let guides = "";
+  for (const mark of marks) {
+    const clip = clipOf(mark);
+    if (clip === "plot" && !mark.draw.guide) continue;
+    let markup = mark.draw.svg(mark, context);
+    if (clip) markup = `<g clip-path="url(#${clip === "plot" ? plot : chart})">${markup}</g>`;
+    if (mark.draw.guide) guides += markup;
+    else data += markup;
+  }
+  return data + guides;
 }
 
-/** A panel's grid lines as one path. */
-export function gridPath(panel: Panel): string {
-  const { plot, grid } = panel;
+/** Whether any geometry of the scene is cut to the chart, which needs a clip path of its own. */
+export function cutToChart(scene: Scene): boolean {
+  return scene.panels.some((panel) => panel.marks.some((mark) => mark.clip === "chart"));
+}
+
+/** Path data of segments: horizontal and vertical ones in the short forms. */
+export function segmentPath(coords: readonly number[]): string {
   let d = "";
-  for (const y of grid.y) d += `M${n(plot.x)} ${n(Math.round(y) + 0.5)}H${n(plot.x + plot.width)}`;
-  for (const x of grid.x) d += `M${n(Math.round(x) + 0.5)} ${n(plot.y)}V${n(plot.y + plot.height)}`;
+  for (let i = 0; i + 3 < coords.length; i += 4) {
+    const [x1, y1, x2, y2] = [coords[i]!, coords[i + 1]!, coords[i + 2]!, coords[i + 3]!];
+    d += `M${n(x1)} ${n(y1)}`;
+    d += y1 === y2 ? `H${n(x2)}` : x1 === x2 ? `V${n(y2)}` : `L${n(x2)} ${n(y2)}`;
+  }
   return d;
 }
 
-export function axisElements(axes: readonly AxisGeometry[], theme: Theme): string {
+/** A stroke's attributes: its color, and its width, dash, and opacity where they are not the defaults. */
+export function strokeAttributes(paint: StrokePaint): string {
+  return (
+    ` stroke="${escapeXml(paint.stroke)}"` +
+    (paint.strokeWidth !== 1 ? ` stroke-width="${paint.strokeWidth}"` : "") +
+    dashAttribute(paint.dash) +
+    (paint.opacity !== 1 ? ` stroke-opacity="${paint.opacity}"` : "")
+  );
+}
+
+/**
+ * A text item's markup: only what differs from what the document's root
+ * sets (the theme's font and size, and its muted color).
+ */
+function textMarkup(item: TextItem, root: Theme): string {
+  const { paint } = item;
   let out = "";
-  for (const axis of axes) {
-    if (axis.orient === "bottom") {
-      const y = Math.round(axis.offset) + 0.5;
-      if (axis.line) {
-        let d = `M${n(axis.start)} ${n(y)}H${n(axis.end)}`;
-        for (const tick of axis.ticks) d += `M${n(Math.round(tick.position) + 0.5)} ${n(y)}v5`;
-        out += `<path d="${d}" stroke="${escapeXml(theme.axis)}" fill="none"/>`;
+  if (item.box) {
+    const box = paint.background!;
+    out += rectMarkup(
+      item.box,
+      box.radius,
+      ` fill="${escapeXml(box.fill)}"${box.stroke ? ` stroke="${escapeXml(box.stroke)}" stroke-width="${box.strokeWidth ?? 1}"` : ""}${rotation(item)}`,
+    );
+  }
+  out += `<text x="${n(item.x)}" y="${n(item.y)}"`;
+  if (item.anchor !== "start") out += ` text-anchor="${item.anchor}"`;
+  if (item.baseline !== "alphabetic") out += ` dominant-baseline="${item.baseline}"`;
+  if (paint.font !== root.font) out += ` font-family="${escapeXml(paint.font)}"`;
+  if (paint.size !== root.fontSize) out += ` font-size="${paint.size}"`;
+  if (paint.italic) out += ` font-style="italic"`;
+  if (paint.weight !== 400) out += ` font-weight="${paint.weight}"`;
+  if (paint.color !== root.muted) out += ` fill="${escapeXml(paint.color)}"`;
+  const opacity = paint.opacity * (item.opacity ?? 1);
+  if (opacity !== 1) out += ` opacity="${opacity}"`;
+  if (item.halo) out += haloAttributes(item.halo);
+  out += rotation(item);
+  return `${out}>${escapeXml(item.text)}</text>`;
+}
+
+function rotation(item: TextItem): string {
+  return item.angle ? ` transform="rotate(${item.angle} ${n(item.x)} ${n(item.y)})"` : "";
+}
+
+/** A shape item's markup: its path about its point, outlined 1 pixel wide when it has a stroke. */
+export function shapeMarkup(item: ShapeItem): string {
+  const opacity = item.opacity !== undefined ? ` opacity="${item.opacity}"` : "";
+  const fillOpacity = item.fillOpacity !== undefined ? ` fill-opacity="${item.fillOpacity}"` : "";
+  const outline = item.stroke
+    ? ` stroke="${escapeXml(item.stroke)}" stroke-width="1" stroke-linejoin="round"`
+    : "";
+  return `<path transform="translate(${n(item.at[0])} ${n(item.at[1])})" d="${item.d}" fill="${escapeXml(item.fill)}"${fillOpacity}${outline}${opacity}/>`;
+}
+
+/**
+ * Markup of a guide's items (an axis', or `guide`'s); `id` makes a
+ * document-unique id for each ramp's gradient.
+ */
+export function itemsMarkup(
+  items: readonly GuideItem[],
+  root: Theme,
+  id: () => string,
+  guide?: Guide,
+): string {
+  let out = "";
+  for (const item of items) {
+    switch (item.type) {
+      case "text":
+        out += textMarkup(item, root);
+        break;
+      case "segments":
+        if (item.coords.length > 0)
+          out += `<path d="${segmentPath(item.coords)}"${strokeAttributes(item.paint)} fill="none"/>`;
+        break;
+      case "shape":
+        out += shapeMarkup(item);
+        break;
+      case "rect": {
+        const opacity = item.opacity !== undefined ? ` opacity="${item.opacity}"` : "";
+        out += rectMarkup(item, item.radius, ` fill="${escapeXml(item.fill)}"${opacity}`);
+        break;
       }
-      const below = y + tickLabelGap(theme.fontSize);
-      for (const tick of axis.ticks) {
-        out += `<text x="${n(tick.position)}" y="${n(below)}" text-anchor="middle" dominant-baseline="hanging">${escapeXml(tick.label)}</text>`;
-      }
-    } else {
-      // Labels sit outside the plot: left of a left axis, right of a right one.
-      const left = axis.orient === "left";
-      const x = left ? axis.offset - 8 : axis.offset + 8;
-      const anchor = left ? "end" : "start";
-      for (const tick of axis.ticks) {
-        out += `<text x="${n(x)}" y="${n(tick.position)}" text-anchor="${anchor}" dominant-baseline="middle">${escapeXml(tick.label)}</text>`;
-      }
-    }
-    if (axis.title) {
-      // Vertical titles read bottom to top on the left and top to bottom on the right.
-      const angle = axis.orient === "left" ? -90 : axis.orient === "right" ? 90 : 0;
-      const rotate = angle
-        ? ` transform="rotate(${angle} ${n(axis.title.x)} ${n(axis.title.y)})"`
-        : "";
-      out += `<text x="${n(axis.title.x)}" y="${n(axis.title.y)}" text-anchor="middle" dominant-baseline="middle" fill="${escapeXml(theme.text)}"${rotate}>${escapeXml(axis.title.text)}</text>`;
+      case "ramp":
+        out += (guide as RampGuide).rampMarkup(item, id());
+        break;
     }
   }
   return out;
 }
 
-export function legendElements(legend: readonly LegendItem[], theme: Theme): string {
-  let out = "";
-  for (const item of legend) {
-    const opacity = item.hidden ? ' opacity="0.4"' : "";
-    const swatchY = item.y - LEGEND_SWATCH / 2;
-    const fill = escapeXml(item.color);
-    // Point series show their symbol.
-    const outline = item.stroke
-      ? ` stroke="${escapeXml(item.stroke)}" stroke-width="1" stroke-linejoin="round"`
+/** Markup of what is drawn under the data: the chart's and plots' backgrounds, and the grid lines. */
+export function underMarkup(scene: Scene): string {
+  const { theme, width, height } = scene;
+  let out =
+    theme.background !== "transparent"
+      ? `<rect width="${width}" height="${height}" fill="${escapeXml(theme.background)}"/>`
       : "";
-    const swatch = item.glyph
-      ? `<path transform="translate(${n(item.x + LEGEND_SWATCH / 2)} ${n(item.y)})" d="${item.glyph}" fill="${fill}"${outline}/>`
-      : `<rect x="${n(item.x)}" y="${n(swatchY)}" width="${LEGEND_SWATCH}" height="${LEGEND_SWATCH}" rx="2" fill="${fill}"/>`;
-    out += `<g${opacity}>${swatch}`;
-    out += `<text x="${n(item.x + LEGEND_SWATCH + 6)}" y="${n(item.y)}" dominant-baseline="middle" fill="${escapeXml(theme.text)}">${escapeXml(item.label)}</text></g>`;
-  }
+  for (const { plot, frame } of scene.panels)
+    if (frame?.fill) out += rectMarkup(plot, 0, ` fill="${escapeXml(frame.fill)}"`);
+  for (const stroke of gridStrokes(scene.panels, theme))
+    out += `<path d="${segmentPath(stroke.coords)}"${strokeAttributes(stroke.paint)} fill="none"/>`;
   return out;
 }
 
-/** Facet headers: panels' values, or a grid's column and row values. */
-export function headerElements(headers: readonly SceneText[], theme: Theme): string {
+/** Markup of plots' borders, drawn over the data. */
+export function plotBorders(panels: readonly Panel[]): string {
   let out = "";
-  for (const { text, x, y, anchor, angle } of headers) {
-    const rotate = angle ? ` transform="rotate(${angle} ${n(x)} ${n(y)})"` : "";
-    out += `<text x="${n(x)}" y="${n(y)}" text-anchor="${anchor}" dominant-baseline="middle" font-weight="600" fill="${escapeXml(theme.text)}"${rotate}>${escapeXml(text)}</text>`;
-  }
+  for (const { plot, frame } of panels)
+    if (frame?.stroke)
+      out += rectMarkup(
+        plot,
+        0,
+        ` fill="none" stroke="${escapeXml(frame.stroke)}"${frame.strokeWidth !== 1 ? ` stroke-width="${frame.strokeWidth}"` : ""}`,
+      );
   return out;
 }
 
-export function titleElement(scene: Scene): string {
-  if (!scene.title) return "";
-  const { theme } = scene;
-  return `<text x="${n(scene.title.x)}" y="${n(scene.title.y)}" dominant-baseline="middle" font-size="${theme.titleSize}" font-weight="600" fill="${escapeXml(theme.text)}">${escapeXml(scene.title.text)}</text>`;
+/**
+ * Markup of a scene's axes, plot borders, and guides; without `legend`,
+ * not the series legend, which the browser draws as buttons.
+ */
+export function guidesMarkup(scene: Scene, id: string, legend: boolean): string {
+  const root = scene.theme;
+  let ramps = 0;
+  const next = () => `${id}-ramp-${ramps++}`;
+  let out = '<g style="font-variant-numeric:tabular-nums">';
+  for (const panel of scene.panels)
+    for (const axis of panel.axes) out += itemsMarkup(axis.items, root, next);
+  out += "</g>";
+  out += plotBorders(scene.panels);
+  for (const guide of scene.guides)
+    if (legend || guide.kind !== "legend") out += itemsMarkup(guide.items, root, next, guide);
+  return out;
 }
 
-export interface SvgOptions {
+/** An alignment of SVG's `preserveAspectRatio`. */
+export type SvgAlign =
+  | "xMinYMin"
+  | "xMidYMin"
+  | "xMaxYMin"
+  | "xMinYMid"
+  | "xMidYMid"
+  | "xMaxYMid"
+  | "xMinYMax"
+  | "xMidYMax"
+  | "xMaxYMax";
+
+/**
+ * How a standalone SVG sizes and scales. Scaling an SVG scales its text and
+ * geometry as they are laid out; a live chart lays itself out again at a
+ * new size instead.
+ */
+export interface SvgSizing {
+  /**
+   * "fixed" (the default): width and height attributes of the chart's size.
+   * "fluid": neither, so CSS or the container sizes the SVG, its viewBox
+   * scaling the chart to fit (as wide as its container by default).
+   */
+  sizing?: "fixed" | "fluid" | undefined;
+  /**
+   * How the chart fits a box of another aspect ratio, as SVG's attribute
+   * of the same name says: "none" stretches it; the default centers it whole.
+   */
+  preserveAspectRatio?: "none" | SvgAlign | `${SvgAlign} ${"meet" | "slice"}` | undefined;
+  /**
+   * "fixed": lines and outlines keep their width in pixels however the SVG
+   * scales. "scale" (the default) scales them with it.
+   */
+  strokeScaling?: "scale" | "fixed" | undefined;
+}
+
+/** Each sizing option, the values it takes, and how messages say them. */
+const SIZING: readonly [keyof SvgSizing, RegExp, string][] = [
+  ["sizing", /^(fixed|fluid)$/, '"fixed" or "fluid"'],
+  [
+    "preserveAspectRatio",
+    /^(none|x(Min|Mid|Max)Y(Min|Mid|Max)( (meet|slice))?)$/,
+    '"none" or an alignment such as "xMidYMid meet"',
+  ],
+  ["strokeScaling", /^(scale|fixed)$/, '"scale" or "fixed"'],
+];
+
+/** Throws for `SvgSizing` options that are not valid, named under `where` (such as "renderToSVG"). */
+export function checkSizing(options: SvgSizing, where: string): void {
+  for (const [key, valid, expected] of SIZING) {
+    const value: unknown = options[key];
+    if (value !== undefined && !(typeof value === "string" && valid.test(value)))
+      throw new TypeError(
+        `${where} ${key}: expected ${expected}; received ${JSON.stringify(value)}`,
+      );
+  }
+}
+
+export interface SvgOptions extends SvgSizing {
   /** Raster image encoder; rasters are omitted without one. */
   encodeRaster?: SvgContext["encodeRaster"];
   /** Prefix for element ids, unique per document. */
@@ -112,45 +265,58 @@ export interface SvgOptions {
   description?: string;
   /** Include the legend (the browser runtime renders it as HTML instead). */
   legend?: boolean;
+  /**
+   * Draw text unkerned and without ligatures, as supplied fonts measure
+   * it: glyph after glyph.
+   */
+  unkerned?: boolean;
 }
 
 /** Complete, standalone SVG document for a scene. */
 export function renderSvg(scene: Scene, options: SvgOptions = {}): string {
   const { theme, width, height } = scene;
   const id = options.idPrefix ?? "herceg";
-  const title = options.title ?? scene.title?.text;
+  const title =
+    options.title ??
+    (scene.guides.find((guide) => guide.kind === "title") as TitleGuide | undefined)?.text;
   const labelled = [title ? `${id}-title` : "", options.description ? `${id}-desc` : ""]
     .filter(Boolean)
     .join(" ");
-  let out = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img"${labelled ? ` aria-labelledby="${labelled}"` : ""} font-family="${escapeXml(theme.font)}" font-size="${theme.fontSize}" fill="${escapeXml(theme.muted)}">`;
+  const size = options.sizing === "fluid" ? "" : ` width="${width}" height="${height}"`;
+  const aspect = options.preserveAspectRatio;
+  const fixed = options.strokeScaling === "fixed";
+  let out = `<svg xmlns="http://www.w3.org/2000/svg"${fixed ? ` id="${escapeXml(id)}"` : ""}${size} viewBox="0 0 ${width} ${height}"${aspect ? ` preserveAspectRatio="${aspect}"` : ""} role="img"${labelled ? ` aria-labelledby="${labelled}"` : ""} font-family="${escapeXml(theme.font)}" font-size="${theme.fontSize}" fill="${escapeXml(theme.muted)}"${options.unkerned ? ' style="font-kerning:none;font-variant-ligatures:none"' : ""}>`;
   if (title) out += `<title id="${id}-title">${escapeXml(title)}</title>`;
   if (options.description) out += `<desc id="${id}-desc">${escapeXml(options.description)}</desc>`;
+  // vector-effect is not inherited, so every element of this document gets
+  // it (and of no other, where the SVG is inlined into a page).
+  if (fixed)
+    out += `<style>[id="${escapeXml(cssString(id))}"] *{vector-effect:non-scaling-stroke}</style>`;
   out += "<defs>";
   scene.panels.forEach(({ plot }, i) => {
-    out += `<clipPath id="${id}-clip-${i}"><rect x="${n(plot.x)}" y="${n(plot.y)}" width="${n(plot.width)}" height="${n(plot.height)}"/></clipPath>`;
+    out += `<clipPath id="${id}-clip-${i}">${rectMarkup(plot, 0, "")}</clipPath>`;
   });
-  out += "</defs>";
-  if (theme.background !== "transparent") {
-    out += `<rect width="${width}" height="${height}" fill="${escapeXml(theme.background)}"/>`;
-  }
-  const grid = scene.panels.map(gridPath).join("");
-  const dash = theme.gridDash.length > 0 ? ` stroke-dasharray="${theme.gridDash.join(" ")}"` : "";
-  if (grid) out += `<path d="${grid}" stroke="${escapeXml(theme.grid)}"${dash} fill="none"/>`;
+  if (cutToChart(scene))
+    out += `<clipPath id="${id}-clip-chart"><rect width="${width}" height="${height}"/></clipPath>`;
+  out += `</defs>${underMarkup(scene)}`;
   const context: SvgContext = { theme, encodeRaster: options.encodeRaster };
   scene.panels.forEach(({ marks }, i) => {
     out += `<g clip-path="url(#${id}-clip-${i})">`;
-    for (const mark of marks) if (!mark.draw.guide) out += mark.draw.svg(mark, context);
+    for (const mark of marks)
+      if (!mark.draw.guide && clipOf(mark) === "plot") out += mark.draw.svg(mark, context);
     out += "</g>";
   });
-  for (const panel of scene.panels) out += guideElements(panel.marks, context);
-  const axes = scene.panels.flatMap((panel) => panel.axes);
-  out += `<g style="font-variant-numeric:tabular-nums">${axisElements(axes, theme)}</g>`;
-  out += headerElements(scene.headers, theme);
-  out += titleElement(scene);
-  if (options.legend ?? true) out += legendElements(scene.legend, theme);
-  scene.colorLegends.forEach((legend, i) => {
-    out += legend.draw.svg(legend, theme, `${id}-ramp-${i}`);
+  scene.panels.forEach(({ marks }, i) => {
+    out += uncutMarkup(marks, context, `${id}-clip-${i}`, `${id}-clip-chart`);
   });
-  for (const legend of scene.glyphLegends) out += legend.draw.svg(legend, theme, id);
+  out += guidesMarkup(scene, id, options.legend ?? true);
   return `${out}</svg>`;
+}
+
+/**
+ * `text` inside a CSS string: quotes, backslashes, and line breaks escaped,
+ * so any id prefix (one starting with a digit too) selects its document.
+ */
+function cssString(text: string): string {
+  return text.replace(/["\\\n\r]/g, (c) => `\\${c.charCodeAt(0).toString(16)} `);
 }

@@ -283,7 +283,7 @@ export class SunburstMark implements LayoutMark {
           key: `sunburst-labels-${fill}`,
           fill,
           anchor: "middle",
-          halo: false,
+          halo: undefined,
           coords: Float32Array.from(coords),
           labels,
           count: labels.length,

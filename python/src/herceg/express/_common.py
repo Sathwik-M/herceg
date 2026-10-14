@@ -24,6 +24,7 @@ import numpy as np
 from .._chart import Axis, Chart, _chart_of, helper
 from .._data import Column, Table, listed, shown
 from .._rows import SelectionBinding
+from .._style import Theme, Tokens
 from ._numerics import ErrorFunction, Estimator
 
 ErrorMethod = Literal["ci", "pi", "se", "sd"]
@@ -407,18 +408,15 @@ def facets(options: Mapping[str, Any], function: str) -> tuple[str | None, str |
     return options.get("facet_row"), options.get("facet_column")
 
 
-def sharing_fields(
-    resolve: str | None, facet_row: str | None, facet_column: str | None
-) -> list[str]:
+def sharing_fields(scope: str | None, facet_row: str | None, facet_column: str | None) -> list[str]:
     """The facet fields whose values the panels sharing an axis have in
-    common, as its ``resolve_x`` or ``resolve_y`` says: none for a shared
-    axis (every panel shares it), both for panels' own, or a row's or a
-    column's field."""
-    if resolve == "independent":
+    common, as its ``scope`` says: none for the chart's (every panel shares
+    it), both for each panel's own, or a row's or a column's field."""
+    if scope == "panel":
         return [name for name in (facet_row, facet_column) if name is not None]
-    if resolve == "rows" and facet_row is not None:
+    if scope == "row" and facet_row is not None:
         return [facet_row]
-    if resolve == "columns" and facet_column is not None:
+    if scope == "column" and facet_column is not None:
         return [facet_column]
     return []
 
@@ -817,6 +815,19 @@ def neutral(theme: Any) -> str:
     return "#424242"
 
 
+def axis_defaults(settings: dict[str, Any], axis: str, **defaults: Any) -> None:
+    """Gives the chart's ``axis`` (``x_axis`` or ``y_axis``) the settings of
+    ``defaults`` its caller's own axis leaves unset."""
+    given = settings.get(axis)
+    if given is None:
+        settings[axis] = Axis(**defaults)
+    elif isinstance(given, Mapping):
+        settings[axis] = {**defaults, **{k: v for k, v in given.items() if v is not None}}
+    else:
+        unset = {name: value for name, value in defaults.items() if getattr(given, name) is None}
+        settings[axis] = dataclasses.replace(given, **unset)
+
+
 def make_chart(
     data: Mapping[str, Column] | None,
     options: Mapping[str, Any],
@@ -833,11 +844,18 @@ def make_chart(
     if palette is not None:
         if isinstance(palette, str) or not all(isinstance(c, str) for c in palette):
             raise ValueError(f"palette: expected a list of colors; received {shown(palette)}")
-        theme = settings.get("theme")
-        if isinstance(theme, dict):
-            settings["theme"] = {**theme, "palette": list(palette)}
-        else:
-            settings["theme"] = {"palette": list(palette), **({"extends": theme} if theme else {})}
+        given = settings.get("theme")
+        theme = (
+            Theme(extends=given)  # type: ignore[arg-type]
+            if given is None or isinstance(given, str)
+            else given
+            if isinstance(given, Theme)
+            else Theme(**given)
+        )
+        tokens = theme.tokens if isinstance(theme.tokens, Tokens) else Tokens()
+        settings["theme"] = dataclasses.replace(
+            theme, tokens=dataclasses.replace(tokens, palette=list(palette))
+        )
     for axis, label in (("x_axis", x_label), ("y_axis", y_label)):
         if label is not None and settings.get(axis) is None:
             settings[axis] = Axis(title=label)

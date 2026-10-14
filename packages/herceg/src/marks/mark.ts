@@ -11,7 +11,7 @@ import type { LegendPart } from "../model/legend.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
 import type { Geometry, Rect } from "../scene/scene.ts";
-import type { Frozen, MarkTooltipSpec } from "../spec/spec.ts";
+import type { Clip, Frozen, MarkTooltipSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import {
   isSortedSubset,
@@ -161,6 +161,8 @@ export interface Frame {
   /** Pixels per CSS pixel of images (heatmap rasters): the pixel ratio, or more for static output. */
   rasterRatio: number;
   theme: Theme;
+  /** What the plot draws on, for halos: its fill, or the chart's background when absent. */
+  surface?: string | undefined;
   /** Locale for numbers the mark formats as text; undefined uses the runtime's. */
   locale: string | undefined;
   hidden: ReadonlySet<string>;
@@ -271,6 +273,8 @@ export interface MarkIdentity {
   readonly facet?: "repeat" | undefined;
   /** In a chart with panels, the panel the mark draws in, or "*" for every one. */
   readonly panel?: string | undefined;
+  /** What the mark's drawing is cut to; data to the plot, labels and text not at all, when absent. */
+  readonly clip?: Clip | undefined;
   /** Series of marks in the same legend group share colors, legend entries, and visibility by name. */
   readonly legendGroup?: string | undefined;
   /** What tooltips show of the rows of marks whose points are rows, besides their values. */

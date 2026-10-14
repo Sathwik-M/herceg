@@ -1,15 +1,17 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { PdfFontResolver, type PdfFontSource } from "../../src/render/pdf-font-resolver.ts";
+import { graphemeClusters } from "../../src/fonts/clusters.ts";
+import { EMBED_FONTS } from "../../src/fonts/prepared.ts";
+import { parseTrueType } from "../../src/fonts/truetype.ts";
+import { type FontOptions, type FontSource, prepareFonts } from "../../src/fonts.ts";
+import type { PdfFontResolver } from "../../src/render/pdf-font-embed.ts";
 import { subsetTrueType } from "../../src/render/pdf-font-subset.ts";
-import { graphemeClusters } from "../../src/render/pdf-text.ts";
-import { parseTrueType } from "../../src/render/pdf-truetype.ts";
 
 const data = new Uint8Array(
   readFileSync(new URL("../fixtures/pdf-fonts/sans.ttf", import.meta.url)),
 );
 const source = parseTrueType(data);
-function face(family: string, text: string): PdfFontSource {
+function face(family: string, text: string): FontSource {
   return {
     family,
     data: subsetTrueType(
@@ -19,12 +21,15 @@ function face(family: string, text: string): PdfFontSource {
   };
 }
 
+/** One export's embedding of fonts prepared from `sources`. */
+const embedder = (sources: readonly FontSource[], options?: FontOptions): PdfFontResolver =>
+  prepareFonts(sources)[EMBED_FONTS](options);
+
 describe.each(["native", "fallback"] as const)("PDF clusters with %s segmentation", (mode) => {
-  function resolver(fonts: PdfFontSource[], missingGlyph?: string): PdfFontResolver {
+  function resolver(fonts: FontSource[], missingGlyph?: string): PdfFontResolver {
     if (mode === "fallback") vi.stubGlobal("Intl", undefined);
     try {
-      return new PdfFontResolver({
-        fonts,
+      return embedder(fonts, {
         fallback: fonts.slice(1).map((font) => font.family),
         ...(missingGlyph === undefined ? {} : { missingGlyph }),
       });
@@ -41,7 +46,7 @@ describe.each(["native", "fallback"] as const)("PDF clusters with %s segmentatio
         missingGlyph,
       );
       const { runs } = fonts.resolve(`${cluster}ｶ`, "Primary", false);
-      expect(runs.map((run) => run.face.source.family)).toEqual(["Fallback", "Primary"]);
+      expect(runs.map((run) => run.face.parsed.source.family)).toEqual(["Fallback", "Primary"]);
       expect(runs[0]!.glyphs.map((glyph) => glyph.source)).toEqual(["ｶ", mark]);
       expect(runs[0]!.face.encode(runs[0]!.glyphs)).toBe("<00010002>");
       expect(runs[0]!.face.cidGlyphs.get(1)).not.toBe(runs[0]!.face.cidGlyphs.get(2));
@@ -64,7 +69,7 @@ describe.each(["native", "fallback"] as const)("PDF clusters with %s segmentatio
   it("composes accents atomically and refuses unpositioned marks before replacement", () => {
     const fonts = resolver([face("Primary", "e?"), face("Fallback", "éé?")], "?");
     const { runs } = fonts.resolve("ée", "Primary", false);
-    expect(runs.map((run) => run.face.source.family)).toEqual(["Fallback", "Primary"]);
+    expect(runs.map((run) => run.face.parsed.source.family)).toEqual(["Fallback", "Primary"]);
     expect(runs[0]!.glyphs.map((glyph) => glyph.source)).toEqual(["é"]);
     for (const text of ["x́", "1\u20e3", "a\u1ab0"])
       expect(() => fonts.resolve(text, "Primary", false)).toThrow(/cannot position combining/);
@@ -118,7 +123,7 @@ describe("PDF simple-text admission", () => {
     "、。〿㆐㌀﹐！￦",
     "𝌀𝟿🀀🌀😀🯀",
   ])("admits covered simple text %s", (text) => {
-    const fonts = new PdfFontResolver({ fonts: [face("Fixture", text + text.normalize("NFC"))] });
+    const fonts = embedder([face("Fixture", text + text.normalize("NFC"))]);
     expect(fonts.resolve(text, "Fixture", false).width).toBeGreaterThan(0);
   });
 
@@ -207,19 +212,16 @@ describe("PDF simple-text admission", () => {
     const name = `U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
     for (const font of [{ family: "Fixture", data }, face("Fixture", `${text}?`)]) {
       for (const missingGlyph of [undefined, "?"]) {
-        const fonts = new PdfFontResolver({
-          fonts: [font],
-          ...(missingGlyph === undefined ? {} : { missingGlyph }),
-        });
+        const fonts = embedder([font], { ...(missingGlyph === undefined ? {} : { missingGlyph }) });
         expect(() => fonts.resolve(`A${text}B`, "Fixture", false)).toThrow(name);
         expect(() => fonts.resolve(text, "Unknown", false)).toThrow(name);
       }
-      expect(() => new PdfFontResolver({ fonts: [font], missingGlyph: text })).toThrow(name);
+      expect(() => embedder([font], { missingGlyph: text })).toThrow(name);
     }
   });
 
   it("allows replacement for uncovered admitted text", () => {
-    const fonts = new PdfFontResolver({ fonts: [{ family: "Fixture", data }], missingGlyph: "?" });
+    const fonts = embedder([{ family: "Fixture", data }], { missingGlyph: "?" });
     for (const text of ["Ա", "ა", "雪", "あ", "ア", "가", "😀"])
       expect(fonts.resolve(text, "Fixture", false).runs[0]!.glyphs[0]!.source).toBe("?");
   });

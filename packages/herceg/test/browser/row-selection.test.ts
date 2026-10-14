@@ -276,12 +276,12 @@ describe("row selection across charts and grids", () => {
       interaction: { brush: "x" },
       rowSelection: rowSelection({ store, channel: "focus" }),
     };
-    const faceted = chart({ ...options, resolve: { x: "independent" } });
+    const faceted = chart({ ...options, x: { scope: "panel" } });
     await faceted.loading;
     faceted.select([1, 2], { panel: "a" });
     expect(store.get("focus")?.kind).toBe("predicate");
     // Panels sharing x now: the brush in panel a's own x goes, and its rows with it.
-    faceted.update({ ...options, resolve: { x: "shared" } });
+    faceted.update({ ...options, x: { scope: "chart" } });
     faceted.render();
     await frames();
     expect(faceted.selection).toBeNull();
@@ -337,7 +337,7 @@ describe("row selection across charts and grids", () => {
       const store = selectionStore(source);
       const made = chart({
         renderer: "canvas",
-        theme: { palette: [translucent, "rgba(0, 0, 255, 0.5)"] },
+        theme: { tokens: { palette: [translucent, "rgba(0, 0, 255, 0.5)"] } },
         y: { domain: [0, 2] },
         marks: marks(source as unknown as Table),
         rowSelection: rowSelection({ store, channel: "focus" }),

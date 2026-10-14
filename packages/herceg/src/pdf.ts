@@ -2,36 +2,41 @@
 // that never export PDF neither bundle nor (unbundled) load its code.
 
 import type { Chart } from "./dom/handle.ts";
+import { checkFonts, EMBED_FONTS } from "./fonts/prepared.ts";
+import type { FontOptions, Fonts } from "./fonts/registry.ts";
 import { describeChart } from "./model/describe.ts";
 import { type ChartConfig, ChartModel, STATIC_RASTER_RATIO } from "./model/model.ts";
-import { EXPORT_SCENE, type ExportsScene } from "./render/export-scene.ts";
+import { titleText } from "./model/titles.ts";
+import { EXPORT_FONTS, EXPORT_SCENE, type ExportsScene } from "./render/export-scene.ts";
 import { NO_PAGE } from "./render/fallbacks.ts";
 import { drawPdfPage } from "./render/pdf.ts";
 import { type DocumentInfo, PdfWriter } from "./render/pdf-document.ts";
-import type { PdfFonts } from "./render/pdf-font-resolver.ts";
 import { measurePdfText } from "./render/pdf-fonts.ts";
 import { type PdfPageOptions, paperPage } from "./render/pdf-paper.ts";
 import type { Scene } from "./scene/scene.ts";
 
-export type { PdfFontOptions, PdfFontSource, PdfFonts } from "./render/pdf-font-resolver.ts";
-export { pdfFonts } from "./render/pdf-font-resolver.ts";
 export type { PdfPageOptions } from "./render/pdf-paper.ts";
 
-/** Paper, metadata, and fonts shared by every page of a PDF export. */
-export interface PdfExportOptions extends PdfPageOptions {
+/**
+ * Paper, metadata, and fonts shared by every page of a PDF export; with
+ * fonts, `fallback` and `missingGlyph` set text the theme's families do not
+ * cover.
+ */
+export interface PdfExportOptions extends PdfPageOptions, FontOptions {
   /** Metadata only; visible chart titles are unchanged. */
   title?: string;
   /** Defaults to the description when exporting one chart. */
   subject?: string;
   /** Defaults to the chart locale for one chart, or en for multiple charts. */
   language?: string;
-  /** Prepared embedded fonts from pdfFonts; omitted for standard PDF fonts. */
-  fonts?: PdfFonts;
+  /**
+   * Fonts from `prepareFonts` (herceg/fonts) to embed, the subsets the pages use;
+   * without them, text is set in the standard PDF fonts.
+   */
+  fonts?: Fonts;
 }
 
 export interface PdfOptions extends ChartConfig {
-  /** Prepared embedded fonts; a shared configuration is used across pages. */
-  fonts?: PdfFonts;
   /** CSS pixels; the page measures 0.75 points per pixel. */
   width: number;
   height: number;
@@ -53,22 +58,37 @@ export function renderToPDF(
     : [target as Chart | PdfOptions];
   if (!targets.length)
     throw new RangeError("renderToPDF charts: expected at least one chart; supply a nonempty list");
+  // The fonts charts measure with, a mounted chart's or the options': one set for the document.
   let fonts = settings.fonts;
-  if (!fonts) {
-    for (const item of targets) {
-      const supplied = (item as PdfOptions).fonts;
-      if (fonts && supplied && fonts !== supplied)
-        throw new TypeError(
-          "renderToPDF fonts: conflicting chart font configurations; supply one fonts option for the whole PDF",
-        );
-      fonts ??= supplied;
-    }
+  let charts: Fonts | undefined;
+  for (const item of targets) {
+    const supplied =
+      EXPORT_SCENE in item
+        ? (item as unknown as ExportsScene)[EXPORT_FONTS]
+        : (item as PdfOptions).fonts;
+    // Static options are laid out with the document's fonts; a mounted chart
+    // was measured with its own, which its page must draw in.
+    if (fonts && supplied && fonts !== supplied && EXPORT_SCENE in item)
+      throw new TypeError(
+        "renderToPDF fonts: a chart measures its text with other fonts; leave fonts out to use the chart's",
+      );
+    if (!fonts && charts && supplied && charts !== supplied)
+      throw new TypeError(
+        "renderToPDF fonts: conflicting chart font configurations; supply one fonts option for the whole PDF",
+      );
+    charts ??= supplied;
   }
-  if (Array.isArray(fonts))
+  fonts ??= charts;
+  checkFonts(fonts, "renderToPDF");
+  const { fallback, missingGlyph } = settings;
+  if (!fonts && (fallback !== undefined || missingGlyph !== undefined))
     throw new TypeError(
-      "renderToPDF fonts: expected prepared fonts; wrap the font array in pdfFonts(...)",
+      `renderToPDF ${fallback !== undefined ? "fallback" : "missingGlyph"}: sets text in supplied fonts; give fonts or drop it`,
     );
-  const resolver = fonts?.createResolver();
+  const resolver = fonts?.[EMBED_FONTS]({
+    ...(fallback && { fallback }),
+    ...(missingGlyph !== undefined && { missingGlyph }),
+  });
   const writer = new PdfWriter();
   let singleInfo: DocumentInfo | undefined;
   const add = (
@@ -76,7 +96,8 @@ export function renderToPDF(
     model: ChartModel,
     page = paperPage(scene.width, scene.height, settings, resolver),
   ) => {
-    const { title, description, locale } = model.config;
+    const { description, locale } = model.config;
+    const title = titleText(model.config.title);
     const summary = describeChart(model);
     const documentLanguage = settings.language ?? (targets.length > 1 ? "en" : locale);
     const language = locale ?? documentLanguage;

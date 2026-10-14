@@ -1638,8 +1638,8 @@ PNG) draw it like any panel, while inspection, the keyboard, viewports,
 `~` added until no panel has that key (a facet value or subplot of that
 name), as the live SVG renderer keeps each panel's nodes by key. The
 navigator's check runs after the layout's own: it refuses layout marks,
-category x axes, marks placed along y, and with facets or panels a
-`resolve.x` other than `"shared"`, also while every panel's data shares
+category x axes, marks placed along y, and with facets or panels an
+`x.scope` other than `"chart"`, also while every panel's data shares
 one x scale, as one window shows one x range.
 
 **Overview.** The strip's x axis (the rail) is the unzoomed x domain of
@@ -1821,7 +1821,7 @@ pair of values of a row field and a column field (each field's values in
 order of first appearance across the tables of the marks that split, every
 pair drawn, rows by columns). Facet headers are scene text (`Scene.headers`),
 so every renderer and static export draws them the same way. With
-`resolve.y`, panels are grouped (each alone, by row, or by column) and each
+`y.scope`, panels are grouped (each alone, by row, or by column) and each
 group gets a y plan from the data its panels draw within their x domains,
 the same nice, headroom, and inset rules as a shared axis; a group with
 nothing to show draws no y labels. Rows
@@ -1896,14 +1896,14 @@ only where the mark's `panel` names that panel (or is `"*"`), and a member
 mask so marks elsewhere are neither drawn nor inspected there. Marks keep
 their index in the chart as their identity in every panel, so series keys,
 colors, and legend state are the same as in one panel. Panels default to a y
-scale each (`resolve.y` "independent"); each group of panels sharing y plans
+scale each (`y.scope` "panel"); each group of panels sharing y plans
 it from what its panels draw, with the chart's `y` and its first panel's own
 settings, and subplots infer each group's type (linear or time) from their
 own marks.
 
 The right y axis is planned as the left one is, by one planner over either
-side's marks: shared, or with `resolve.yRight` (by default the left one's
-resolution) by panel, row, or column, each group from what its panels draw
+side's marks: shared, or with `yRight.scope` (by default the left one's
+scope) by panel, row, or column, each group from what its panels draw
 on that side (`PanelLayout.groups` filters marks by side; a right group takes
 its settings from its first panel drawing on the right, and subplots'
 `yRight` settings agree as y's do). A panel has a right axis when a mark it
@@ -1924,7 +1924,7 @@ right axis, and 1.8 ms with right axes of their own. What only a grid of panels 
 (fitting it to the chart, weighted rows and columns, the room between rows)
 is the layout's (`PanelLayout.tracks`, `rowGap`), loaded only with it.
 
-`resolve.x` groups panels for x the same way (`PanelLayout.groups`), and the
+`x.scope` groups panels for x the same way (`PanelLayout.groups`), and the
 model plans each group as it plans the one shared x scale: the x extent of
 what its panels draw, its viewport or the configured domain (for subplots,
 its first panel's `x` settings over the chart's, and a time axis when its
@@ -1968,7 +1968,7 @@ reports clicks (the clicked panel's scale decides whether values are
 times), keeps each panel's zoom across reruns by panel key, and refuses
 `on_select`.
 
-With `resolve` other than `"shared"` on a category axis, each group of panels
+With a `scope` other than `"chart"` on a category axis, each group of panels
 sharing the axis holds only the chart's bands that the rows its panels draw
 hold, in the chart's order. The model discovers the chart's bands and resolves
 series as it does for one panel, so a series' categorical channel holds chart
@@ -2520,7 +2520,7 @@ checks a chart's `interaction` against what its layout marks take (zoom for
 drilling, a plane's zoom and lasso, dragging nodes), the same check as for a
 chart of one: panels with axes take zoom and brushes along x; where every
 panel draws a layout mark, options none of them takes are refused, and so
-are sync, seams, and `resolve`.
+are sync, seams, and scales' `scope`.
 
 The splitter marks such panels in its split (`PanelSplit.items`: the mark,
 its index among the chart's marks, and its rows there). A facet hands the
@@ -3273,10 +3273,11 @@ because some viewers (macOS Preview) smooth images whatever the file asks
 and would blur cells into each other; the color legend's ramp is an axial
 shading. Without export-supplied fonts, text uses six standard PDF faces
 (regular/bold Helvetica, Times, and Courier) with WinAnsi and exact Adobe
-AFM advances. With `fonts: pdfFonts(sources, options)`, `src/pdf.ts` asks
-the prepared `PdfFonts` object for an export-scoped `PdfFontResolver`,
-passes its measurer into `model.scene()`, and passes the same resolver into
-`renderPdf()`. Both layout and drawing resolve family,
+AFM advances. With `fonts` from `prepareFonts(sources)` (`herceg/fonts`),
+`src/pdf.ts` asks the prepared fonts for an export-scoped
+`PdfFontResolver` (through `EMBED_FONTS`, with the export's `fallback`
+and `missingGlyph`), passes its measurer into
+`model.scene()`, and passes the same resolver into `renderPdf()`. Both layout and drawing resolve family,
 weight, and coverage into glyph runs. Advances from `hmtx` are rounded once
 at six decimal places in 1/1000 em and used identically in layout and `/W`;
 no kerning or shaping is applied. The whole fallback string is anchored before
@@ -3285,19 +3286,19 @@ from OS/2 (hhea ascent when unavailable) replace the Helvetica assumption for
 hanging/middle embedded text. Width-only layout cannot account for unusual
 fallback ascents/descents; label truncation still cuts at code-point boundaries.
 
-`render/pdf-truetype.ts` validates static sfnt TrueType `glyf` faces and
+`fonts/truetype.ts` validates static sfnt TrueType `glyf` faces and
 Unicode cmap formats 4/12 with table/glyph bounds and composite-cycle checks.
 `render/pdf-font-subset.ts` rebuilds `glyf`, `loca`, `hmtx`, `cmap`, names,
 checksums, and dependent headers after drawing, including `.notdef` and
 recursive composite components. Measuring unused candidates does not collect
-usage. The prepared object snapshots source descriptors and fallback lists and
-borrows font bytes read-only. It is reusable; each document owns its parsed
-faces, ordered-family cache (bounded at 256 entries), character-to-CID map,
-and subset; there is no global parsed-font
-cache. Fonts are limited to 32 MiB and registries to 64 faces. OS/2 tables
+usage. The prepared fonts snapshot source descriptors and fallback lists,
+borrow font bytes read-only, and parse each face once, with an ordered-family
+cache (bounded at 256 entries) and a width cache; each document owns its
+character-to-CID maps and subsets. Fonts are limited to 32 MiB and registries to 64 faces. OS/2 tables
 are checked against their version's minimum length, including legacy 68-byte
-version 0 tables. OS/2 fsType restricted and bitmap-only embedding are rejected;
-no-subsetting faces retain the full original program. Bitmap-only and
+version 0 tables. OS/2 fsType restricted and bitmap-only embedding are rejected
+when a PDF embeds the face (such faces still measure); no-subsetting faces
+retain the full original program. Bitmap-only and
 no-subsetting bits are ignored in versions 0–1, where they were unassigned.
 Input table and whole-font checksums are intentionally unchecked: real fonts
 often contain incorrect checksums. Generated subsets have fresh checksums.
@@ -3376,24 +3377,27 @@ for shaping or ordering. Emoji modifier, flag, tag, and
 ZWJ sequences are refused before fallback or replacement. Joiners and variation
 sequences are refused too.
 
-`PdfOptions` accepts `fonts?: PdfFonts` outside the portable spec;
-`PdfExportOptions` carries paper, margins, title, subject, language, and fonts. `specToPDF`
-takes these document settings separately from the spec. `pdfFonts(sources, { fallback?, missingGlyph? })` carries the
-resolver factory and embedded-face writer. `renderToPDF` and `render/pdf.ts`
-import these implementation types only; `pdf-document.ts` calls a face's
-writer through the document's `reserve`/`object`/`stream` interface, without
-importing the subsetter. Unicode matchers are pure regular-expression constants,
+Chart options accept `fonts` outside the portable spec; `PdfExportOptions`
+carries paper, margins, title, subject, language, and fonts, and a mounted
+chart's own fonts are used for its page (`EXPORT_FONTS`). `specToPDF` takes
+these document settings separately from the spec, `fallback` and
+`missingGlyph` among them. `prepareFonts(sources)` carries the resolver
+factory and embedded-face writer. `renderToPDF` and `render/pdf.ts` import these implementation types
+and the key only; `pdf-document.ts` calls a face's writer through the
+document's `reserve`/`object`/`stream` interface, without importing the
+subsetter. Unicode matchers are pure regular-expression constants,
 so unused re-exports do not retain font code in bundles. Plain PDF exports
 bundle no parser, resolver, subsetter,
-or binary font helpers; importing and using `pdfFonts` includes them. The
+or binary font helpers; importing and using `prepareFonts` includes them (and
+so does browser use of fonts, which pays for subsetting it does not use). The
 `herceg-pdf` and `herceg-pdf-fonts` size entries track both paths, excluding
 supplied font programs. Python reads family-to-path/bytes mappings in
 `_render.py`, checks face counts and byte lengths before transport, bounds each
 path read to 32 MiB plus one byte, transports font bytes as base64, and decodes them in
-`python/js/static.ts`, which calls `pdfFonts` with Python's unchanged
+`python/js/static.ts`, which calls `prepareFonts` with Python's unchanged
 fallback/replacement options; this adds temporary byte/base64 copies.
 Parsing and subsetting add
-no runtime dependency and are bundled only when `pdfFonts` is used, never
+no runtime dependency and are bundled only when `prepareFonts` is used, never
 through the core chart entry or a plain `specToPDF` export.
 Python's `to_svg(fonts=...)` and `to_png(fonts=...)`, and `save` for those
 extensions, use this resolver's measurer too. Supplied-font layouts therefore
@@ -3672,8 +3676,18 @@ series.
 
 ## Themes
 
-A theme is a set of tokens (`theme.ts`) resolved once per configuration into
-plain values that the model and renderers read. Themes that follow the page
+A theme (`theme.ts`) is tokens, the colors styles are made of
+(`background`, `text`, `muted`, `grid`, `axis`, `palette`, `sequential`,
+`diverging`, `rise`, `fall`), and role styles: how each kind of guide text
+and line looks (`text`, `title`, `panelTitle`, `axisTitle`, `tickLabel`,
+`legendLabel`, `legendTitle`, `plot`, `grid`, `axisLine`, `tick`, and the
+marks' `line`, `bar`, and `tooltip` defaults). A chart's `theme` names a
+built-in theme to extend (`extends`) and changes tokens and roles; it is
+resolved once per configuration into `Theme`: the tokens, `roles` (every
+role in spec shape, the built-in defaults merged with the chart's changes,
+colors resolved), and `style` (every role resolved to a paint, below). A
+role without its own color takes the base text's, so `style.text.color`
+recolors all text. Themes that follow the page
 (`"auto"`, or tokens holding CSS variables) need an environment to resolve:
 the DOM chart passes one that finds whether the chart sits on a dark
 surface (the nearest background color, else the page's color scheme) and
@@ -3707,6 +3721,275 @@ tracer; areas without outlines draw just the isolated upper-edge dots in
 their fill color. Bars whose series field is their category position field
 record a whole-band share, which geometry, inspection, selection, and the
 navigator all read. Palette and legend identities remain per category.
+
+## Styles
+
+Appearance cascades through levels, lowest first: the theme's role, the
+chart's guide options (`x.style`, `y.style`, `yRight.style`, `title.style`,
+`legend.style`), a subplot's `style`, and the subplot's own axis `style`.
+Each level is a partial style (`TextStyle`, `StrokeStyle`, `PlotStyle` in
+`spec/style.ts`); later levels win property by property, `false` turns a
+feature off, and arrays replace rather than concatenate (`style/style.ts`,
+`cascade`). Resolving a role's levels gives a paint, plain values renderers
+read: `TextPaint` (font, size, weight, slant, color, opacity, line height in
+pixels, alignment, halo, background box and padding, and the CSS font
+shorthand measurement uses) and `StrokePaint` (stroke, width, pixel dash
+pattern, opacity). `model/styles.ts` resolves each axis', panel's, title's,
+and legend's paints once per configuration and theme: a role's levels merge
+first, and only then are the colors and font that won read through the
+page or its fallbacks (`readStyle`; a message names the level that set the
+value), so an overridden `var()` needs no fallback. Paints resolve when a
+scene first asks for them, after the page's reader is gone, so what the
+styles read of the page is read with the theme and kept (`readNow`); a
+value that cannot be read then (a variable without a fallback, without a
+page) is read, and refused, only where it wins. Levels that set nothing
+reuse the theme's paint, so a chart without styles allocates none. A chart
+in a page reads those styles again when the page switches themes, and lays
+out and draws again only when what they read changed. Output without a
+page reads named colors as hex (`render/fallbacks.ts`), as a page computes
+them, so guides' halos, which read only hex, `rgb()`, and `hsl()`,
+contrast with them too.
+Text takes its color from `color`, never `fill`; marks keep their flat paint
+options (`stroke`, `fill`, `strokeWidth`), which win over the theme's
+`line` and `bar` defaults. `TextStyle.align` places text in the span it is
+placed in: the chart's content width for its title, the plot's for a
+panel's title, an axis' length for its title; unset, each text has its
+natural alignment.
+
+## Scale instances
+
+The chart's `x`, `y`, and `yRight` are named scales ("x", "y", "yRight")
+with their axes. A scale's `scope` (`"chart"`, `"panel"`, `"row"`,
+`"column"`) says which panels share one instance of it (`model/scales.ts`,
+`scopesOf`); subplots default y to `"panel"` and `yRight` to y's scope. A
+shared instance owns its domain, categories, transform, and viewport; each
+panel owns its projection onto its plot's pixels. Panel membership comes
+first and each instance's type (band, time, or linear) is inferred from the
+marks its panels draw (`instanceType`), so a category axis in one subplot
+and a number axis in another work; one instance holding both refuses, in
+subplots with the panels named and `scope: "panel"` suggested
+(`mixedPanels`, reached through the panel layout, as the scopes are:
+`PanelLayout.scopes`). An instance with no marks
+takes band when other instances of its scale are bands, so empty subplots
+draw no stray grid lines.
+
+## Guides and scene items
+
+Guides are positioned scene items (`scene/scene.ts`): `AxisGuide`,
+`TitleGuide`, `HeaderGuide` (panel titles and facet headers),
+`LegendGuide` (series entries), `RampGuide`, and `KeyGuide`, each with a key
+and `items` of five kinds: text (`TextItem`: point, anchor, baseline, turn,
+paint, and resolved halo and box), segments (one stroke of straight lines),
+shapes (SVG path data about a point), rectangles, and ramps (a gradient
+with explicit stop offsets). Every renderer draws the items as they are:
+SVG markup (`render/svg.ts`, `itemsMarkup`, writing only attributes that
+differ from what the document's root sets), PDF (`render/pdf.ts`,
+`paintItems`), and the live SVG layer; none computes a position, gap, or
+label placement. A ramp guide carries its ramp's SVG markup
+(`rampMarkup`, from `marks/legend-parts.ts`), so charts without color
+ramps do not carry it. Text in a box is placed by its box: the box's edge
+(or middle) goes where the text's own would go without one, and the text
+moves inside the box by its padding, in its own turn (`layout/text.ts`),
+so unevenly padded boxes stay in the room kept for them. The SVG export
+and the live layer draw the chart's and plots' backgrounds and the grid
+lines from one markup (`underMarkup`); the canvas strokes the same grid
+lines (`gridStrokes`, on device pixels). A panel carries its plot, its plot paint (`frame`, the
+background drawn under the grid and the border drawn over the data), its
+grid lines with each axis' stroke (`scene/grid.ts` groups lines that look
+alike into one stroke), and its axes. An axis guide keeps its placement
+(`AxisPlacement`: side, edge, extent, tick length, label gap, surface,
+paints) and ticks beside its items, and `axisItems`
+(`model/axis-guide.ts`) turns a placement and ticks into items: an x axis
+below its plot with its line and tick marks, y axes beside it with their
+labels; value transitions call it with ticks planned between two
+scenes, so a guide holds data, never a closure. The HTML legend reads the
+legend guide's entries, label paint, and halo, and draws buttons there:
+a label with a box has it in one element and its text, at the paint's
+opacity and with its halo, in another, so the box stays opaque as static
+output draws it (a hidden series fades its swatch and text, never the
+box). The legend guide's items, which only static output draws, are built
+when first read.
+
+Paint order: plot backgrounds, grid lines, each panel's data cut to its
+plot, then per panel the data its marks do not cut to the plot and its
+guide drawings (rules, text), then axes, plot borders, and the chart's
+guides (headers, title, legends).
+
+## Chart layout
+
+What stands outside the plots asks for room along a side, measured first:
+a `TrackRequest` (`layout/tracks.ts`) names who asks, the side, its
+thickness, and the gap after it, and `stackTracks` stacks each side's
+requests inward from the side's edge, outermost first, returning each
+track's start and the edges the panels' room begins at. `model.#furniture`
+makes the requests of the chart's title and legend and places them in
+their tracks (`Furniture`: the side insets, the guides, the content box).
+Without `padding`, the edges are the automatic spacing charts have always
+used (a few pixels at each edge, more where y labels reach above the
+plot); with `padding` (pixels, or per side, `0` included), they are that
+whitespace inside the chart's edges. Tick lengths, label gaps, and the
+gaps between tracks stay in both. A title goes at the top (the default) or
+the bottom, aligned by its style in the content box; "\n" breaks it into
+lines, each taking a line of room. A legend's `place` (`spec/place.ts`) is
+a side (`SidePlace`: a side, `align` along it, `offset`, and the chart's
+scope only) or a corner or edge inside a plot (`InsidePlace`: `inside`,
+`inset`, and `scope` "panel", with `panel` naming one, or "chart", over
+the box every content panel shares). Legends above or below wrap in rows
+across the content width (`model/legend.ts`, `measureLegends`); beside the
+plots and inside them they stand in one column. Inside legends take no
+room: they are placed once panels are, on their plot's fill. Every row of
+text keeps its style's line height (and its box's padding): titles, legend
+rows, x tick labels and axis titles below the plots, y axis titles beside
+them, and panel headers; y labels keep their measured width and box. Axis
+room, tick planning, and the margins' widening for labels at the plot's
+ends follow, as monotonic passes bounded by a quarter of the chart's width
+(see Small multiples for grids). Requests come only from the chart's title
+and legend so far; a mark that labels outside its plot (a rule's label
+beside the axis) would add a request on its side, measured from its
+labels, and take its track's start as where to draw them. Tracks are the
+chart's; tracks beside one panel of several are not planned yet.
+
+## Positions
+
+`Coordinate` (`spec/place.ts`) is a place along one axis: `data` (a value
+on a scale, the axis' own or the one `scale` names), `field` (each row's
+value), `fraction` (of a frame, 0 at its left or bottom, as plots run), or
+`px` (from a frame's left or top, as screens run), each with an `offset` in
+pixels applied after; `frame` is the panel's plot (the default) or the
+chart. A `Position` is a coordinate per axis, of any kinds. Only `data` and
+`field` coordinates count toward a scale's domain. `layout/position.ts`
+resolves them (`coordinateAt`, `positionAt`) against a `PositionContext`:
+the plot and chart boxes, the scales of plain coordinates, and how a value
+lands on a named scale, which the caller provides, so the resolver knows no
+scale types. Categories are placed by their values, never their codes.
+
+## Clipping
+
+A mark's `clip` says what its drawing is cut to: `"plot"`, `"chart"`, or
+`false`. Left out, data is cut to its plot and guide drawings (rules, text,
+labels) are drawn whole, their marks leaving out what lies outside the
+plot. The model copies an explicit `clip` onto each of the mark's
+geometries (`Geometry.clip`, read through `clipOf`); every renderer draws
+data cut to the plot first, then, above it, the rest: SVG groups and
+elements take a clip path (the plot's, or the chart's, made only when a mark
+uses it), the canvas paints such data outside its plot clip (points on the
+CPU, as the GPU painter draws within the plot), and PDF clips each to its
+box. Turning the plot's clip off does not grow the chart: outputs still end
+at its size.
+
+Static SVG sizes itself as `SvgSizing` says: `sizing: "fluid"` leaves out
+width and height so CSS or the container sizes the document and its
+viewBox scales the chart; `preserveAspectRatio` is written as given; and
+`strokeScaling: "fixed"` adds a style giving every element
+`vector-effect: non-scaling-stroke`. Stretching an SVG scales its text and
+geometry as they were laid out; live charts lay themselves out again when
+resized.
+
+## Text and fonts
+
+`layout/text.ts` measures and lays out guide text. `textLines` breaks text
+at "\n" and measures each line; `textBox` is the box of lines drawn at a
+point (unturned): as wide as the widest line, a line height per line, the
+lines going down from the first, whose middle (or top, for hanging text)
+is at the point, padded by the paint's padding; `textItems` makes a guide's
+text items: one line each when asked for breaks, each with its halo, and
+the first with the box when the paint has a background, placed so the
+box's edge goes where the text's would (`textWidth` and `textHeight` are
+the room a line takes with its box). Text is measured only for a box or a
+break, never on pointer movement. Titles, legends, panel headers, and axis
+labels and titles reserve room for their lines and boxes.
+
+A font registry (`fonts/registry.ts`, `prepareFonts` in `herceg/fonts`)
+holds TrueType faces parsed once (`fonts/truetype.ts`, `fonts/binary.ts`)
+and resolves text into glyph runs: the faces of a CSS family list and
+weight, in order, each grapheme cluster (`fonts/clusters.ts`) in one face,
+glyph after glyph without kerning or shaping. Its `measure` (cached by font
+and text) is what every output lays out with when a chart has `fonts`, and
+every output sets text as it measures: `renderToSVG` and `specToSVG`
+measure with them and name the families, PNG exports load the same faces,
+PDF embeds subsets of them, and a browser chart measures with them where
+they cover the text (falling back to its document's canvas elsewhere, so a
+live chart never refuses text); text in charts with fonts is drawn unkerned
+and without ligatures (a style on the SVG root and the chart's element, the
+canvas's `fontKerning`). A PDF, which has no fallback of its own, may set
+text its family lists do not cover in its `fallback` families and as its
+`missingGlyph` (`TextPolicy`); these are export settings, since other
+outputs draw only what the family lists name. A browser chart takes its
+fonts through `USE_FONTS` (`fonts/prepared.ts`), code that comes with the
+registry rather than the chart: the fonts claim their faces on the page,
+one face per family and weight (`dom/font-claims.ts` refuses, and claims
+none, when the page has another file for one; a chart update giving such
+fonts leaves the chart as it was), register them with the document
+(`dom/fonts.ts`, once each, kept for the page's life), and measure text
+they do not cover as the page draws it, glyph after glyph: the grapheme
+clusters of text set without a shaper measured alone on the document's
+canvas and summed, since canvases keep kerning and ligatures in some
+browsers, and text that needs shaping measured whole. `chart.loading`
+waits for the chart's faces. Whenever faces load in a document, any
+chart's (even one destroyed since), the document's measurers are made
+again and every chart there, with fonts or without, lays out and draws
+again, as its text may draw in them now (`dom/measurers.ts`, the small
+part of this in the core bundle; the measurer changes, so caches kept by
+measurer let go). A canvas draws text in
+charts with fonts unkerned and, where it can (Chrome), without ligatures;
+mark labels a canvas draws in Firefox and Safari keep ligatures (and in
+Safari kerning), so they can be slightly narrower than measured. `chart.toPNG` puts the
+faces in the SVG it rasterizes, which sees none of the page's fonts.
+Prepared fonts write a name of their own as JSON (`toJSON`), so adapters
+comparing options as JSON see other fonts as a change and never walk their
+bytes. The registry holds no export state: each PDF export asks it,
+through `EMBED_FONTS`, for its own `PdfFontResolver`
+(`render/pdf-font-embed.ts`), whose `PdfFace`s collect glyph usage and
+write subsets, and a mounted chart's PDF embeds the chart's fonts
+(`EXPORT_FONTS`). The core chart bundle carries only types, the keys, and
+the check that fonts are prepared; parsing, resolution, page registration,
+and embedding load with `herceg/fonts`. Without fonts, browsers measure
+with a canvas, static SVG with Helvetica estimates, and PDF with the
+standard fonts' metrics. PDF slants italic text (12 degrees), as the faces
+it draws with have no italics.
+
+## Halos
+
+A halo is an outline of the text's glyphs drawn under them
+(`style/style.ts`, `haloOf`): `"auto"` takes the surface the text is drawn
+on where the text's contrast with it is at least 3:1, else white behind
+dark text and black behind light text at 0.85 opacity; `false` draws none;
+an object gives a color, width (3 pixels by default), and opacity. Marks
+that draw text (`text`, `region`, `bar`, `funnel`, `radar`, `sankey`,
+`graph`, and the navigator) take `halo`, "auto" by default where they draw
+halos, and resolve it when they build geometry (`labelHalo` in
+`draw/text.ts`, reading colors with the CSS color table), so geometry holds
+the resolved halo and renderers read it. The surface is the plot's fill
+when the panel has one (`Frame.surface`), else the chart's background.
+Guide text takes its style's `halo` (off by default), resolved against the
+chart's background, or for a legend inside a plot, the plot's fill; guides
+read colors without the named-color table, which only text marks carry.
+Text marks keep room around labels for their halo's width when they keep
+labels apart.
+
+## What a chart's bundle carries for styles and layout
+
+Styles, guides, and layout are in every chart's bundle: a line chart
+(`createChart`, `line`, `table`) measured 53,890 bytes gzip, 7,185 bytes
+more than before role styles and positioned guides (`npm run bench:size`
+measures every entry). That code is the role styles and their cascade
+(`theme.ts`, `style/style.ts`, `model/styles.ts`), the guides as positioned
+items and the writer every renderer shares (`model/axis-guide.ts`,
+`model/legend.ts`, `render/svg.ts`), the chart's tracks and places for its
+title and legend (sides, inside a plot, alignment, padding), text boxes
+and halos, multi-line titles, clip modes, fluid SVG, the page's colors in
+guides' styles, and scale instances. Each of these is an option a chart
+sets as a plain value, in TypeScript as in specs and Python, and a chart
+that sets one draws it synchronously; making them prepared objects that
+bring their code (as `timeBreaks` does) would make TypeScript differ from
+specs and Python. Renderers draw one kind of guide, positioned items, for
+every chart, rather than a second, smaller path for unstyled ones.
+
+What a chart reaches only through an object it is given loads only with
+it: font parsing, page registration, and PDF embedding with
+`herceg/fonts`; the SVG of color ramps with the marks whose legends have
+them; scale scopes, and the errors that name subplots' panels, with the
+panel layout; panels, PDF, and grid code as before.
 
 ## Interaction
 
@@ -4562,6 +4845,10 @@ mouse input, through Playwright's mouse.
   width: Firefox measures an inline element holding a block as that block
   rather than the box it lies in, so the chart never sees the room it has.
   Give it a block container or a width.
+- In charts with supplied fonts, text a canvas draws (mark labels on the
+  Canvas renderer) keeps ligatures in Firefox and Safari, and kerning in
+  Safari, whose canvases cannot leave them out; it can be slightly narrower
+  than measured. SVG text, guides, and exports are drawn as measured.
 - Geometry is stored in single precision (`Float32Array`) pixel
   coordinates. When zooming leaves neighboring points more than about 10^7
   pixels outside the plot (a view of a millionth of the data's range or

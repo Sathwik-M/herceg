@@ -1,10 +1,10 @@
-import { FontReader } from "../../packages/herceg/src/render/pdf-font-binary.ts";
-import type { PdfFontSource } from "../../packages/herceg/src/render/pdf-font-resolver.ts";
+import { FontReader } from "../../packages/herceg/src/fonts/binary.ts";
+import type { FontSource } from "../../packages/herceg/src/fonts/registry.ts";
 import { writeSfnt } from "../../packages/herceg/src/render/pdf-font-subset.ts";
 
-/** resvg selects by sfnt names, whereas pdfFonts selects by the supplied family. */
-export function rasterFont(source: PdfFontSource, index: number): Uint8Array {
-  // The PDF resolver has already validated every face. Keep all glyphs and
+/** resvg selects by sfnt names, whereas a font registry selects by the supplied family. */
+export function rasterFont(source: FontSource, index: number): Uint8Array {
+  // The font registry has already validated every face. Keep all glyphs and
   // tables, including fonts whose license forbids subsetting.
   const input = new FontReader(source.data);
   const tables = new Map<string, Uint8Array>();

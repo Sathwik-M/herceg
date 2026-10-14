@@ -8,7 +8,7 @@ export class FontReader {
   }
   check(offset: number, length: number): void {
     if (offset < 0 || length < 0 || offset + length > this.bytes.length)
-      throw new Error("Malformed PDF font: data outside table bounds");
+      throw new Error("Malformed font: data outside table bounds");
   }
   u8(offset: number): number {
     this.check(offset, 1);
@@ -33,7 +33,7 @@ export class FontReader {
 }
 
 export function fontError(reason: string): never {
-  throw new Error(`Malformed PDF font: ${reason}`);
+  throw new Error(`Malformed font: ${reason}`);
 }
 
 /** sfnt checksums pad the final word with zeros. */

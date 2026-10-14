@@ -185,7 +185,7 @@ def _warn_unplaced(
     points cannot be placed, laid out as the core would at the chart's size,
     on the value axis its options make (``type``, ``domain``, ``nice``,
     ``ticks``, ``zero``), in bands as many as its panel's band axis holds,
-    and with panels sharing axes as ``resolve_x`` and ``resolve_y`` say."""
+    and with panels sharing axes as the axes' scopes say."""
     facet_row, facet_column = options.get("facet_row"), options.get("facet_column")
     panels = [name for name in (facet_row, facet_column) if name is not None]
     sizes = {name: len(np.unique(layout.variables[name].codes[layout.rows])) for name in panels}
@@ -222,12 +222,16 @@ def _warn_unplaced(
         keys.append(key)
         groups.append(np.log10(layout.values[members]) if log else layout.values[members])
 
-    def sharing(resolve: str | None) -> list[int]:
+    def sharing(scope: str | None) -> list[int]:
         """Where in a swarm's key the panel fields an axis is shared by are."""
-        return [panels.index(name) for name in sharing_fields(resolve, facet_row, facet_column)]
+        return [panels.index(name) for name in sharing_fields(scope, facet_row, facet_column)]
+
+    def scope_of(axis: str) -> str | None:
+        given = options.get(axis)
+        return given.get("scope") if isinstance(given, Mapping) else getattr(given, "scope", None)
 
     # Panels sharing a value axis share its domain.
-    value_shared = sharing(options.get("resolve_x" if layout.horizontal else "resolve_y"))
+    value_shared = sharing(scope_of("x_axis" if layout.horizontal else "y_axis"))
     extents: dict[tuple[int, ...], tuple[float, float]] = {}
     for key, part in zip(keys, groups, strict=True):
         scope = tuple(key[i] for i in value_shared)
@@ -236,7 +240,7 @@ def _warn_unplaced(
     # A band axis holds the categories of the rows of the panels sharing it,
     # drawn or not (log axes leave out values, not their categories).
     band_fields = sharing_fields(
-        options.get("resolve_y" if layout.horizontal else "resolve_x"), facet_row, facet_column
+        scope_of("y_axis" if layout.horizontal else "x_axis"), facet_row, facet_column
     )
     band_shared = [panels.index(name) for name in band_fields]
     held: dict[tuple[int, ...], set[int]] = {}

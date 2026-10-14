@@ -11,6 +11,15 @@ export function escapeXml(text: string): string {
   return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
+/** A rectangle's markup, its corners rounded by `radius` when that is set, then the attributes in `rest`. */
+export function rectMarkup(
+  { x, y, width, height }: { x: number; y: number; width: number; height: number },
+  radius: number | undefined,
+  rest: string,
+): string {
+  return `<rect x="${n(x)}" y="${n(y)}" width="${n(width)}" height="${n(height)}"${radius ? ` rx="${radius}"` : ""}${rest}/>`;
+}
+
 /** A `stroke-dasharray` attribute, or nothing for solid strokes. */
 export function dashAttribute(value: readonly number[] | undefined): string {
   return value?.length ? ` stroke-dasharray="${value.join(" ")}"` : "";

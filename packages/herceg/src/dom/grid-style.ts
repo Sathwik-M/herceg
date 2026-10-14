@@ -2,7 +2,7 @@
 // carries in its own root (so grids inside shadow roots are styled too), and
 // the theme as custom properties on that root.
 
-import type { Theme } from "../theme.ts";
+import type { ResolvedTokens } from "../theme.ts";
 
 const G = ".herceg-grid";
 
@@ -69,14 +69,14 @@ ${G} .hg-check[aria-checked=mixed]{background:linear-gradient(currentColor,curre
 
 /** The theme as the custom properties the stylesheet reads. */
 export function themeProperties(
-  theme: Theme,
+  { tokens: theme, roles }: ResolvedTokens,
   rowHeight: number,
   headerHeight: number,
 ): Record<string, string> {
   const accent = theme.palette[0]!;
   return {
-    "--hg-font": theme.font,
-    "--hg-size": `${theme.fontSize}px`,
+    "--hg-font": roles.text.font!,
+    "--hg-size": `${roles.text.fontSize}px`,
     "--hg-text": theme.text,
     "--hg-muted": theme.muted,
     "--hg-line": theme.grid,
@@ -84,7 +84,7 @@ export function themeProperties(
     "--hg-accent": accent,
     "--hg-selected": `color-mix(in srgb, ${accent} 16%, transparent)`,
     // The sticky header covers rows scrolling under it, so it needs a color of its own.
-    "--hg-surface": theme.background === "transparent" ? theme.tooltipBackground : theme.background,
+    "--hg-surface": theme.background === "transparent" ? roles.tooltip.fill : theme.background,
     "--hg-background": theme.background,
     "--hg-row-height": `${rowHeight}px`,
     "--hg-header-height": `${headerHeight}px`,

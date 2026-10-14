@@ -26,7 +26,7 @@ except ImportError as error:  # pragma: no cover - depends on the environment
     ) from error
 
 from . import _render
-from ._chart import Camera
+from ._chart import Camera, axis_scope
 from ._data import shown
 from ._derive import Expr
 from ._events import (
@@ -114,7 +114,7 @@ def chart(
     ``drill_root`` and ``item_positions`` in the result
     hold their state. Inside ``st.form``, a selection reaches the script when the
     form is submitted, and clicks cannot react. Charts whose panels have x scales of their own
-    (``resolve_x``) cannot report selections. Give the chart a ``key`` to
+    (x's scope) cannot report selections. Give the chart a ``key`` to
     keep its selection when its data changes, and to show several charts
     with the same content. Charts without a ``theme`` follow the app's light
     or dark theme.
@@ -143,15 +143,16 @@ def chart(
                 f'streamlit.chart {options[name]}: expected "ignore", "rerun", or a function; '
                 f"received {shown(reaction)}"
             )
-    if on_viewport != "ignore" and chart._settings["resolve_x"] not in (None, "shared"):
+    shares_x = axis_scope(chart._settings, "x") in (None, "chart")
+    if on_viewport != "ignore" and not shares_x:
         raise ValueError(
             "streamlit.chart on_viewport: reports one viewport, so the chart's panels must "
-            'share x; give the chart resolve_x="shared"'
+            'share x; give the chart\'s x scope "chart"'
         )
-    if on_select != "ignore" and chart._settings["resolve_x"] not in (None, "shared"):
+    if on_select != "ignore" and not shares_x:
         raise ValueError(
             "streamlit.chart on_select: reports one selection, so the chart's panels must "
-            'share x; give the chart resolve_x="shared"'
+            'share x; give the chart\'s x scope "chart"'
         )
     if on_row_selection != "ignore":
         if len(chart._row_selection) != 1:

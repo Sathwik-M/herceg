@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { table } from "../../src/data/table.ts";
 import { areaPath } from "../../src/draw/area.ts";
-import { textHalo } from "../../src/draw/text.ts";
+import { labelHalo } from "../../src/draw/text.ts";
 import { timeTickLabels } from "../../src/format/format.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { area } from "../../src/marks/area.ts";
@@ -31,6 +31,13 @@ function build(config: ChartConfig, width = 600) {
 
 const data = table({ category: ["A", "B", "C"], value: [10, 20, 30] });
 const flows = table({ source: ["A", "B"], target: ["B", "C"], value: [10, 5] });
+
+/** A label's default halo over `theme`'s background: its color and opacity. */
+function textHalo(fill: string, theme: typeof LIGHT) {
+  const { color, opacity, width } = labelHalo(undefined, fill, { theme })!;
+  expect(width).toBe(3);
+  return { color, opacity };
+}
 
 describe("text halos", () => {
   it.each(["#e06600", "#949494", "rgb(224 102 0)", "hsl(27.3 100% 43.9%)", "red"])(

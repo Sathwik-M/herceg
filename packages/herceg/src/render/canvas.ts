@@ -3,7 +3,8 @@
 // pointer feedback never repaints the data. Each mark's geometry is painted
 // by the drawing it carries.
 
-import type { CloudOptions, RasterGeometry, Scene } from "../scene/scene.ts";
+import { gridStrokes } from "../scene/grid.ts";
+import { type CloudOptions, clipOf, type RasterGeometry, type Scene } from "../scene/scene.ts";
 
 /**
  * Paints the scene's grid and marks. The canvas backing store is sized to the
@@ -13,6 +14,7 @@ export function paintCanvas(
   canvas: HTMLCanvasElement,
   scene: Scene,
   clouds: CloudOptions = {},
+  kerning = true,
 ): void {
   const ratio = scene.pixelRatio;
   const width = Math.round(scene.width * ratio);
@@ -28,32 +30,38 @@ export function paintCanvas(
   context.setTransform(ratio, 0, 0, ratio, 0, 0);
   context.lineJoin = "round";
   context.lineCap = "round";
+  // Supplied fonts measure glyph by glyph: text is drawn so, unkerned and,
+  // where the canvas can leave them out (Chrome), without ligatures.
+  context.fontKerning = kerning ? "auto" : "none";
+  context.textRendering = kerning ? "auto" : "optimizeSpeed";
 
   const { theme } = scene;
   if (theme.background !== "transparent") {
     context.fillStyle = theme.background;
     context.fillRect(0, 0, scene.width, scene.height);
   }
-  for (const { plot, grid } of scene.panels) {
-    if (grid.x.length + grid.y.length === 0) continue;
-    context.beginPath();
-    for (const y of grid.y) {
-      const snapped = (Math.round(y * ratio) + 0.5) / ratio;
-      context.moveTo(plot.x, snapped);
-      context.lineTo(plot.x + plot.width, snapped);
-    }
-    for (const x of grid.x) {
-      const snapped = (Math.round(x * ratio) + 0.5) / ratio;
-      context.moveTo(snapped, plot.y);
-      context.lineTo(snapped, plot.y + plot.height);
-    }
-    context.strokeStyle = theme.grid;
-    context.lineWidth = 1 / ratio;
-    context.setLineDash([...theme.gridDash]);
-    context.stroke();
-    context.setLineDash([]);
+  for (const { plot, frame } of scene.panels) {
+    if (!frame?.fill) continue;
+    context.fillStyle = frame.fill;
+    context.fillRect(plot.x, plot.y, plot.width, plot.height);
   }
+  for (const { coords, paint } of gridStrokes(scene.panels, theme, ratio)) {
+    context.beginPath();
+    for (let i = 0; i < coords.length; i += 4) {
+      context.moveTo(coords[i]!, coords[i + 1]!);
+      context.lineTo(coords[i + 2]!, coords[i + 3]!);
+    }
+    context.strokeStyle = paint.stroke;
+    // One-pixel grid lines are a device pixel wide, crisp at any ratio.
+    context.lineWidth = paint.strokeWidth === 1 ? 1 / ratio : paint.strokeWidth;
+    context.globalAlpha = paint.opacity;
+    context.setLineDash([...paint.dash]);
+    context.stroke();
+  }
+  context.setLineDash([]);
+  context.globalAlpha = 1;
 
+  // Guides are drawn by the SVG layer above the canvas.
   for (const { plot, marks } of scene.panels) {
     context.save();
     context.beginPath();
@@ -62,10 +70,19 @@ export function paintCanvas(
     const options = { plot, pixelRatio: ratio, clouds };
     for (const mark of marks) {
       const draw = mark.draw;
-      // Guides are drawn by the SVG layer above the canvas.
-      if (!draw.guide) draw.canvas(context, mark, options);
+      if (!draw.guide && clipOf(mark) === "plot") draw.canvas(context, mark, options);
     }
     context.restore();
+  }
+  // Data its marks do not cut to the plot, which the canvas' own edges cut.
+  // GPU clouds are drawn over their plot only, so these are placed on the CPU.
+  const cpu: CloudOptions = {};
+  for (const { plot, marks } of scene.panels) {
+    for (const mark of marks) {
+      const draw = mark.draw;
+      if (!draw.guide && clipOf(mark) !== "plot")
+        draw.canvas(context, mark, { plot, pixelRatio: ratio, clouds: cpu });
+    }
   }
 }
 

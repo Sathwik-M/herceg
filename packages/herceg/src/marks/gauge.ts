@@ -244,7 +244,7 @@ export class GaugeMark implements LayoutMark {
       key: "gauge-labels",
       fill: theme.muted,
       anchor: "middle",
-      halo: false,
+      halo: undefined,
       coords: Float32Array.from(labels.flatMap(({ x, y }) => [x, y])),
       labels: labels.map((l) => l.text),
       count: labels.length,

@@ -1,4 +1,4 @@
-import type { Dash, Frozen, MarkTooltipSpec } from "../spec/spec.ts";
+import type { Clip, Dash, Frozen, MarkTooltipSpec } from "../spec/spec.ts";
 // Custom marks: a JavaScript `draw` function places shapes using the chart's
 // scales. They share axes, viewport, and rendering (SVG, Canvas, static SVG)
 // with built-in marks, but are not portable: a chart spec cannot hold one.
@@ -10,8 +10,9 @@ import type { CategoryField, NumericField, Schema, Table } from "../data/table.t
 import { n } from "../draw/markup.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
 import type { PathShape, PlotRect, ShapesGeometry, TextShape } from "../scene/scene.ts";
+import { dashPattern } from "../style/style.ts";
 import type { Theme } from "../theme.ts";
-import { dashPattern, definedFields } from "./line.ts";
+import { definedFields } from "./line.ts";
 import {
   type AxisFormat,
   buildSeries,
@@ -118,6 +119,12 @@ interface CustomBase {
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /**
+   * What the mark's drawing is cut to: "plot", "chart", or false for
+   * nothing, so markers at the plot's edge show whole. Without it, data is
+   * cut to the plot and labels are drawn whole.
+   */
+  clip?: Clip;
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
   /**
@@ -175,6 +182,7 @@ export interface CustomSpec {
   axis?: "left" | "right";
   zero?: "x" | "y";
   facet?: "repeat";
+  clip?: Clip;
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
   /** The x field of the series. */
@@ -228,7 +236,7 @@ export class CustomMark implements Mark<Frozen<CustomSpec>> {
   constructor(table: Table | undefined, options: CustomDataOptions<Schema>) {
     const spec: CustomSpec = {
       type: "custom",
-      ...definedFields(options, ["id", "axis", "zero", "facet", "panel"]),
+      ...definedFields(options, ["id", "axis", "zero", "facet", "panel", "clip"]),
     };
     if (options.zero !== undefined && options.zero !== "x" && options.zero !== "y")
       throw new TypeError(

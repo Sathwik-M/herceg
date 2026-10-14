@@ -48,9 +48,8 @@ def test_breaks_travel_in_the_x_axis_spec():
 def test_breaks_reach_panels_with_time_axes_of_their_own():
     chart = hg.Chart(
         PRICES,
-        x=hg.Axis(type="linear", breaks=[hg.Break(weekdays=("sat", "sun"))]),
+        x=hg.Axis(type="linear", breaks=[hg.Break(weekdays=("sat", "sun"))], scope="panel"),
         panels=[hg.Panel("series", x=hg.Axis(type="time")), "spread"],
-        resolve_x="independent",
     )
     chart.line(x="day", y="c", panel="series").line(x="o", y="c", panel="spread")
     spec, _ = chart.to_spec()
@@ -69,12 +68,12 @@ def test_seams_spec_and_static_svg(seams, expected):
     chart = hg.Chart(
         PRICES,
         x=hg.Axis(breaks=[hg.Break(weekdays=("sat", "sun"))], seams=seams),
-        theme={"grid": "#ff0000"},
+        theme={"tokens": {"grid": "#ff0000"}},
         time_zone="UTC",
     ).line(x="day", y="c")
     spec, _ = chart.to_spec()
     assert spec["x"]["seams"] == expected
-    assert spec["theme"] == {"grid": "#ff0000"}
+    assert spec["theme"] == {"tokens": {"grid": "#ff0000"}}
     svg = chart.to_svg()
     assert 'stroke="#ff0000" stroke-width="1" stroke-dasharray="3 3"' in svg
     assert 'aria-hidden="true" focusable="false" pointer-events="none"' in svg

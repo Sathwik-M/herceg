@@ -2,7 +2,7 @@ import type { CategoryField, NumericField, Schema, Table } from "../data/table.t
 import { segmentDrawing } from "../draw/segments.ts";
 import type { Breaks } from "../lod/m4.ts";
 import type { SegmentGeometry } from "../scene/scene.ts";
-import type { Frozen, RugSpec } from "../spec/spec.ts";
+import type { Clip, Frozen, RugSpec } from "../spec/spec.ts";
 import { definedFields } from "./line.ts";
 import {
   type AxisFormat,
@@ -40,6 +40,12 @@ interface RugStyle<S extends Schema> {
   legendGroup?: string;
   axis?: "left" | "right";
   facet?: "repeat";
+  /**
+   * What the mark's drawing is cut to: "plot", "chart", or false for
+   * nothing, so markers at the plot's edge show whole. Without it, data is
+   * cut to the plot and labels are drawn whole.
+   */
+  clip?: Clip;
   panel?: string;
   /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
   tooltip?: MarkTooltip<S>;
@@ -306,6 +312,7 @@ export function rug<S extends Schema>(
       "axis",
       "facet",
       "panel",
+      "clip",
       "id",
     ]),
   } as RugSpec;

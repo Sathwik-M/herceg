@@ -1,3 +1,5 @@
+// Text that supplied fonts measure and draw without a shaper: glyphs one
+// after another, left to right, in grapheme clusters.
 // Admission is deliberately conservative: glyph coverage cannot supply
 // shaping, mark positioning, or bidirectional ordering.
 const SIMPLE_SCRIPT =
@@ -27,7 +29,7 @@ export function checkSimpleText(text: string): void {
       ) ?? emojiSequence[0];
     const code = char.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0");
     throw new Error(
-      `PDF export cannot shape emoji sequences containing U+${code}; use SVG/PNG or a shaping-capable PDF renderer`,
+      `fonts cannot shape emoji sequences containing U+${code}; leave fonts out (SVG and PNG then draw with system fonts) or use a renderer that shapes text`,
     );
   }
   for (const char of text) {
@@ -49,7 +51,7 @@ export function checkSimpleText(text: string): void {
     if (reason) {
       const name = `U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
       throw new Error(
-        `PDF export cannot render ${reason} ${name} as left-to-right text without shaping; use SVG/PNG or a shaping-capable PDF renderer`,
+        `fonts cannot render ${reason} ${name} as left-to-right text without shaping; leave fonts out (SVG and PNG then draw with system fonts) or use a renderer that shapes text`,
       );
     }
   }

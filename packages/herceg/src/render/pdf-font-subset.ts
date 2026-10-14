@@ -1,5 +1,5 @@
-import { FontReader, fontChecksum, fontError } from "./pdf-font-binary.ts";
-import type { TrueTypeFont } from "./pdf-truetype.ts";
+import { FontReader, fontChecksum, fontError } from "../fonts/binary.ts";
+import type { TrueTypeFont } from "../fonts/truetype.ts";
 
 export interface FontSubset {
   data: Uint8Array;

@@ -89,7 +89,10 @@ const barFrame = {
   x: new LinearScale([0, N], [20, 620]),
   y: new LinearScale([0, 2], [42, 8]),
   plot: { x: 20, y: 5, width: 600, height: 40 },
-  theme: { ...sourceFrame.theme, barRadius: 0 },
+  theme: {
+    ...sourceFrame.theme,
+    style: { ...sourceFrame.theme.style, bar: { radius: 0 } },
+  },
   keyed: false,
 };
 measure("bar geometry: 1M rows, 20 usable, 600 px", () => sparseBars.geometry(barSeries, barFrame));

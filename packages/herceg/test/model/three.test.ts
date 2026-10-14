@@ -19,6 +19,7 @@ import type { FaceGeometry, Scene, TextGeometry } from "../../src/scene/scene.ts
 import { LIGHT } from "../../src/theme.ts";
 import { View } from "../../src/three/camera.ts";
 import { FaceIndex } from "../../src/three/faces.ts";
+import { keysOf, legendOf, rampsOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig, width = 500, height = 400) {
   const model = new ChartModel({ locale: "en-US", ...config });
@@ -61,7 +62,7 @@ describe("3D scatter", () => {
     });
     const mark = faces(scene);
     expect(mark.count).toBe(6);
-    expect(scene.legend.map((entry) => entry.label)).toEqual(["a", "b", "c"]);
+    expect(legendOf(scene).map((entry) => entry.label)).toEqual(["a", "b", "c"]);
     // Discs of one corner each, in three series' colors.
     expect(new Set(Array.from(mark.style.subarray(0, 6), (s) => mark.styles[s]!.fill)).size).toBe(
       3,
@@ -160,7 +161,7 @@ describe("3D scatter", () => {
     };
     const { scene, model } = build(config);
     expect(faces(scene).count).toBe(2);
-    model.hidden.add(scene.legend[1]!.key);
+    model.hidden.add(legendOf(scene)[1]!.key);
     expect(faces(model.scene(estimateText)).count).toBe(1);
   });
 
@@ -170,7 +171,7 @@ describe("3D scatter", () => {
         point3d(clusters, { x: "x", y: "y", z: "z", color: "z", colors: ["#000000", "#ffffff"] }),
       ],
     });
-    expect(scene.colorLegends[0]!.title.text).toBe("z");
+    expect(rampsOf(scene)[0]!.title.text).toBe("z");
     const mark = faces(scene);
     expect(
       new Set(Array.from(mark.style.subarray(0, mark.count), (s) => mark.styles[s]!.fill)).size,
@@ -186,7 +187,7 @@ describe("3D scatter", () => {
       Array.from(mark.style.subarray(0, mark.count), (s) => mark.styles[s]!.fill),
     );
     expect(fills).toEqual(new Set(LIGHT.palette.slice(0, 3)));
-    expect(scene.glyphLegends[0]!.entries.map((e) => [e.label.text, e.fill])).toEqual([
+    expect(keysOf(scene)[0]!.entries.map((e) => [e.label.text, e.fill])).toEqual([
       ["a", LIGHT.palette[0]],
       ["b", LIGHT.palette[1]],
       ["c", LIGHT.palette[2]],

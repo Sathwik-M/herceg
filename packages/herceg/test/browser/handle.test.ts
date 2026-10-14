@@ -108,7 +108,8 @@ describe("panels", () => {
     const own = mount({
       marks: [line(regions(), { x: "t", y: "v" })],
       facet: facet("region"),
-      resolve: { x: "independent", y: "independent" },
+      y: { scope: "panel" },
+      x: { scope: "panel" },
     });
     const [a, b] = own.getPanels();
     expect(a!.x!.group).not.toBe(b!.x!.group);
@@ -458,12 +459,12 @@ describe("the pointer and keyboard", () => {
     const chart = mount({
       marks: [line(regions(), { x: "t", y: "v" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
       interaction: { brush: "x" },
     });
     const merge = chart.on("render", () => {
       merge();
-      chart.update({ facet: undefined, resolve: undefined });
+      chart.update({ facet: undefined, x: undefined });
     });
     chart.update({ title: "Regions" });
     const key = (name: string) =>
@@ -557,7 +558,7 @@ describe("render events", () => {
     const chart = mount({
       marks: [line(regions(), { x: "t", y: "v" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
       interaction: { brush: "x" },
     });
     let renders = 0;

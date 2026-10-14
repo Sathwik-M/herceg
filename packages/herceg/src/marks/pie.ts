@@ -419,7 +419,7 @@ export class PieMark implements LayoutMark {
         key: `pie-labels-${anchor}`,
         fill: theme.text,
         anchor,
-        halo: false,
+        halo: undefined,
         coords,
         labels,
         count: which.length,

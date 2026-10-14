@@ -15,6 +15,7 @@ import type {
   TextGeometry,
 } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 // Long: a row per player and skill. Bo's later speed replaces the first.
 const scores = table({
@@ -63,10 +64,10 @@ describe("radar", () => {
     const { scene, model } = build({
       marks: [radar(scores, { category: "skill", value: "score", series: "player" })],
     });
-    expect(scene.legend.map((entry) => entry.label)).toEqual(["Ana", "Bo"]);
+    expect(legendOf(scene).map((entry) => entry.label)).toEqual(["Ana", "Bo"]);
     const [ana, bo] = marks<PointGeometry>(scene, "point");
-    expect(ana!.fill).toBe(scene.legend[0]!.color);
-    expect(bo!.fill).toBe(scene.legend[1]!.color);
+    expect(ana!.fill).toBe(legendOf(scene)[0]!.color);
+    expect(bo!.fill).toBe(legendOf(scene)[1]!.color);
     // speed points straight up from the center, power and range a third of a turn apart.
     const [speed, power, range] = points(ana!);
     const center = model.inspect(speed![0]!, speed![1]!) as ItemInspection;
@@ -166,16 +167,16 @@ describe("radar", () => {
     const { model } = build({
       marks: [radar(scores, { category: "skill", value: "score", series: "player" })],
     });
-    const [ana, bo] = model.scene(estimateText).legend;
+    const [ana, bo] = legendOf(model.scene(estimateText));
     model.hidden.add(bo!.key);
     const scene = model.scene(estimateText);
-    expect(scene.legend.find((entry) => entry.label === "Bo")!.hidden).toBe(true);
+    expect(legendOf(scene).find((entry) => entry.label === "Bo")!.hidden).toBe(true);
     expect(marks<PointGeometry>(scene, "point").map((m) => m.fill)).toEqual([ana!.color]);
     expect(keys(model)).toHaveLength(3);
     expect(model.inspectItem(keys(model)[0]!)!.points[0]!.text).toBe("speed: 8 (of 0 to 8)");
     // One polygon has no legend.
     const one = build({ marks: [radar(scores, { category: "skill", value: "score" })] }).scene;
-    expect(one.legend).toEqual([]);
+    expect(legendOf(one)).toEqual([]);
   });
 
   it("finds the nearest value within reach of the pointer, and outlines it", () => {
@@ -320,12 +321,12 @@ describe("radar", () => {
       legend: true,
       marks: [radar(data, { fields: ["a", "b", "c"], series: "s" })],
     });
-    model.hidden.add(scene.legend[0]!.key);
+    model.hidden.add(legendOf(scene)[0]!.key);
     data.reset({ s: ["A"], a: [1], b: [2], c: [3] });
     // A, hidden, can still be shown again.
-    expect(model.scene(estimateText).legend.map(({ label, hidden }) => [label, hidden])).toEqual([
-      ["A", true],
-    ]);
+    expect(legendOf(model.scene(estimateText)).map(({ label, hidden }) => [label, hidden])).toEqual(
+      [["A", true]],
+    );
   });
 
   it("labels rings only where the labels fit, clear of each other and the spoke names", () => {
@@ -337,7 +338,7 @@ describe("radar", () => {
     ] as [number, number, number, [number, number]][]) {
       const model = new ChartModel({
         locale: "en-US",
-        theme: { fontSize },
+        theme: { style: { text: { fontSize: fontSize } } },
         marks: [radar(data, { fields: ["a", "b", "c"], domain })],
       });
       model.setSize(width, height, 1);

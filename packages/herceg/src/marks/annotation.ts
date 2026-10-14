@@ -6,7 +6,7 @@
 import type { FieldKind, NumericArray } from "../data/column.ts";
 import type { Schema, Table } from "../data/table.ts";
 import { formatNumber } from "../format/format.ts";
-import type { Position } from "../spec/spec.ts";
+import type { AnnotationValue } from "../spec/spec.ts";
 import { NUMERIC, type RowParts, requireField } from "./mark.ts";
 
 /** Fields whose values can be drawn as text: categories and numbers. */
@@ -30,7 +30,7 @@ export function valueAt(channel: Channel, item: number): number {
 
 /** Whether an annotation reads a table: a position or its text is a field. */
 export function readsTable(
-  positions: readonly (Position | undefined)[],
+  positions: readonly (AnnotationValue | undefined)[],
   text: string | undefined,
 ): boolean {
   return text !== undefined || positions.some((position) => typeof position === "string");
@@ -45,7 +45,7 @@ export class AnnotationData {
 
   constructor(
     table: Table | undefined,
-    positions: Record<string, Position | undefined>,
+    positions: Record<string, AnnotationValue | undefined>,
     label: string | undefined,
     text: string | undefined,
     role: string,
@@ -101,7 +101,7 @@ export class AnnotationData {
     for (const part of rows) for (let k = 0; k < part.length; k++) visit(part[k]!, place++);
   }
 
-  channel(position: Position): Channel {
+  channel(position: AnnotationValue): Channel {
     return typeof position === "number" ? position : this.table!.numbers(position as never);
   }
 
@@ -110,7 +110,7 @@ export class AnnotationData {
    * (on a category axis a constant is a band index, as in Plotly: 0 is the
    * first band's center and -0.5 its edge).
    */
-  kind(position: Position | undefined): FieldKind | undefined {
+  kind(position: AnnotationValue | undefined): FieldKind | undefined {
     return typeof position === "string" ? this.table!.kind(position as never) : undefined;
   }
 
@@ -162,7 +162,7 @@ export class AnnotationData {
    * they stay in view.
    */
   extent(
-    positions: readonly (Position | undefined)[],
+    positions: readonly (AnnotationValue | undefined)[],
     log: boolean,
     keep?: (item: number) => boolean,
     rows?: RowParts,

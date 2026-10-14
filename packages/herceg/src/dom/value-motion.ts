@@ -3,10 +3,12 @@
 // change to the one drawn after it, and the axes and grid lines that follow.
 // Every frame plans ticks for the domains between, as the scene plans them.
 
+import type { MeasureText } from "../layout/text.ts";
 import type { AxisPlan, planAxis } from "../model/axis.ts";
+import type { axisGuide } from "../model/axis-guide.ts";
 import type { PanelPlans } from "../model/model.ts";
 import type { PositionScale } from "../scale/scale.ts";
-import type { AxisGeometry, Panel } from "../scene/scene.ts";
+import type { AxisGuide, Panel } from "../scene/scene.ts";
 
 /** The scales of a panel: x, and the left and right y. */
 export type Axis = "x" | "y" | "yRight";
@@ -130,6 +132,10 @@ export interface AxesMotion {
   before: PanelPlans;
   after: PanelPlans;
   planAxis: typeof planAxis;
+  /** Places an axis' items (passed in, as `planAxis` is, so this module's chunk holds no copy). */
+  axisGuide: typeof axisGuide;
+  /** Sizes the boxes of labels whose paints have them, as the chart measures. */
+  measure: MeasureText;
 }
 
 /**
@@ -170,15 +176,16 @@ export function axesAt(panel: Panel, motion: AxesMotion, t: number): Pick<Panel,
     plans[axis] ??= planAt(motion, axis, t);
     return plans[axis];
   };
-  const axes = panel.axes.map((geometry): AxisGeometry => {
-    const plan = planOf(AXIS_OF[geometry.orient]);
+  const axes = panel.axes.map((guide): AxisGuide => {
+    const plan = planOf(guide.scale as Axis);
     // Axes without labels (with nothing to label) stay without.
-    if (!plan || geometry.ticks.length === 0) return geometry;
+    if (!plan || guide.ticks.length === 0) return guide;
     const ticks = plan.labels.map((label, i) => ({
       position: plan.scale.map(plan.ticks[i]!),
       label,
     }));
-    return { ...geometry, ticks };
+    // Placed as the scene placed the axis, with the ticks between.
+    return motion.axisGuide(guide.key, guide.scale, guide, ticks, guide.title, motion.measure);
   });
   const lines = (plan: AxisPlan | undefined, drawn: number[]) =>
     plan && drawn.length > 0 ? plan.ticks.map((tick) => plan.scale.map(tick)) : drawn;
@@ -187,13 +194,12 @@ export function axesAt(panel: Panel, motion: AxesMotion, t: number): Pick<Panel,
   return {
     axes,
     grid: {
+      ...panel.grid,
       x: lines(planOf("x"), panel.grid.x),
       y: gridAxis ? lines(planOf(gridAxis), panel.grid.y) : panel.grid.y,
     },
   };
 }
-
-const AXIS_OF: Record<AxisGeometry["orient"], Axis> = { bottom: "x", left: "y", right: "yRight" };
 
 /** A moving axis' plan at `t`: its domain, and the part ticks are chosen in, between the scenes'. */
 function planAt(motion: AxesMotion, axis: Axis, t: number): AxisPlan {

@@ -18,6 +18,7 @@ import type {
 } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -65,7 +66,7 @@ describe("legend groups", () => {
     const entries = model.legendEntries();
     expect(entries.map(({ label }) => label)).toEqual(["f", "m"]);
     expect(entries.map(({ key }) => key)).toEqual([legendKey("sex", "f"), legendKey("sex", "m")]);
-    expect(scene.legend.map(({ label }) => label)).toEqual(["f", "m"]);
+    expect(legendOf(scene).map(({ label }) => label)).toEqual(["f", "m"]);
     // Inspection still reads each mark's own series.
     const panel = scene.panels[0]!;
     const inspection = model.inspect(model.xScale()!.map(0), panel.plot.y + 5)!;
@@ -94,7 +95,7 @@ describe("legend groups", () => {
     expect(segments).toHaveLength(1);
     // The other sex's bars take the whole band.
     expect(rects[0]!.rects[2]).toBeGreaterThan(shownF!.rects[2]!);
-    expect(scene.legend.map(({ label, hidden }) => [label, hidden])).toEqual([
+    expect(legendOf(scene).map(({ label, hidden }) => [label, hidden])).toEqual([
       ["f", true],
       ["m", false],
     ]);

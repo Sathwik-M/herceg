@@ -15,6 +15,7 @@ const publicAPIs = {
   herceg: ["createChart", "line", "table", "time"],
   "herceg/spec": ["loadSpec", "specToPDF"],
   "herceg/pdf": ["renderToPDF"],
+  "herceg/fonts": ["prepareFonts"],
   "herceg/grid": ["createGrid"],
   "herceg/grid/model": ["createGridModel"],
   "herceg/grid/pivot": ["createPivotGrid"],

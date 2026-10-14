@@ -95,15 +95,15 @@ describe("annotations over a table in facets", () => {
 
   it("fit each panel's own rows on scales of their own, and every panel's on shared ones", () => {
     const peaks = table({ y: [5, 500], region: ["N", "S"] });
-    const config = (y: "shared" | "independent"): ChartConfig => ({
+    const config = (y: "chart" | "panel"): ChartConfig => ({
       marks: [line(sales, { x: "t", y: "v" }), rule(peaks, { y: "y", textField: "region" })],
       facet: facet("region"),
-      resolve: { y },
+      y: { scope: y },
     });
-    const own = build(config("independent")).model.panels();
+    const own = build(config("panel")).model.panels();
     expect(own[0]!.y.domain[1]).toBeLessThan(100);
     expect(own[1]!.y.domain[1]).toBeGreaterThanOrEqual(500);
-    const shared = build(config("shared")).model.panels();
+    const shared = build(config("chart")).model.panels();
     expect(shared[0]!.y.domain).toEqual(shared[1]!.y.domain);
     expect(shared[0]!.y.domain[1]).toBeGreaterThanOrEqual(500);
     // Rows of a grid: each row's scale fits its panels' rules only.
@@ -117,7 +117,7 @@ describe("annotations over a table in facets", () => {
     const { model, scene } = build({
       marks: [line(grid, { x: "t", y: "v" }), rule(marks, { y: "y", textField: "product" })],
       facet: facet({ row: "region", column: "product" }),
-      resolve: { y: "rows" },
+      y: { scope: "row" },
     });
     const [na, nb, sa, sb] = model.panels();
     expect(na!.y.domain).toEqual(nb!.y.domain);
@@ -140,7 +140,8 @@ describe("annotations over a table in facets", () => {
         rule(limits, { y: "y", textField: "region" }),
       ],
       facet: facet("region"),
-      resolve: { x: "independent", y: "independent" },
+      y: { scope: "panel" },
+      x: { scope: "panel" },
     });
     expect(model.panels().map((p) => p.x.categories)).toEqual([
       ["a", "b"],

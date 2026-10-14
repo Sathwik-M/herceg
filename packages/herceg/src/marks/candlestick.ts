@@ -5,7 +5,7 @@ import { segmentDrawing } from "../draw/segments.ts";
 import type { Breaks } from "../lod/m4.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { Geometry, RectGeometry, SegmentGeometry } from "../scene/scene.ts";
-import type { CandlestickSpec, Frozen } from "../spec/spec.ts";
+import type { CandlestickSpec, Clip, Frozen } from "../spec/spec.ts";
 import { definedFields } from "./line.ts";
 import {
   type AxisFormat,
@@ -57,6 +57,12 @@ export interface CandlestickOptions<S extends Schema> {
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /**
+   * What the mark's drawing is cut to: "plot", "chart", or false for
+   * nothing, so markers at the plot's edge show whole. Without it, data is
+   * cut to the plot and labels are drawn whole.
+   */
+  clip?: Clip;
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
   /**
@@ -543,6 +549,7 @@ export function candlestick<S extends Schema>(
       "axis",
       "facet",
       "panel",
+      "clip",
       "id",
     ]),
   };

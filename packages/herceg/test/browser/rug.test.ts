@@ -6,7 +6,7 @@ import { timeBreaks } from "../../src/scale/breaks.ts";
 import { modelOf } from "./helpers.ts";
 
 /** Without a background, the canvas holds what marks paint alone. */
-const CLEAR = { background: "transparent" } as const;
+const CLEAR = { tokens: { background: "transparent" } } as const;
 
 const charts: Chart[] = [];
 const hosts: HTMLElement[] = [];

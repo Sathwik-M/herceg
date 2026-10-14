@@ -106,7 +106,9 @@ GPU with a depth test when large: point clouds, long lines, and surfaces of
 up to a million cells), monotone curves, named
 color schemes and diverging color, built-in themes (light, dark, and high
 contrast on surfaces of their own, and one that follows the page) with
-CSS-variable theming, rule,
+CSS-variable theming, theme tokens and role styles cascading to axes,
+legends, titles, and subplots, titles above or below the plots and legends
+on any side or inside a plot, explicit padding, clipping per mark, text halos, rule,
 region, and text annotations from constants or data (with labels hidden or
 moved where they would overlap), custom marks drawing
 through the same renderers (with series, legends, and tooltips), derived
@@ -123,9 +125,10 @@ labels on the axes), a range navigator (a strip under the plot, or under
 all the panels of facets and subplots, over the whole x axis whose window
 pans and zooms by pointer and keyboard), time
 axes that leave out breaks (nights, weekends, holidays) in any time zone,
-SVG, PNG, and PDF export of a mounted chart as it is, static SVG and PDF
-export without a DOM (Unicode with opt-in `pdfFonts` and supplied
-TrueType fonts; `renderToPDF` and `specToPDF` accept one chart/spec or a list
+SVG, PNG, and PDF export of a mounted chart as it is, static SVG (fluid or
+fixed size) and PDF export without a DOM, one set of supplied TrueType fonts
+(`herceg/fonts`) that live charts, SVG, PNG, and PDF all measure with
+(Unicode PDF text; `renderToPDF` and `specToPDF` accept one chart/spec or a list
 for multiple pages, A4/Letter paper, and shared font subsets), React, Vue,
 and Svelte adapters, min/max indexes for zooming
 and streaming large line

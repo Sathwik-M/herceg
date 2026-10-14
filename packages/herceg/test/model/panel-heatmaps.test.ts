@@ -13,7 +13,8 @@ import { panels } from "../../src/model/panels.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { RasterGeometry, Scene } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
-import type { ScaleResolution } from "../../src/spec/spec.ts";
+import type { ScaleScope } from "../../src/spec/spec.ts";
+import { rampsOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -69,13 +70,14 @@ function picked(model: ChartModel, panel: number, hour: string, host: string) {
 }
 
 describe("heatmaps split by facets", () => {
-  it.each(["shared", "independent"] as const)(
+  it.each(["chart", "panel"] as const)(
     "keep each panel's cells apart, the last row with a value in each (%s categories)",
     (resolution) => {
       const { model, scene } = build({
         marks: [heatmap(load(), { ...fields, ...gray })],
         facet: facet("region"),
-        resolve: { x: resolution, y: resolution },
+        x: { scope: resolution },
+        y: { scope: resolution },
       });
       expect(model.panels().map((p) => p.key)).toEqual(["N", "S", "E"]);
       // N's (b, p) is 6, its later row without a value erasing nothing, and
@@ -86,7 +88,7 @@ describe("heatmaps split by facets", () => {
       expect(picked(model, 0, "b", "p")).toEqual({ value: 6, row: 5, label: "p", at: "b" });
       expect(picked(model, 1, "b", "p")).toEqual({ value: 7, row: 6, label: "p", at: "b" });
       expect(picked(model, 2, "d", "p")).toEqual({ value: 9, row: 8, label: "p", at: "d" });
-      if (resolution === "shared") {
+      if (resolution === "chart") {
         expect(picked(model, 2, "a", "q")).toBeUndefined();
         for (const list of categories(model, "x")) expect(list).toEqual(["b", "a", "c", "d"]);
       }
@@ -97,7 +99,8 @@ describe("heatmaps split by facets", () => {
     const { model } = build({
       marks: [heatmap(load(), { ...fields, ...gray })],
       facet: facet("region"),
-      resolve: { x: "independent", y: "independent" },
+      y: { scope: "panel" },
+      x: { scope: "panel" },
     });
     expect(categories(model, "x")).toEqual([
       ["b", "d"],
@@ -112,7 +115,7 @@ describe("heatmaps split by facets", () => {
     // Every panel labels its own categories.
     const scene = model.scene(estimateText);
     const ticks = (panel: number, orient: "bottom" | "left") =>
-      scene.panels[panel]!.axes.find((a) => a.orient === orient)?.ticks.map((t) => t.label);
+      scene.panels[panel]!.axes.find((a) => a.side === orient)?.ticks.map((t) => t.label);
     expect([0, 1, 2].map((i) => ticks(i, "bottom"))).toEqual([
       ["b", "d"],
       ["b", "a", "c"],
@@ -123,7 +126,7 @@ describe("heatmaps split by facets", () => {
 
   it.each([
     [
-      "rows",
+      "row",
       [
         ["b", "a", "c", "d"],
         ["b", "a", "c", "d"],
@@ -131,7 +134,7 @@ describe("heatmaps split by facets", () => {
       ],
     ],
     [
-      "columns",
+      "column",
       [
         ["b", "c", "d"],
         ["b", "a", "c"],
@@ -142,7 +145,7 @@ describe("heatmaps split by facets", () => {
     const { model, scene } = build({
       marks: [heatmap(load(), { ...fields, ...gray })],
       facet: facet("region", { columns: 2 }),
-      resolve: { x: x as ScaleResolution },
+      x: { scope: x as ScaleScope },
     });
     expect(categories(model, "x")).toEqual(expected);
     // S shares N's row (or E's column): its cells are its own.
@@ -153,7 +156,8 @@ describe("heatmaps split by facets", () => {
     const { model } = build({
       marks: [heatmap(load(), { ...fields, ...gray })],
       facet: facet("region"),
-      resolve: { x: "independent", y: "independent" },
+      y: { scope: "panel" },
+      x: { scope: "panel" },
     });
     const [stop] = model.keyboardStops("S");
     const key = stop!.key;
@@ -181,7 +185,8 @@ describe("heatmaps split by facets", () => {
     const { model } = build({
       marks: [heatmap(load(), { ...fields, ...gray })],
       facet: facet("region"),
-      resolve: { x: "independent", y: "independent" },
+      y: { scope: "panel" },
+      x: { scope: "panel" },
     });
     // a is S's place 1, which N's axis names d: the sentence names a.
     expect(describeChart(model)).toContain(
@@ -199,12 +204,12 @@ describe("heatmaps split by facets", () => {
     const { model, scene } = build({
       marks: [heatmap(data, { x: "hour", y: "host", color: "cpu" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     // The row without a region is drawn in no panel, but the mark's scale
     // is the same in every chart drawing it: its value counts.
     expect(model.legendEntries()).toEqual([]);
-    const ramps = scene.colorLegends;
+    const ramps = rampsOf(scene);
     expect(ramps.map((ramp) => [ramp.low.text, ramp.high.text])).toEqual([["1", "100"]]);
     expect(categories(model, "x")).toEqual([["a"], ["b"]]);
   });
@@ -213,7 +218,7 @@ describe("heatmaps split by facets", () => {
     const { model, scene } = build({
       marks: [heatmap(load(), { ...fields, ...gray })],
       facet: facet({ row: "region", column: "host" }),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(model.panels().map((p) => p.key)).toEqual([
       '["N","p"]',
@@ -237,7 +242,7 @@ describe("heatmaps split by facets", () => {
     const { model, scene } = build({
       marks: [heatmap(data, { ...fields, ...gray })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(painted(model, scene, 1)).toEqual({ "b p": 2 });
     data.append({ region: ["S"], hour: ["d"], host: ["p"], cpu: [4] });
@@ -265,7 +270,8 @@ describe("heatmaps split by facets", () => {
     const faceted = build({
       marks: [mark],
       facet: facet("region"),
-      resolve: { x: "independent", y: "independent" },
+      y: { scope: "panel" },
+      x: { scope: "panel" },
     });
     const whole = build({ marks: [mark] });
     // The whole chart's (b, p) is the table's last value there: S's 7.
@@ -290,7 +296,7 @@ describe("heatmaps split by facets", () => {
         heatmap(grid, { ...fields, ...gray, facet: "repeat" }),
       ],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(categories(model, "x")).toEqual([
       ["b", "a", "c"],
@@ -323,7 +329,8 @@ describe("heatmaps split by facets", () => {
       },
       marks: [{ type: "heatmap" as const, data: "load", x: "hour", y: "host", color: "cpu" }],
       facet: { field: "region" },
-      resolve: { x: "independent" as const, y: "independent" as const },
+      x: { scope: "panel" as const },
+      y: { scope: "panel" as const },
       width: 600,
       height: 300,
     };
@@ -347,7 +354,7 @@ describe("heatmaps in subplots", () => {
         heatmap(evening, { ...fields, ...gray, panel: "pm" }),
       ],
       panels: panels([{ id: "am" }, { id: "pm" }], { columns: 2 }),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(categories(model, "x")).toEqual([
       ["6", "7"],
@@ -371,7 +378,8 @@ describe("heatmaps in subplots", () => {
         heatmap(shared, { ...fields, ...gray, panel: "*" }),
       ],
       panels: panels([{ id: "a" }, { id: "b" }]),
-      resolve: { x: "independent", y: "shared" },
+      y: { scope: "chart" },
+      x: { scope: "panel" },
     });
     expect(categories(model, "x")).toEqual([
       ["m", "n"],

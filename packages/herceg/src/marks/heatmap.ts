@@ -14,7 +14,7 @@ import type { LegendPart } from "../model/legend.ts";
 import { checkColorScale, checkRamp, rampOf, SequentialScale } from "../scale/color.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { Geometry, RasterGeometry } from "../scene/scene.ts";
-import type { CellReduce, Frozen, HeatmapSpec, Weekday } from "../spec/spec.ts";
+import type { CellReduce, Clip, Frozen, HeatmapSpec, Weekday } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import { type Calendar, type CalendarLayout, placeCalendar } from "./heatmap-calendar.ts";
 import {
@@ -82,6 +82,12 @@ interface HeatmapCommon<S extends Schema> {
   label?: string;
   /** With the chart's `facet`, draw all cells in every panel instead of splitting them. */
   facet?: "repeat";
+  /**
+   * What the mark's drawing is cut to: "plot", "chart", or false for
+   * nothing, so markers at the plot's edge show whole. Without it, data is
+   * cut to the plot and labels are drawn whole.
+   */
+  clip?: Clip;
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
   /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
@@ -1383,6 +1389,7 @@ export function heatmap<S extends Schema>(
     "id",
     "facet",
     "panel",
+    "clip",
     "colorMidpoint",
     "reduce",
   ]);

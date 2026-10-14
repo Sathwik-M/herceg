@@ -29,7 +29,7 @@ it.each(["svg", "canvas"] as const)(
         renderer,
         x: { show: false, domain: [0, 6], grid: false },
         y: { show: false, domain: [0, 6], grid: false },
-        theme: { background: "transparent" },
+        theme: { tokens: { background: "transparent" } },
       });
       const model = modelOf(chart);
       const x = model.xScale()!.map(mark.spec.orient === "y" ? 3 : 2);

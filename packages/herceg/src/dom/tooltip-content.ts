@@ -111,9 +111,9 @@ export function ownContent(tooltip: Tooltip, render: () => RenderTooltip | undef
     const kept = !(shown[3] instanceof Node) || element.contains(shown[3]);
     if (own !== shown[0] || theme !== shown[1] || key !== shown[2] || !kept) {
       shown = [own, theme, key];
-      element.style.background = theme.tooltipBackground;
+      element.style.background = theme.style.tooltip.fill;
       element.style.color = theme.text;
-      element.style.border = `1px solid ${theme.tooltipBorder}`;
+      element.style.border = `1px solid ${theme.style.tooltip.stroke}`;
       element.style.boxShadow =
         "0 1px 2px rgba(16, 24, 40, 0.06), 0 6px 16px rgba(16, 24, 40, 0.12)";
       element.style.font = `${theme.fontSize}px ${theme.font}`;

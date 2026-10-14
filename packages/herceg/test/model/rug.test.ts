@@ -14,6 +14,7 @@ import { timeBreaks } from "../../src/scale/breaks.ts";
 import type { Scene, SegmentGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -176,8 +177,8 @@ describe("rug", () => {
     });
     expect(ticks(scene).map((g) => g.count)).toEqual([2, 2]);
     expect(new Set(ticks(scene).map((g) => g.stroke)).size).toBe(2);
-    expect(scene.legend.map((entry) => entry.label)).toEqual(["a", "b"]);
-    model.hidden.add(scene.legend[0]!.key);
+    expect(legendOf(scene).map((entry) => entry.label)).toEqual(["a", "b"]);
+    model.hidden.add(legendOf(scene)[0]!.key);
     expect(ticks(model.scene(estimateText))).toHaveLength(1);
     expect(model.keyboardStops("")).toHaveLength(1);
     const custom = build({
@@ -190,7 +191,8 @@ describe("rug", () => {
     const faceted = build({
       marks: [rug(observations, { x: "v" })],
       facet: facet("g"),
-      resolve: { x: "independent", y: "independent" },
+      y: { scope: "panel" },
+      x: { scope: "panel" },
     });
     expect(faceted.scene.panels.map((_, i) => ticks(faceted.scene, i)[0]!.count)).toEqual([2, 2]);
     const repeat = build({
@@ -208,7 +210,7 @@ describe("rug", () => {
         { id: "a", x: { domain: [100, 200] } },
         { id: "b", x: { domain: [1000, 2000] } },
       ]),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     for (const panel of subplots.scene.panels) {
       const hit = subplots.model.inspectPosition(
@@ -231,7 +233,8 @@ describe("rug", () => {
           { id: "log", [axis]: { type: "log" } },
           { id: "linear", [axis]: { type: "linear" } },
         ]),
-        resolve: { x: "independent", y: "independent" },
+        y: { scope: "panel" },
+        x: { scope: "panel" },
       });
       expect(describeChart(model)).toContain("4 values, from -1 to 10");
     }

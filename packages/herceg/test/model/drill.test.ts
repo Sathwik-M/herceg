@@ -147,7 +147,7 @@ describe("drilled treemaps", () => {
           locale: "en-US",
           marks: [mark],
           interaction: { zoom: true },
-          theme: { fontSize: 20 },
+          theme: { style: { text: { fontSize: 20 } } },
         });
         narrow.setSize(width, 300, 1);
         narrow.scene(estimateText);

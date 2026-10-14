@@ -17,7 +17,8 @@ import { panels } from "../../src/model/panels.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { RectGeometry, Scene } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
-import type { ScaleResolution } from "../../src/spec/spec.ts";
+import type { ScaleScope } from "../../src/spec/spec.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -73,13 +74,13 @@ describe("histograms split by facets", () => {
       [0, 40],
     ]);
     // The legend lists the chart's series once, and y is shared by both panels.
-    expect(scene.legend.map((entry) => entry.label)).toEqual(["s", "t"]);
+    expect(legendOf(scene).map((entry) => entry.label)).toEqual(["s", "t"]);
     expect(model.panels()[0]!.y.domain).toEqual(model.panels()[1]!.y.domain);
   });
 
   it.each([
-    ["independent", [0, 5], [10, 20]],
-    ["shared", [0, 20], [0, 20]],
+    ["panel", [0, 5], [10, 20]],
+    ["chart", [0, 20], [0, 20]],
   ] as const)("choose bins from the rows of each x scale's panels (%s x)", (resolution, a, b) => {
     const data = table({
       region: category(["A", "A", "A", "B", "B", "B"]),
@@ -88,7 +89,7 @@ describe("histograms split by facets", () => {
     const { model } = build({
       marks: [histogram(data, { x: "ms", bins: step })],
       facet: facet("region"),
-      resolve: { x: resolution },
+      x: { scope: resolution },
     });
     // From the first bin's left edge to the last one's right edge.
     const range = (panel: string) => {
@@ -109,7 +110,7 @@ describe("histograms split by facets", () => {
     const { model } = build({
       marks: [histogram(data, { x: "ms", bins: { step: 10 } })],
       facet: facet("region", { columns: 2 }),
-      resolve: { x: "rows" },
+      x: { scope: "row" },
     });
     const first = (key: string) => model.panelSeries(key)[0]!.x;
     expect(first("A")).toBe(first("B"));
@@ -158,7 +159,7 @@ describe("histograms split by facets", () => {
     const { model, scene } = build({
       marks: [histogram(latency(), { x: "ms", series: "service", bins: step })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     const b = model.panels()[1]!;
     const inspection = model.inspect(b.x.map(12.5), scene.panels[1]!.plot.y + 5, "nearest-x", "B");
@@ -261,7 +262,7 @@ describe("histograms split by facets", () => {
       },
       marks: [{ type: "histogram" as const, data: "t", x: "ms", bins: { step: 10 } }],
       facet: { field: "region" },
-      resolve: { x: "independent" as const },
+      x: { scope: "panel" as const },
     };
     const { config } = loadSpec(spec);
     const model = new ChartModel(config);
@@ -330,13 +331,13 @@ describe("box plots and violins split by facets", () => {
     expect(describeChart(model)).toContain("units: 4 boxes, medians from 2 (a) to 150 (b).");
   });
 
-  it.each(["independent", "columns"] as ScaleResolution[])(
+  it.each(["panel", "column"] as ScaleScope[])(
     "place each panel's boxes on categories of its own (%s)",
     (resolution) => {
       const { model, scene } = build({
         marks: [boxplot(sales(), { x: "product", y: "units", series: "version" })],
         facet: facet("region"),
-        resolve: { x: resolution },
+        x: { scope: resolution },
       });
       expect(model.panels().map((p) => p.x.categories)).toEqual([
         ["a", "b"],
@@ -381,8 +382,8 @@ describe("box plots and violins split by facets", () => {
       marks: [boxplot(data, { x: "product", y: "units", series: "version" })],
       facet: facet("region"),
     });
-    expect(one.scene.legend.map((entry) => entry.label)).toEqual(["y", "x"]);
-    expect(split.scene.legend.map((entry) => entry.label)).toEqual(["y", "x"]);
+    expect(legendOf(one.scene).map((entry) => entry.label)).toEqual(["y", "x"]);
+    expect(legendOf(split.scene).map((entry) => entry.label)).toEqual(["y", "x"]);
     expect(split.model.panelSeries("Q").map((s) => [s.label, s.length])).toEqual([
       ["y", 0],
       ["x", 1],
@@ -393,7 +394,7 @@ describe("box plots and violins split by facets", () => {
     const { model, scene } = build({
       marks: [boxplot(sales(), { x: "units", y: "product" })],
       facet: facet("region"),
-      resolve: { y: "independent" },
+      y: { scope: "panel" },
     });
     expect(model.panels().map((p) => p.y.categories)).toEqual([
       ["a", "b"],
@@ -422,7 +423,7 @@ describe("box plots and violins split by facets", () => {
     const { model } = build({
       marks: [violin(sales(), { x: "product", y: "units" })],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(picked(model, "N", 1)!.texts).toEqual([
       "median 10, quartiles 10 to 10, values from 10 to 10, 1 value",
@@ -443,7 +444,7 @@ describe("box plots and violins split by facets", () => {
         point(data, { x: "product", y: "units" }),
       ],
       facet: facet("region"),
-      resolve: { x: "independent" },
+      x: { scope: "panel" },
     });
     expect(model.panels().map((p) => p.x.categories)).toEqual([
       ["a", "b", "c"],

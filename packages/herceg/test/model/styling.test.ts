@@ -18,6 +18,7 @@ import type {
 } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import { surface } from "../../src/theme.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -103,7 +104,7 @@ describe("point outlines", () => {
       stroke: "#000000",
     });
     const scene = build({ marks: [hollow] });
-    expect(scene.legend.map((item) => item.stroke)).toEqual(["#000000", "#000000"]);
+    expect(legendOf(scene).map((item) => item.stroke)).toEqual(["#000000", "#000000"]);
     expect(renderSvg(scene)).toMatch(
       /<path transform="[^"]*" d="[^"]*" fill="transparent" stroke="#000000"/,
     );
@@ -111,7 +112,7 @@ describe("point outlines", () => {
     const apart = build({
       marks: [point(values, { x: "x", y: "a", series: "group", strokeWidth: 2 })],
     });
-    expect(apart.legend.map((item) => item.stroke)).toEqual([undefined, undefined]);
+    expect(legendOf(apart).map((item) => item.stroke)).toEqual([undefined, undefined]);
   });
 
   it("refuses negative and non-finite widths", () => {
@@ -130,7 +131,7 @@ describe("area outlines", () => {
   it("outlines a single area in its own color at the theme's line width", () => {
     const [[stroke, width]] = outlines([area(values, { x: "x", y: "a" })]) as [[string, number]];
     expect(stroke).toMatch(/^#/);
-    expect(width).toBe(build({ marks: [] }).theme.lineWidth);
+    expect(width).toBe(build({ marks: [] }).theme.style.line.strokeWidth);
   });
 
   it("sets the outline's color and width", () => {

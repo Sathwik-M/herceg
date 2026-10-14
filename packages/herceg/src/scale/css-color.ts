@@ -39,7 +39,8 @@ const NAMES =
 
 let names: Map<string, string> | undefined;
 
-function named(name: string): string | undefined {
+/** The hex color a CSS color name such as "yellow" names; undefined for other colors. */
+export function named(name: string): string | undefined {
   if (!names) {
     names = new Map();
     const parts = NAMES.split(" ");

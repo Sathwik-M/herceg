@@ -1,13 +1,10 @@
 // Static rendering inside an embedded JavaScript engine (no DOM): the Python
-// package calls `hercegStatic.svg(specJson, base64Buffers)`, and `pdf`, which
+// package calls `hercegStatic.svg(specJson, base64Buffers, ...)`, and `pdf`, which
 // returns the document as base64.
 
-import {
-  type PdfExportOptions,
-  type PdfFontOptions,
-  type PdfFontSource,
-  pdfFonts,
-} from "herceg/pdf";
+import type { SvgSizing } from "herceg";
+import { type FontSource, prepareFonts } from "herceg/fonts";
+import type { PdfExportOptions } from "herceg/pdf";
 import { type ChartSpec, type PdfSpec, specToPDF, specToSVG } from "herceg/spec";
 import { decodeBase64, encodeBase64 } from "./buffers.ts";
 import { rasterFont } from "./raster-font.ts";
@@ -27,11 +24,17 @@ function exported(run: () => string): string | { error: string } {
 }
 
 (globalThis as { hercegStatic?: unknown }).hercegStatic = {
-  svg(spec: string, buffers: string[], options = "[]", raster = false): string | { error: string } {
+  svg(
+    spec: string,
+    buffers: string[],
+    options = "[]",
+    raster = false,
+    sizing = "{}",
+  ): string | { error: string } {
     return exported(() => {
-      const sources = (
-        JSON.parse(options) as (Omit<PdfFontSource, "data"> & { data: string })[]
-      ).map((font) => ({ ...font, data: decodeBase64(font.data) }));
+      const sources = (JSON.parse(options) as (Omit<FontSource, "data"> & { data: string })[]).map(
+        (font) => ({ ...font, data: decodeBase64(font.data) }),
+      );
       const withFonts = <T>(run: () => T): T => {
         try {
           return run();
@@ -41,18 +44,22 @@ function exported(run: () => string): string | { error: string } {
               "; supply a covering font and fallback family, or set missingGlyph to a covered replacement",
               "",
             )
-            .replace("; match theme.font or add an explicit fallback family", "");
+            .replace("; match the theme's font or add an explicit fallback family", "");
           throw new Error(
-            `fonts: ${problem}; supply supported TrueType fonts covering the text and matching theme["font"]`,
+            `fonts: ${problem}; supply supported TrueType fonts covering the text and matching the theme's font`,
           );
         }
       };
-      const resolver = sources.length
-        ? withFonts(() => pdfFonts(sources).createResolver())
-        : undefined;
+      const registry = sources.length ? withFonts(() => prepareFonts(sources)) : undefined;
       const svg = specToSVG(JSON.parse(spec) as ChartSpec, buffers.map(decodeBase64), {
-        ...(resolver && {
-          measureText: (text, font) => withFonts(() => resolver.measure(text, font)),
+        ...(JSON.parse(sizing) as SvgSizing),
+        // The fonts, with what they refuse reported in Python's words.
+        ...(registry && {
+          fonts: Object.create(registry, {
+            measure: {
+              value: (text: string, font: string) => withFonts(() => registry.measure(text, font)),
+            },
+          }) as typeof registry,
         }),
       });
       return raster
@@ -64,19 +71,17 @@ function exported(run: () => string): string | { error: string } {
     });
   },
   pdf(spec: string, buffers: string[] | string[][], options = "{}"): string | { error: string } {
-    const supplied = JSON.parse(options) as PdfFontOptions &
-      Omit<PdfExportOptions, "fonts"> & {
-        fonts?: (Omit<PdfFontSource, "data"> & { data: string })[];
-      };
+    const supplied = JSON.parse(options) as Omit<PdfExportOptions, "fonts"> & {
+      fonts?: (Omit<FontSource, "data"> & { data: string })[];
+    };
     const { fonts, fallback, missingGlyph, ...settings } = supplied;
     return exported(() => {
       const prepared = {
         ...settings,
         ...(fonts?.length && {
-          fonts: pdfFonts(
-            fonts.map((font) => ({ ...font, data: decodeBase64(font.data) })),
-            { ...(fallback && { fallback }), ...(missingGlyph !== undefined && { missingGlyph }) },
-          ),
+          fonts: prepareFonts(fonts.map((font) => ({ ...font, data: decodeBase64(font.data) }))),
+          ...(fallback && { fallback }),
+          ...(missingGlyph !== undefined && { missingGlyph }),
         }),
       };
       const input = JSON.parse(spec) as ChartSpec | ChartSpec[];

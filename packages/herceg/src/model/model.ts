@@ -4,8 +4,18 @@
 // buffers, the zoomed x range, hidden series, and layout hysteresis.
 
 import type { Table } from "../data/table.ts";
+import type { Fonts } from "../fonts/registry.ts";
 import { type Formatter, formatNumber, timeValueFormatter } from "../format/format.ts";
-import { fitText, type MeasureText } from "../layout/text.ts";
+import { aligned, alignedAt, insideAt } from "../layout/place.ts";
+import {
+  fitText,
+  type MeasureText,
+  textHeight,
+  textItem,
+  textItems,
+  textWidth,
+} from "../layout/text.ts";
+import { stackTracks, type TrackRequest } from "../layout/tracks.ts";
 import { Polyline } from "../lod/polyline.ts";
 import { isLayoutMark, type LayoutMark } from "../marks/layout-mark.ts";
 import {
@@ -30,23 +40,27 @@ import type { TimeBreaks } from "../scale/breaks.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
 import {
-  type AxisGeometry,
+  type AxisGuide,
+  type AxisPlacement,
   type Geometry,
+  type Guide,
+  type HeaderGuide,
   type Panel,
   type Rect,
   type Scene,
-  type SceneText,
   tickLabelGap,
 } from "../scene/scene.ts";
+import type { InsidePlace, Place } from "../spec/place.ts";
 import type {
   AnimationSpec,
   AxisSpec,
   CameraSpec,
   ChartSpec,
-  ScaleResolution,
+  ScaleScope,
   XAxisSpec,
 } from "../spec/spec.ts";
-import { resolveTheme, type Theme, type ThemeEnvironment } from "../theme.ts";
+import { insets, type TextPaint } from "../style/style.ts";
+import { readNow, resolveTheme, type Theme, type ThemeEnvironment } from "../theme.ts";
 import type { Camera } from "../three/camera.ts";
 import {
   type AxisBreaks,
@@ -60,13 +74,17 @@ import {
   usableDomain,
   valueFormatter,
 } from "./axis.ts";
+import { axisGuide, TICK } from "./axis-guide.ts";
 import type { Facet } from "./facet.ts";
 import type { ItemPanel, ItemViews } from "./item-views.ts";
-import { EDGE, HiddenKeys, type LegendEntry, type LegendPart, layoutLegends } from "./legend.ts";
+import { EDGE, HiddenKeys, type LegendEntry, type LegendPart, measureLegends } from "./legend.ts";
 import type { Navigator } from "./navigator.ts";
-import type { PanelAxis, PanelGrid, PanelLayout, PanelSplit } from "./panel-layout.ts";
+import type { PanelGrid, PanelLayout, PanelSplit } from "./panel-layout.ts";
 import type { Panels } from "./panels.ts";
 import type { RowSelection } from "./row-selection.ts";
+import { instanceType, type ScaleName } from "./scales.ts";
+import { type ChartStyles, chartStyles, styleSources } from "./styles.ts";
+import { titleText } from "./titles.ts";
 
 /** Chart options with marks bound to their data. */
 export type ChartConfig = Omit<
@@ -97,6 +115,12 @@ export type ChartConfig = Omit<
   navigator?: Navigator | undefined;
   /** Channels of selection stores the chart writes rows to and highlights (see `rowSelection`). */
   rowSelection?: RowSelection | undefined;
+  /**
+   * Fonts from `prepareFonts` (herceg/fonts) to measure text with: in a browser,
+   * where they cover it, registered with the document to draw it; in SVG
+   * and PNG exports, named by their families; in PDF, embedded.
+   */
+  fonts?: Fonts | undefined;
 };
 
 /** The x axis' options: its `breaks` are built with `timeBreaks`. */
@@ -207,7 +231,6 @@ export type {
  */
 export const STATIC_RASTER_RATIO = 2;
 
-const TICK = 5;
 const GAP = 6;
 /** Left inset of the title and legend. */
 
@@ -222,7 +245,11 @@ export class ChartModel {
   #items: ItemViews | undefined;
   /** Every panel of the last scene, in order: with marks along axes, or a layout mark. */
   #all: readonly (ItemPanel & { items: boolean })[] = [];
-  #theme: Theme;
+  #theme!: Theme;
+  /** Its guides' and panels' styles over the theme. */
+  #styles!: ChartStyles;
+  /** The page's colors and fonts in those styles when they were resolved (see `readNow`). */
+  #pageStyles: string | undefined;
   width = 640;
   height = 400;
   pixelRatio = 1;
@@ -256,7 +283,7 @@ export class ChartModel {
   #used = new Set<string>();
   #labelWidths = new WeakMap<
     readonly string[],
-    { measure: MeasureText; font: string; width: number }
+    { measure: MeasureText; widths: Map<string, number> }
   >();
   #left = 0;
   #right = 0;
@@ -289,7 +316,22 @@ export class ChartModel {
   constructor(config: ChartConfig, page?: ThemeEnvironment) {
     [this.#marks, this.#layouts, this.#positions] = validate(config);
     this.#config = config;
-    this.#theme = resolveTheme(config.theme, page);
+    this.#style(page);
+  }
+
+  /**
+   * Resolves the theme and the guides' and panels' styles in `page`: what
+   * they read of it is read now, as styles resolve when scenes ask for them.
+   */
+  #style(
+    page: ThemeEnvironment | undefined,
+    theme = resolveTheme(this.#config.theme, page),
+    styles = readNow(styleSources(this.#config), page ?? {}),
+  ): void {
+    this.#theme = theme;
+    this.#styles = chartStyles(theme, this.#config, styles.environment);
+    this.#pageStyles = styles.reading;
+    this.#layoutKey = "";
   }
 
   get config(): ChartConfig {
@@ -305,13 +347,22 @@ export class ChartModel {
     return this.#theme;
   }
 
-  /** Resolves a theme that follows the page again; whether it changed. */
+  /** Resolves a theme and styles that follow the page again; whether they changed. */
   refreshTheme(page: ThemeEnvironment): boolean {
     const theme = resolveTheme(this.#config.theme, page);
-    if (JSON.stringify(theme) === JSON.stringify(this.#theme)) return false;
-    this.#theme = theme;
-    this.#layoutKey = "";
+    const styles = readNow(styleSources(this.#config), page);
+    if (
+      JSON.stringify(theme) === JSON.stringify(this.#theme) &&
+      styles.reading === this.#pageStyles
+    )
+      return false;
+    this.#style(page, theme, styles);
     return true;
+  }
+
+  /** Lets the next scene lay its margins out afresh, as when text measures differently. */
+  relayout(): void {
+    this.#layoutKey = "";
   }
 
   update(config: ChartConfig, page?: ThemeEnvironment): void {
@@ -326,8 +377,7 @@ export class ChartModel {
       yRight: this.#shares("yRight") ? yRight : null,
     };
     if (kept.y !== y || kept.yRight !== yRight) this.#yViewport = kept;
-    this.#theme = resolveTheme(config.theme, page);
-    this.#layoutKey = "";
+    this.#style(page);
   }
 
   /** A copy of the camera of the targeted 3D state; multiple cameras require a panel. */
@@ -373,9 +423,9 @@ export class ChartModel {
     return this.#viewports.get(this.xGroupOf(panel)) ?? null;
   }
 
-  /** Whether every panel shares one x scale: unless the chart's `resolve.x` says otherwise. */
+  /** Whether every panel shares one x scale: unless the chart's `x.scope` says otherwise. */
   get sharesX(): boolean {
-    return this.#resolution("x") === "shared";
+    return this.#scope("x") === "chart";
   }
 
   /**
@@ -436,16 +486,16 @@ export class ChartModel {
 
   /**
    * Whether every panel shares a y axis' scale, so the chart has one
-   * viewport of it: without facets or with that axis' `resolve` "shared";
+   * viewport of it: without facets or with that axis' `scope` "chart";
    * subplots never do.
    */
   #shares(axis: "y" | "yRight"): boolean {
-    return !this.#config.panels && this.#resolution(axis) === "shared";
+    return !this.#config.panels && this.#scope(axis) === "chart";
   }
 
-  /** How the chart's panels share an axis' scale (see `PanelLayout.resolution`): one without panels. */
-  #resolution(axis: PanelAxis): ScaleResolution {
-    return this.#panels?.resolution(axis, this.#config.resolve) ?? "shared";
+  /** Which of the chart's panels share a scale (see `PanelLayout.scopes`): all of them without panels. */
+  #scope(axis: ScaleName): ScaleScope {
+    return this.#panels?.scopes(this.#config)[axis] ?? "chart";
   }
 
   /** What lays the chart out in panels, if anything does. */
@@ -472,31 +522,25 @@ export class ChartModel {
   };
 
   /**
-   * Axis type from the declared type or the marks' fields: a categorical
-   * channel gives a band axis, a time field a time axis.
+   * The type of a scale every panel shares, from its declared type
+   * (`declared`, the chart's by default) and the marks of `among` on its
+   * side: a categorical channel gives a band scale, a time field a time scale.
    */
-  #axisType(axis: "x" | "y" | "yRight"): AxisType {
-    const declared = this.#config[axis]?.type;
-    const channel = axis === "x" ? "x" : "y";
+  #sharedType(
+    axis: ScaleName,
+    among: readonly Mark[] = this.#marks,
+    declared = this.#config[axis]?.type,
+  ): AxisType {
     // The y axes take the marks on their side.
-    const marks = this.#marks.filter(
+    const marks = among.filter(
       (mark) => axis === "x" || (sideOf(mark) === "right") === (axis === "yRight"),
     );
-    const kinds = marks.map((mark) => mark.channelKind(channel));
-    if (kinds.includes("category")) {
-      if (axis === "yRight") throw new Error('axis: "right" takes no category y values');
-      // Every mark with a field on this channel must band it.
-      const index = kinds.findIndex((kind) => kind !== undefined && kind !== "category");
-      if (index >= 0) {
-        const mark = marks[index]!;
-        throw new Error(`${mark.spec.type} ${axis}: numbers cannot share a category axis`);
-      }
-      if (declared)
-        throw new Error(`chart ${axis}.type: the axis shows categories; drop "${declared}"`);
-      return "band";
-    }
-    if (declared) return declared;
-    return kinds.includes("time") ? "time" : "linear";
+    // In subplots, marks drawn in one panel name it in errors.
+    const layout = this.#panels;
+    return instanceType(marks, declared, {
+      scale: axis,
+      mixed: layout?.mixed && ((numbers, categories) => layout.mixed!(numbers, categories, axis)),
+    });
   }
 
   /** Union of the marks' bands by key, keeping the previous list while unchanged. */
@@ -565,7 +609,7 @@ export class ChartModel {
 
   /** x extent of all data drawn, ignoring the viewport. */
   dataXExtent(): [number, number] | undefined {
-    const type = this.#axisType("x");
+    const type = this.#sharedType("x");
     if (type === "band") return undefined;
     const context = this.#context();
     const marks = this.#split(this.#resolveSeries(this.#bands, context), context).all;
@@ -627,11 +671,17 @@ export class ChartModel {
    * band axes may have thousands of them.
    */
   #widest(labels: readonly string[], measure: MeasureText, font: string): number {
-    const cached = this.#labelWidths.get(labels);
-    if (cached?.measure === measure && cached.font === font) return cached.width;
-    let width = 0;
-    for (const label of labels) width = Math.max(width, measure(label, font));
-    this.#labelWidths.set(labels, { measure, font, width });
+    let cached = this.#labelWidths.get(labels);
+    if (cached?.measure !== measure) {
+      cached = { measure, widths: new Map() };
+      this.#labelWidths.set(labels, cached);
+    }
+    let width = cached.widths.get(font);
+    if (width === undefined) {
+      width = 0;
+      for (const label of labels) width = Math.max(width, measure(label, font));
+      cached.widths.set(font, width);
+    }
     return width;
   }
 
@@ -718,11 +768,13 @@ export class ChartModel {
     const { width, height } = this;
     const context = this.#context();
     const { zone, locale } = context;
-    const xType = this.#axisType("x");
-    const yType = this.#axisType("y");
+    // The categories of every mark placing them along an axis. Scale types
+    // are found once marks are in their panels: a category scale in one
+    // subplot leaves another's alone.
     const bands: Bands = {};
-    if (xType === "band") bands.x = this.#bandList("x", context);
-    if (yType === "band") bands.y = this.#bandList("y", context);
+    for (const axis of ["x", "y"] as const)
+      if (this.#marks.some((mark) => mark.channelKind(axis) === "category"))
+        bands[axis] = this.#bandList(axis, context);
     this.#bands = bands;
     const base = this.#resolveSeries(bands, context);
     const split = this.#split(base, context);
@@ -738,9 +790,8 @@ export class ChartModel {
     const xSpec = layout
       ? layout.panelAxis("x", Math.max(0, items?.indexOf(undefined) ?? 0), config.x)
       : config.x;
-    const xScale = { type: xType === "band" ? xType : (xSpec?.type ?? xType), spec: xSpec };
-    const font = `${theme.fontSize}px ${theme.font}`;
-    const lineHeight = Math.round(theme.fontSize * 1.25);
+    const styles = this.#styles;
+    const lineHeight = theme.style.text.lineHeight;
     const padding = (axis: "x" | "y") =>
       Math.min(
         0.2,
@@ -784,21 +835,33 @@ export class ChartModel {
 
     // Panels fill a grid of `columns`; without facets, one cell.
     const panelCount = split.keys.length;
-    const grid = layout ? layout.grid(split, lineHeight) : ONE_PANEL;
+    // Rows of text take their style's line height (and box), at least the base text's.
+    const panelIndexes = split.keys.map((_, i) => i);
+    const tallest = (paints: readonly TextPaint[]) =>
+      Math.max(lineHeight, ...paints.map(textHeight));
+    const grid = layout
+      ? layout.grid(split, tallest(panelIndexes.map((i) => styles.panelTitle(i))))
+      : ONE_PANEL;
     const { columns, rows, header, columnHeader, rowHeader } = grid;
     const rowOf = (panel: number) => Math.floor(panel / columns);
 
-    // x scales: one for every panel, or with `resolve.x` one per group of
+    // x scales: one for every panel, or with `x.scope` one per group of
     // panels (each alone, a row, or a column), from what the group draws.
-    const xResolution = this.#resolution("x");
+    const xScope = this.#scope("x");
     const xGroups =
-      xResolution === "shared"
-        ? undefined
-        : layout!.groups(xResolution, split, columns, "x", config.x, xType);
+      xScope === "chart" ? undefined : layout!.groups(xScope, split, columns, "x", config.x);
     const xGroupAt = xGroups?.groupOf ?? new Array<number>(panelCount).fill(0);
     // Each group's marks, with every mark's series in the group's panels.
     const xMarks = xGroups?.drawn ?? [marks];
-    const xContexts = (xGroups?.axes ?? [xScale]).map((scale) => ({
+    const xShared = () => ({
+      type: this.#sharedType(
+        "x",
+        marks.map(({ mark }) => mark),
+        xSpec?.type,
+      ),
+      spec: xSpec,
+    });
+    const xContexts = (xGroups?.axes ?? [xShared()]).map((scale) => ({
       ...scale,
       zone,
       locale,
@@ -863,7 +926,7 @@ export class ChartModel {
     // With x scales of their own, what panels draw counts within their own x
     // domain, so zooming one group can change a y scale it shares; category
     // x scales show all of theirs.
-    const byX = xType !== "band" && xGroups;
+    const byX = xGroups && xContexts.some(({ type }) => type !== "band") && xGroups;
     // Each y axis is for the marks on its side: the left one's, or with
     // `axis: "right"` the right one's. A panel has a y axis when one of its
     // marks places values along it, and the left one also without a right
@@ -878,11 +941,6 @@ export class ChartModel {
     const rightIn = split.keys.map((_, i) => axesIn(i) && placesY(i, true));
     const leftIn = split.keys.map((_, i) => axesIn(i) && (!rightIn[i] || placesY(i, false)));
     const rightUsed = rightIn.includes(true);
-    const yRightType = rightUsed ? this.#axisType("yRight") : "linear";
-    // Whether the left axis has anything to label: a band axis may have no bands.
-    const leftData = yType !== "band" || (bands.y?.keys.length ?? 0) > 0;
-    if (!(leftData || rightUsed)) xHas.fill(false);
-    const hasData = xHas.includes(true);
 
     // Vertical layout depends only on fonts, titles, and the legends.
     // One legend per distinct scale or key: marks sharing a scale share one.
@@ -914,13 +972,36 @@ export class ChartModel {
         return [item];
       });
     });
-    const head = this.#header(entries, [...parts.values()], measure);
-    const top = head.top;
     const showY = config.y?.show ?? true;
+    // Whether panel `i` may show y labels on a side: marks drawn there, and
+    // its settings showing the axis. Only styles drawn are read.
+    const showsY = (axis: "y" | "yRight", i: number) =>
+      (axis === "y" ? showY && leftIn[i]! : rightIn[i]!) &&
+      (layout ? layout.panelAxis(axis, i, config[axis]) : config[axis])?.show !== false;
+    // How far y labels reach past their end ticks: half their box, or half
+    // their text. Boxes reaching further than the half of the base text the
+    // spacing has always kept get room for it (`yOver`).
+    const textReach = Math.ceil(theme.fontSize / 2);
+    let yReachAll = 0;
+    let yOver = 0;
+    let yBoxed = false;
+    for (const i of panelIndexes)
+      for (const axis of ["y", "yRight"] as const) {
+        if (!showsY(axis, i)) continue;
+        const paint = styles.axisText("tickLabel", axis, i);
+        const reach = Math.ceil((paint.background ? textHeight(paint) : paint.size) / 2);
+        yReachAll = Math.max(yReachAll, reach);
+        if (paint.background) {
+          yBoxed = true;
+          yOver = Math.max(yOver, reach - textReach);
+        }
+      }
+    const head = this.#furniture(entries, [...parts.values()], measure, showY || rightUsed, yOver);
+    const top = head.top;
     // x labels go under the lowest panel with axes of each column, and under
     // every panel when the panels of a column have x scales of their own, as
     // each panel's `show` setting (a subplot's own over the chart's) says.
-    const xBetween = xResolution === "independent" || xResolution === "rows";
+    const xBetween = xScope === "panel" || xScope === "row";
     const panelX = (i: number) => (layout ? layout.panelAxis("x", i, config.x) : config.x);
     const labelsX = (i: number) =>
       axesIn(i) &&
@@ -928,14 +1009,49 @@ export class ChartModel {
       (xBetween || (grid.lowest?.[i] ?? i + columns >= panelCount));
     const showX = split.keys.some((_, i) => labelsX(i));
     // Room under the plot before the x labels' line of text: more for large
-    // text, whose labels sit further below the axis.
-    const xLabels = TICK + GAP + tickLabelGap(theme.fontSize) - tickLabelGap(0);
-    // Each x scale's title goes once, under its lowest labels (see xTitleOf).
-    const xTitle = xContexts.some(({ spec }) => spec?.title) ? lineHeight + GAP : 0;
-    const below = showX ? xLabels + lineHeight + xTitle + 2 : 4;
+    // text, whose labels sit further below the axis, and below the reach of
+    // y labels' boxes, which would cover the first and last.
+    const xLabeled = panelIndexes.filter(labelsX);
+    const xLabelPaints = xLabeled.length
+      ? xLabeled.map((i) => styles.axisText("tickLabel", "x", i))
+      : [theme.style.tickLabel];
+    const yReach = yOver && textReach + yOver;
+    // Where either has boxes, x labels go below the y labels' reach, their
+    // line (and box) starting half its leading above the hanging point.
+    const xGap = (paint: TextPaint) =>
+      Math.max(
+        tickLabelGap(paint.size),
+        yBoxed || paint.background ? yReachAll + 2 + (paint.lineHeight - paint.size) / 2 : 0,
+      );
+    const xLabels = TICK + GAP + Math.max(...xLabelPaints.map(xGap)) - tickLabelGap(0);
+    const xLabelHeight = tallest(xLabelPaints);
+    // Each x scale's title goes once, under the last panel labeled with it
+    // (see xTitleOf), and only those panels' title styles are read.
+    const titleAt = xContexts.map(() => -1);
+    for (const i of xLabeled) titleAt[xGroupAt[i]!] = i;
+    const xTitled = titleAt.filter((i, h) => i >= 0 && xContexts[h]!.spec?.title);
+    const xTitleHeight = tallest(xTitled.map((i) => styles.axisText("axisTitle", "x", i)));
+    const xTitle = xTitled.length ? xTitleHeight + GAP : 0; // y labels' boxes reach below the bottom tick as far as above the top one.
+    const below =
+      Math.max(
+        showX ? xLabels + xLabelHeight + xTitle + (head.auto ? 2 : 0) : head.auto ? 4 : 0,
+        yReach,
+      ) + head.lift;
     // Rows of panels leave room between them for what goes there (see `PanelLayout.rowGap`).
-    const space = { xBetween, ownX: xGroups !== undefined, showX, xLabels, lineHeight, xTitle };
-    const rowGap = layout ? layout.rowGap(grid, panelCount, space) : 0;
+    const space = {
+      xBetween,
+      ownX: xGroups !== undefined,
+      showX,
+      xLabels,
+      lineHeight: xLabelHeight,
+      xTitle,
+    };
+    // Rows leave room for both rows' y label boxes reaching into it, past
+    // what goes between them (x labels too, then the next row's boxes).
+    const rowGap = Math.max(
+      (layout ? layout.rowGap(grid, panelCount, space) : 0) + yOver,
+      2 * yReach - header,
+    );
     // Rows share the height left for plots equally, or by the grid's
     // weights, and a navigator's strip goes under the x axis when they
     // leave room for it.
@@ -957,7 +1073,8 @@ export class ChartModel {
       for (let r = 0; r < row; r++) offset += rowHeights[r]! + header + rowGap;
       return offset;
     };
-    const measureLabel = (label: string) => measure(label, font);
+    /** How panel `i`'s axis of scale `axis` writes its tick labels. */
+    const tickPaint = (axis: ScaleName, i: number) => styles.axisText("tickLabel", axis, i);
     /** A continuous y axis for the marks on one side, from their data domain `base`. */
     const planValueAxis = (
       axisContext: AxisContext,
@@ -990,40 +1107,48 @@ export class ChartModel {
     const planCategories = (y: number, size: number, i: number): AxisPlan => {
       // Categories read top to bottom; bands of numbers rise like a numeric axis.
       const upward = bands.y !== undefined && numericBands(bands.y);
+      const paint = showsY("y", i) ? tickPaint("y", i) : theme.style.tickLabel;
       const plan = planBandAxis(
         bandsOf("y", i).labels,
         upward ? [y + size, y] : [y, y + size],
         padding("y"),
-        lineHeight,
+        paint.lineHeight,
       );
       // Long category names are shortened rather than squeezing the plot.
       const room = Math.max(48, Math.round(width * 0.3));
-      plan.labels = plan.labels.map((label) => fitText(label, room, measure, font));
+      plan.labels = plan.labels.map((label) => fitText(label, room, measure, paint.css));
       return plan;
     };
     /**
      * The plans of one side's y axis (`right`, or the left), whose ticks
      * decide that side's margin. Panels share one plan unless the side's
-     * resolution gives each panel, row, or column its own, from what those
+     * scope gives each panel, row, or column its own, from what those
      * panels draw on that side. Each group's axis is the chart's with its
-     * first panel's settings; subplots take their type from their own marks.
+     * first panel's settings, of the type its own panels' marks give.
      */
     const planY = (right: boolean) => {
       const axis = right ? "yRight" : "y";
-      const type = right ? yRightType : yType;
       const view = right ? yRightView : yView;
-      const resolution = this.#resolution(axis);
+      const scope = this.#scope(axis);
       const drawsAxis = right ? rightIn : leftIn;
+      // A scale every panel shares has one type, from all their marks.
+      const shared =
+        scope === "chart"
+          ? this.#sharedType(
+              axis,
+              marks.map(({ mark }) => mark),
+            )
+          : undefined;
       // Subplots always plan by group, to read each panel's own settings; a
       // shared category axis is the one plan.
       const groups =
-        (config.panels && type !== "band") || resolution !== "shared"
-          ? layout!.groups(resolution, split, columns, axis, config[axis], type)
+        (config.panels && shared !== "band") || scope !== "chart"
+          ? layout!.groups(scope, split, columns, axis, config[axis])
           : undefined;
       const groupOf = groups?.groupOf ?? new Array<number>(panelCount).fill(0);
       // What each group draws on this side, and its axis.
       const drawnOn = groups?.drawn ?? [onSide(marks, right)];
-      const contexts = (groups?.axes ?? [{ type, spec: config[axis] }]).map(
+      const contexts = (groups?.axes ?? [{ type: shared!, spec: config[axis] }]).map(
         (scale): AxisContext => ({ ...scale, zone, locale }),
       );
       // Each group is planned over its shortest row with the axis, so what
@@ -1045,7 +1170,7 @@ export class ChartModel {
           ? layout!.across(split, groupOf, xGroupAt)
           : [xMarks.map((among, h) => [h, among] as const)]);
       drawnOn.forEach((among, g) => {
-        if (type === "band") {
+        if (contexts[g]!.type === "band") {
           plans[g] = planCategories(plotTop, heightOf(g), groupOf.indexOf(g));
           return;
         }
@@ -1073,19 +1198,25 @@ export class ChartModel {
         const size = rowHeights[row]!;
         if (size === heightOf(g)) return shiftPlan(plan, context, rowOffset(row));
         const y = plotTop + rowOffset(row);
-        if (type === "band") return planCategories(y, size, i);
+        if (context.type === "band") return planCategories(y, size, i);
         const [d0, d1] = plan.scale.domain;
         const count = tickCount(context.spec, size);
         return planAxis(context, [d0!, d1!], [y + size, y], count, plan.within);
       });
       // Panels show their own labels unless their scale is their row's:
       // beside the row's first panel on the left, its last on the right.
-      const own =
-        config.panels !== undefined || resolution === "independent" || resolution === "columns";
-      return { axis, type, groups, groupOf, contexts, plans: byPanel, empty, own };
+      const own = config.panels !== undefined || scope === "panel" || scope === "column";
+      // Whether a group shows categories, which may be none.
+      const banded = (i: number) => contexts[groupOf[i]!]!.type === "band";
+      return { axis, groups, groupOf, contexts, plans: byPanel, empty, own, banded };
     };
     const leftY = planY(false);
     const rightY = rightUsed ? planY(true) : undefined;
+    // Whether the left axis has anything to label: a band axis may have no bands.
+    const leftData =
+      !leftY.contexts.every(({ type }) => type === "band") || (bands.y?.keys.length ?? 0) > 0;
+    if (!(leftData || rightUsed)) xHas.fill(false);
+    const hasData = xHas.includes(true);
     /** Names the scale panel `i` shares on a side: "" when every panel does. */
     const groupKey = (side: typeof leftY, i: number) => side.groups?.keys[side.groupOf[i]!] ?? "";
     // Subplots show, title, and grid each panel's y axes as its own settings
@@ -1115,20 +1246,34 @@ export class ChartModel {
           : [];
       const widest = Math.max(
         0,
-        ...labeled.flatMap((l, i) => (l ? labelsOf(i) : [])).map(measureLabel),
+        ...labeled.flatMap((l, i) => {
+          if (!l) return [];
+          const paint = tickPaint(axis, i);
+          // Labels in boxes take their boxes' padding too.
+          const boxed = paint.background ? paint.padding[1] + paint.padding[3] : 0;
+          return labelsOf(i).map((label) => measure(label, paint.css) + boxed);
+        }),
       );
       const room = labeled.includes(true) ? Math.ceil(widest) + GAP + 2 : 0;
-      const title = labeled.some((l, i) => l && panelAxis(i, axis)?.title) ? lineHeight + GAP : 0;
+      // Subplots title each panel's axis, other charts it once, beside the
+      // first labeled panel (see the y axes below): only those read styles.
+      const first = labeled.indexOf(true);
+      const titled = panelIndexes.filter(
+        (i) => labeled[i] && (config.panels || i === first) && panelAxis(i, axis)?.title,
+      );
+      const titleHeight = tallest(titled.map((i) => styles.axisText("axisTitle", axis, i)));
+      const title = titled.length ? titleHeight + GAP : 0;
       const between = side?.own
         ? layout!.columnGap(labeled, right, columns, room, config.panels ? title : 0)
         : 0;
-      return { labeled, labelsOf, room, title, between, first: labeled.indexOf(true) };
+      return { labeled, labelsOf, room, title, titleHeight, between, first };
     };
     // Panels that all draw layout marks, or marks on the right only, label no left axis.
     const leftLabels = yLabels(leftY, showY ? leftIn : []);
     const rightLabels = yLabels(rightY, rightY ? rightIn : []);
     // The widest label starts at the chart's edge inset, in line with the title.
-    let left = leftLabels.room + (leftLabels.room && leftLabels.title) + EDGE;
+    let left =
+      head.left + leftLabels.room + (leftLabels.room && leftLabels.title) + (head.auto ? EDGE : 0);
     // Avoid layout jitter while data streams: margins grow at once but only
     // shrink when the size or configuration changes.
     const layoutKey = `${width}x${height}`;
@@ -1146,9 +1291,12 @@ export class ChartModel {
     // and the right title beyond them.
     const { room: rightRoom } = rightLabels;
     let right =
-      rightRoom || rowHeader
-        ? rightRoom + (rowHeader && rowHeader + GAP) + rightLabels.title + EDGE
-        : 12;
+      head.right +
+      (rightRoom || rowHeader
+        ? rightRoom + (rowHeader && rowHeader + GAP) + rightLabels.title + (head.auto ? EDGE : 0)
+        : head.auto
+          ? 12
+          : 0);
     if (frozen) right = this.#right;
     else if (sameLayout) right = Math.max(right, this.#right);
 
@@ -1180,8 +1328,20 @@ export class ChartModel {
       spec?.ticks ?? Math.max(2, Math.round(size / (type === "time" ? 100 : 80)));
     // Each x group's plan for panels `plotWidth` wide, the first starting at `left`.
     const planCategoriesX = (h: number, range: readonly [number, number]): AxisPlan => {
-      const categories = bandsOf("x", xGroupAt.indexOf(h)).labels;
-      const widest = this.#widest(categories, measure, font);
+      const first = xGroupAt.indexOf(h);
+      const categories = bandsOf("x", first).labels;
+      // Spaced for the widest of the group's labels drawn, in their styles
+      // and boxes.
+      const widest = Math.max(
+        0,
+        ...xLabeled
+          .filter((i) => xGroupAt[i] === h)
+          .map((i) => {
+            const paint = tickPaint("x", i);
+            const [, right, , left] = paint.background ? paint.padding : [0, 0, 0, 0];
+            return this.#widest(categories, measure, paint.css) + left + right;
+          }),
+      );
       return planBandAxis(categories, range, padding("x"), widest);
     };
     // A domain other than the group's, as a navigator's strip plans the unzoomed one.
@@ -1241,12 +1401,15 @@ export class ChartModel {
       const [d0, d1] = plan.scale.domain;
       return planAxis(context, [d0!, d1!], range, xTicks(context, size), plan.within);
     };
-    const labelEnds = (h: number, size: number) => {
-      const key = `${h} ${size}`;
+    const labelEnds = (h: number, size: number, i: number) => {
+      // Panels' labels differ only by their paints' font and box.
+      const paint = tickPaint("x", i);
+      const key = `${h} ${size} ${paint.css} ${paint.background && paint.padding}`;
       if (!ends.has(key)) {
         const { scale, ticks, labels } = sizedPlan(h, size);
         const last = ticks.length - 1;
-        const half = (index: number) => measure(labels[index]!, font) / 2;
+        // Labels are centered on their ticks, with their boxes.
+        const half = (index: number) => textWidth(labels[index]!, paint, measure) / 2;
         ends.set(
           key,
           last < 0
@@ -1272,15 +1435,19 @@ export class ChartModel {
         const h = xGroupAt[i]!;
         if (!labelsX(i) || !xHas[h]) continue;
         const column = i % columns;
-        const end = labelEnds(h, widths[column]!);
+        const end = labelEnds(h, widths[column]!, i);
         if (!end) continue;
         labeled = true;
         const [firstStart, lastEnd] = end;
         if (column > 0) spillLeft = Math.max(spillLeft, left - firstStart);
-        else overflowLeft = Math.max(overflowLeft, 2 - firstStart);
+        else overflowLeft = Math.max(overflowLeft, head.left + (head.auto ? 2 : 0) - firstStart);
         if (column < columns - 1)
           spillRight = Math.max(spillRight, lastEnd - (left + widths[column]!));
-        else overflowRight = Math.max(overflowRight, lastEnd + offsets[column]! - (width - 2));
+        else
+          overflowRight = Math.max(
+            overflowRight,
+            lastEnd + offsets[column]! - (width - head.right - (head.auto ? 2 : 0)),
+          );
       }
       if (!labeled) break;
       const spill = spillRight + spillLeft;
@@ -1322,25 +1489,53 @@ export class ChartModel {
       const h = xGroupAt[i]!;
       return xHas[h]! && xContexts[h]!.type !== "band" && (panelX(i)?.grid ?? xMeasures[h]!);
     };
+    /**
+     * How panel `i`'s axis of scale `axis` is drawn: its line and ticks (x
+     * axes'; y axes draw neither), labels, and title (when it has one), as
+     * styles say; what is not drawn takes the theme's.
+     */
+    const axisPaints = (axis: ScaleName, i: number, titled: boolean): AxisPlacement["paints"] => {
+      const own = axis === "x";
+      return {
+        line: own ? styles.axisStroke("axisLine", axis, i) : theme.style.axisLine,
+        tick: own ? styles.axisStroke("tick", axis, i) : theme.style.tick,
+        label: tickPaint(axis, i),
+        title: titled ? styles.axisText("axisTitle", axis, i) : theme.style.axisTitle,
+      };
+    };
     // A y axis along one side of a plot, its title outside the labels,
     // centered on the grid, or on the plot for a subplot's own title.
     const yAxis = (
-      orient: "left" | "right",
+      side: "left" | "right",
+      i: number,
       plot: Rect,
       plan: AxisPlan,
       labels: string[],
       title: string | undefined,
       titleX: number,
-      titleY = top + gridHeight / 2,
-    ): AxisGeometry => ({
-      orient,
-      offset: orient === "left" ? plot.x : plot.x + plot.width,
-      start: plot.y + plot.height,
-      end: plot.y,
-      line: false,
-      ticks: labels.map((label, i) => ({ position: plan.scale.map(plan.ticks[i]!), label })),
-      title: title ? { text: title, x: titleX, y: titleY } : undefined,
-    });
+    ): AxisGuide => {
+      const scale = side === "left" ? "y" : "yRight";
+      const placement: AxisPlacement = {
+        side,
+        edge: side === "left" ? plot.x : plot.x + plot.width,
+        start: plot.y + plot.height,
+        end: plot.y,
+        tickLength: 0,
+        gap: 8,
+        surface: theme.background,
+        paints: axisPaints(scale, i, !!title),
+      };
+      const ticks = labels.map((label, k) => ({ position: plan.scale.map(plan.ticks[k]!), label }));
+      // Along the grid, or a subplot's plot, from its bottom on the left (the
+      // title reads upward) and its top on the right.
+      const [low, high] = config.panels ? [plot.y + plot.height, plot.y] : [top + gridHeight, top];
+      const [from, to] = side === "left" ? [low, high] : [high, low];
+      const along = aligned(placement.paints.title.align ?? "center", from, to - from);
+      const titled = title
+        ? { text: title, x: titleX, y: along.at, anchor: along.anchor }
+        : undefined;
+      return axisGuide(`${scale}|${i}`, scale, placement, ticks, titled, measure);
+    };
 
     // Inspectors keep these formatters, so they come from outside this scope.
     const formatNumbers = numberFormatter(locale);
@@ -1383,7 +1578,8 @@ export class ChartModel {
       let format = formats.get(key);
       if (!format) {
         const { scale } = side.plans[i]!;
-        format = side.type === "band" ? categoryOf(scale) : valueFormat(side.contexts[g]!, scale);
+        const context = side.contexts[g]!;
+        format = context.type === "band" ? categoryOf(scale) : valueFormat(context, scale);
         formats.set(key, format);
       }
       return format;
@@ -1393,24 +1589,29 @@ export class ChartModel {
     // Each x scale's title goes once, under the last panel labeled with it:
     // centered under the grid when every panel shares x, else under its
     // panel's column, or for a row's scale under all the row's panels.
-    const titleAt = xContexts.map(() => -1);
-    for (let i = 0; i < panelCount; i++) if (labelsX(i)) titleAt[xGroupAt[i]!] = i;
-    const xTitleOf = (h: number, i: number, plot: Rect): AxisGeometry["title"] => {
+    const xTitleOf = (h: number, i: number, plot: Rect): AxisGuide["title"] => {
       const text = xContexts[h]!.spec?.title;
       if (!text || titleAt[h] !== i) return undefined;
       const rowEnd = Math.min(panelCount, (rowOf(i) + 1) * columns) - 1;
       const end = left + offsets[rowEnd % columns]! + widths[rowEnd % columns]!;
+      const [from, to] = xGroups
+        ? xScope === "row"
+          ? [left, end]
+          : [plot.x, plot.x + plot.width]
+        : [left, left + gridWidth];
+      const along = aligned(
+        styles.axisText("axisTitle", "x", i).align ?? "center",
+        from,
+        to - from,
+      );
       return {
         text,
-        x: xGroups
-          ? xResolution === "rows"
-            ? (left + end) / 2
-            : plot.x + plot.width / 2
-          : left + gridWidth / 2,
+        x: along.at,
+        anchor: along.anchor,
         y:
           rowOf(i) === rows - 1
-            ? height - strip - lineHeight / 2 - 2
-            : plot.y + plot.height + xLabels + lineHeight * 1.5 + GAP,
+            ? height - head.lift - strip - xTitleHeight / 2 - (head.auto ? 2 : 0)
+            : plot.y + plot.height + xLabels + xLabelHeight + xTitleHeight / 2 + GAP,
       };
     };
 
@@ -1423,7 +1624,7 @@ export class ChartModel {
     // Highlight frames change their hidden keys; group placement keeps this scene's original ones.
     const groupSeries: NonNullable<Frame["groupSeries"]> = [base, hidden];
     const views: PanelView[] = [];
-    const headers: SceneText[] = [];
+    const headers: HeaderGuide[] = [];
     const all: (ItemPanel & { items: boolean })[] = [];
     const draw = this.highlight ?? geometryOf;
     const panels = split.keys.map((key, i): Panel => {
@@ -1442,9 +1643,42 @@ export class ChartModel {
       const values = split.values[i]!;
       const label = values.join(", ");
       if (layout) {
-        const fit = (text: string, room: number) => fitText(text, room, measure, `600 ${font}`);
+        const paint = styles.panelTitle(i);
+        // Headers in boxes fit their text in the room inside the box.
+        const [, right, , left] = paint.background ? paint.padding : [0, 0, 0, 0];
+        const fit = (text: string, room: number) =>
+          fitText(text, room - left - right, measure, paint.css);
         // A grid's row headers go beyond the right axis' labels.
-        headers.push(...layout.headers(i, values, row, column, plot, grid, fit, rightRoom));
+        const placed = layout.headers(
+          i,
+          values,
+          row,
+          column,
+          plot,
+          grid,
+          fit,
+          rightRoom,
+          paint.align,
+        );
+        for (const { text, x, y, anchor, angle } of placed)
+          headers.push({
+            kind: "header",
+            key: `header|${key}|${headers.length}`,
+            text,
+            x,
+            y,
+            anchor,
+            angle,
+            items: [
+              textItem(
+                text,
+                { x, y, anchor, baseline: "middle", angle },
+                paint,
+                theme.background,
+                measure,
+              ),
+            ],
+          });
       }
       const item = items?.[i];
       all.push({ key, label, plot, items: !!item });
@@ -1452,22 +1686,37 @@ export class ChartModel {
       if (item) {
         this.#items ??= new item.mark.views(this);
         this.#items.fields = this.fields?.(locale, zone, numberFormatter(locale));
-        const frame = { theme, locale, measure, hidden, color: this.#palette };
-        return this.#items.panel({ key, label, plot }, item, frame);
+        // Its room is its plot: drawn on the plot's paint, its halos on the plot's fill.
+        const paint = styles.plot(i);
+        const frame = {
+          theme,
+          locale,
+          measure,
+          hidden,
+          color: this.#palette,
+          surface: paint?.fill,
+        };
+        const drawn = this.#items.panel({ key, label, plot }, item, frame);
+        return paint ? { ...drawn, frame: paint } : drawn;
       }
-      const axes: AxisGeometry[] = [];
+      const axes: AxisGuide[] = [];
       if (labelsX(i)) {
-        axes.push({
-          orient: "bottom",
-          offset: plot.y + plot.height,
+        const title = xTitleOf(h, i, plot);
+        const paints = axisPaints("x", i, !!title);
+        const placement: AxisPlacement = {
+          side: "bottom",
+          edge: plot.y + plot.height,
           start: plot.x,
           end: plot.x + plot.width,
-          line: true,
-          ticks: xHas[h]
-            ? xAt.ticks.map((t, k) => ({ position: x.map(t), label: xAt.labels[k]! }))
-            : [],
-          title: xTitleOf(h, i, plot),
-        });
+          tickLength: TICK,
+          gap: xGap(paints.label),
+          surface: theme.background,
+          paints,
+        };
+        const ticks = xHas[h]
+          ? xAt.ticks.map((t, k) => ({ position: x.map(t), label: xAt.labels[k]! }))
+          : [];
+        axes.push(axisGuide(`x|${i}`, "x", placement, ticks, title, measure));
       }
       const rightAt = rightIn[i] ? rightY!.plans[i] : undefined;
       // The y axes: a subplot's title as far out from its plot as the first
@@ -1484,19 +1733,20 @@ export class ChartModel {
             ? left + gridWidth - plot.x - plot.width
             : plot.x - left
           : 0;
-        const titleX = right ? width - lineHeight / 2 - 2 - out : lineHeight / 2 + 2 + out;
-        const titleY = config.panels ? plot.y + plot.height / 2 : undefined;
+        const edge = labels.titleHeight / 2 + (head.auto ? 2 : 0);
+        const titleX = right ? width - head.right - edge - out : head.left + edge + out;
         const plan = right ? rightAt! : yAt;
         axes.push(
-          yAxis(right ? "right" : "left", plot, plan, labels.labelsOf(i), title, titleX, titleY),
+          yAxis(right ? "right" : "left", i, plot, plan, labels.labelsOf(i), title, titleX),
         );
       }
       // Horizontal grid lines follow the left axis, or the right one where
       // the left is unused, as a subplot's own settings say.
       const gridAt = leftIn[i]
-        ? yType !== "band" && (panelAxis(i)?.grid ?? true) && yAt
+        ? !leftY.banded(i) && (panelAxis(i)?.grid ?? true) && yAt
         : rightAt && (panelAxis(i, "yRight")?.grid ?? true) && rightAt;
 
+      const plotPaint = styles.plot(i);
       const frame: Frame = {
         x,
         y: yAt.scale,
@@ -1504,6 +1754,7 @@ export class ChartModel {
         pixelRatio: this.pixelRatio,
         rasterRatio: this.rasterRatio,
         theme,
+        surface: plotPaint?.fill,
         locale,
         hidden,
         groupSeries,
@@ -1516,14 +1767,24 @@ export class ChartModel {
       };
       // Marks on the right axis draw with its scale.
       const rightFrame: Frame | undefined = rightAt && { ...frame, y: rightAt.scale };
-      const frameOf = (mark: Mark) => (sideOf(mark) === "right" && rightFrame) || frame;
+      const frameOf = (mark: Mark) => {
+        const own = (sideOf(mark) === "right" && rightFrame) || frame;
+        // GPU clouds are drawn over the plot only: marks it does not cut place points on the CPU.
+        const { clip } = mark.spec;
+        return clip !== undefined && clip !== "plot" && own.clouds
+          ? { ...own, clouds: false }
+          : own;
+      };
       // Marks keep their index in the chart as their identity in every panel.
       const members = split.members?.[i];
       const panelMarks = split.panels[i]!;
       const geometry = panelMarks.flatMap(({ mark, series, rows }, index) =>
         members && !members[index]
           ? []
-          : draw(mark, series, frameOf(mark), mark.spec.id ?? this.#positions[index]!, rows),
+          : clipped(
+              mark,
+              draw(mark, series, frameOf(mark), mark.spec.id ?? this.#positions[index]!, rows),
+            ),
       );
       if (seams) {
         const segments = xContexts[h]!.breaks?.seams?.(x, plot, seams, theme.grid);
@@ -1561,9 +1822,16 @@ export class ChartModel {
       return {
         key,
         plot,
+        frame: plotPaint,
         grid: {
           x: xGrid(i) ? xAt.ticks.map((t) => x.map(t)) : [],
           y: hasData && gridAt ? gridAt.ticks.map((t) => gridAt.scale.map(t)) : [],
+          // Only lines drawn read their styles.
+          xPaint: xGrid(i) ? styles.axisStroke("grid", "x", i) : undefined,
+          yPaint:
+            hasData && gridAt
+              ? styles.axisStroke("grid", leftIn[i] ? "y" : "yRight", i)
+              : undefined,
         },
         axes,
         marks: geometry,
@@ -1579,7 +1847,9 @@ export class ChartModel {
     this.#namesPanels = layout !== undefined;
     this.#drawn = marks;
     this.#base = base;
-    if (strip) panels.push(navigator!.panel(this, views, planX, xContexts[0]!, strip));
+    // Legends inside plots go over the content panels, not the navigator's strip.
+    const inside = this.#inside(head, panels);
+    if (strip) panels.push(navigator!.panel(this, views, planX, xContexts[0]!, strip, head.lift));
 
     let vertices = 0;
     for (const panel of panels) for (const item of panel.marks) vertices += item.draw.size(item);
@@ -1589,19 +1859,28 @@ export class ChartModel {
       height,
       pixelRatio: this.pixelRatio,
       theme,
-      title: head.title,
-      headers,
       panels,
-      legend: head.legend,
-      colorLegends: head.colorLegends,
-      glyphLegends: head.glyphLegends,
+      guides: [...headers, ...head.guides, ...inside],
       vertices,
     };
   }
 
-  /** The title and legends at the top of a chart, and where the panels start below them. */
-  #header(entries: readonly LegendEntry[], parts: readonly LegendPart[], measure: MeasureText) {
-    const { title, legend, locale } = this.#config;
+  /**
+   * The chart's furniture: its title and legends on their sides (inside a
+   * plot, the legend to place once panels are), and the room they and the
+   * padding keep from the panels. `yLabels` says whether y labels may reach
+   * above the plots, which explicit padding leaves room for, and `yOver`
+   * how much further than text alone their boxes reach.
+   */
+  #furniture(
+    entries: readonly LegendEntry[],
+    parts: readonly LegendPart[],
+    measure: MeasureText,
+    yLabels: boolean,
+    yOver = 0,
+  ): Furniture {
+    const config = this.#config;
+    const { width, height } = this;
     this.#entries = entries;
     // Parts that start rows of their own (keys) follow the others (ramps),
     // in the legend and in the chart's description alike.
@@ -1610,28 +1889,183 @@ export class ChartModel {
       ...parts.filter((part) => part.breaks),
     ];
     const theme = this.#theme;
-    const font = `${theme.fontSize}px ${theme.font}`;
-    const lineHeight = Math.round(theme.fontSize * 1.25);
-    // A title larger than two pixels over the text size takes the extra room.
-    const titleExtra = Math.max(0, Math.round((theme.titleSize - theme.fontSize - 2) * 1.25));
-    let top = title ? lineHeight + 14 + titleExtra : Math.ceil(theme.fontSize / 2) + 2;
-    const legends = layoutLegends(
+    const styles = this.#styles;
+    const lineHeight = theme.style.text.lineHeight;
+    // Explicit padding is whitespace outside everything; left out, the
+    // spacing is automatic.
+    const padding = config.padding === undefined ? undefined : insets(config.padding);
+    const auto = padding === undefined;
+    const [pt, pr, pb, pl] = padding ?? [0, 0, 0, 0];
+    const guides: Guide[] = [];
+
+    const title = titleText(config.title);
+    const paint = styles.title();
+    const titleSide = (typeof config.title === "object" && config.title.place?.side) || "top";
+    // A title larger than two pixels over the text size takes the extra room,
+    // and lines set further apart than usual theirs; lines after the first
+    // ("\n" breaks them), a line height each; and a background, its box.
+    const breaks = title ? title.split("\n").length - 1 : 0;
+    const [boxTop, , boxBottom] = paint.background ? paint.padding : [0, 0, 0];
+    const firstLine =
+      lineHeight + Math.max(0, Math.round((paint.size - theme.fontSize - 2) * 1.25));
+    const spread = paint.lineHeight - Math.round(paint.size * 1.25);
+    const titleHeight =
+      (paint.background ? Math.max(firstLine, paint.lineHeight) : firstLine + Math.max(0, spread)) +
+      breaks * paint.lineHeight +
+      boxTop +
+      boxBottom;
+    const legend = config.legend;
+    const place: Place = (typeof legend === "object" && legend.place) || { side: "top" };
+    const side = "side" in place ? place.side : undefined;
+    if (side && place.scope === "panel")
+      throw new Error(
+        'chart legend.place.scope: a legend on a side goes beside the whole chart; drop scope, or place it inside a panel with "inside"',
+      );
+    const across = side === "top" || side === "bottom";
+    // What the title and legend align in: the chart's width inside its edges.
+    const [contentLeft, contentRight] = auto ? [EDGE, width - EDGE] : [pl, width - pr];
+    const align = "align" in place ? place.align : undefined;
+    const measured = measureLegends(
       {
         // Without an explicit setting, one series needs no legend.
         entries: (legend ?? entries.length > 1) ? entries : [],
         parts: this.#legendParts,
         hidden: this.hidden,
       },
-      top - lineHeight / 2,
-      this.width,
-      { measure, font, lineHeight, locale },
+      {
+        measure,
+        label: styles.legend("legendLabel"),
+        title: styles.legend("legendTitle"),
+        value: styles.legend("tickLabel"),
+        lineHeight,
+        locale: config.locale,
+        surface: theme.background,
+      },
+      // Rows across the chart above or below the plots; a column beside or in them.
+      { wrap: across ? contentRight - contentLeft : undefined, align: align ?? "start" },
     );
-    if (legends.bottom !== undefined) top = legends.bottom + lineHeight / 2 + 8;
+    const offset = ("offset" in place && place.offset) || 0;
+
+    // The title and the legend stack along their sides, outermost first: on
+    // top the title, then the legend; below, the title under the legend.
+    const requests: TrackRequest[] = [];
+    if (title) requests.push({ key: "title", side: titleSide, size: titleHeight, gap: 8 });
+    if (measured && side)
+      requests.push({
+        key: "legend",
+        side,
+        size: across ? measured.height : measured.width,
+        gap: (across || auto ? 8 : 16) + offset,
+      });
+    const bottomEdge = height - (auto ? 4 : pb);
+    const stacked = stackTracks(requests, {
+      top: auto ? (title && titleSide === "top" ? 6 : Math.ceil(theme.fontSize / 2) + 2) : pt,
+      bottom: bottomEdge,
+      left: contentLeft,
+      right: contentRight,
+    });
+    const { tracks, edges } = stacked;
+    const sides = new Set(requests.map((r) => r.side));
+    let { top } = edges;
+    // With explicit padding, y labels reaching above the plots get room of
+    // their own; labels in boxes get the room their boxes reach further.
+    if (!auto && !sides.has("top") && yLabels) top += Math.ceil(theme.fontSize / 2);
+    if (yLabels) top += yOver;
+    const floor = edges.bottom;
+    const lift = floor < bottomEdge ? height - floor : auto ? 0 : pb;
+    const left = sides.has("left") ? edges.left : auto ? 0 : pl;
+    const right = sides.has("right") ? width - edges.right : auto ? 0 : pr;
+    if (title) {
+      // In the chart's width, at its start (the default), center, or end;
+      // `y` is the middle of the title's room.
+      const y = tracks.get("title")! + titleHeight / 2;
+      const { at: x, anchor } = aligned(
+        paint.align ?? "start",
+        contentLeft,
+        contentRight - contentLeft,
+      );
+      guides.push({
+        kind: "title",
+        key: "title",
+        text: title,
+        x,
+        y,
+        items: textItems(
+          title,
+          { x, y: y - (breaks * paint.lineHeight) / 2, anchor, baseline: "middle", angle: 0 },
+          paint,
+          theme.background,
+          measure,
+        ),
+      });
+    }
+    if (measured && side) {
+      const at = tracks.get("legend")!;
+      // Automatic spacing centers a top legend's first row on its track's
+      // edge, as it always has; side legends stand at the top of the plots' room.
+      guides.push(
+        ...(across
+          ? measured.place(
+              alignedAt(align, contentLeft, contentRight - contentLeft, measured.width),
+              side === "top" && auto ? at - lineHeight / 2 : at,
+            )
+          : measured.place(at, alignedAt(align, top, floor - top, measured.height))),
+      );
+    }
+    const inside =
+      measured && !side
+        ? (box: Rect, surface?: string) => {
+            const { x, y } = insideAt(
+              (place as InsidePlace).inside,
+              box,
+              measured.width,
+              measured.height,
+              (place as InsidePlace).inset ?? 8,
+            );
+            return measured.place(x, y, surface);
+          }
+        : undefined;
     return {
-      ...legends,
+      guides,
+      inside,
+      insidePlace: inside && (place as InsidePlace),
+      auto,
       top,
-      title: title ? { text: title, x: EDGE, y: (lineHeight + titleExtra) / 2 + 6 } : undefined,
+      lift,
+      left,
+      right,
+      box: {
+        x: auto ? EDGE + left : left,
+        y: top,
+        width: Math.max(0, width - (auto ? 2 * EDGE : 0) - left - right),
+        height: Math.max(0, height - top - (auto ? EDGE : 0) - lift),
+      },
     };
+  }
+
+  /**
+   * The legend placed inside a plot, once the panels are: the plot of the
+   * panel its place names (the first by default), or with `scope: "chart"`,
+   * the area every panel's plot spans.
+   */
+  #inside(head: Furniture, panels: readonly Panel[]): Guide[] {
+    const { inside, insidePlace } = head;
+    if (!inside || !insidePlace || panels.length === 0) return [];
+    const plots = panels.map(({ plot }) => plot);
+    if (insidePlace.scope === "chart") {
+      const x = Math.min(...plots.map((p) => p.x));
+      const y = Math.min(...plots.map((p) => p.y));
+      const right = Math.max(...plots.map((p) => p.x + p.width));
+      const bottom = Math.max(...plots.map((p) => p.y + p.height));
+      return inside({ x, y, width: right - x, height: bottom - y });
+    }
+    const name = insidePlace.panel;
+    const panel = name === undefined ? panels[0] : panels.find(({ key }) => key === name);
+    if (!panel)
+      throw new RangeError(
+        `chart legend.place.panel: no panel "${name}"; name one of ${panels.map(({ key }) => `"${key}"`).join(", ")}`,
+      );
+    return inside(panel.plot, panel.frame?.fill);
   }
 
   /** A chart of one layout mark: the header, and the mark in the room below it. */
@@ -1640,10 +2074,11 @@ export class ChartModel {
     const { locale, marks } = this.#config;
     const mark = this.#layouts[0]!;
     const parts = mark.legends?.(theme, locale) ?? [];
-    const header = this.#header(
+    const header = this.#furniture(
       mark.legend(mark.spec.id ?? 0, this.#palette, theme),
       parts,
       measure,
+      false,
     );
     // Nothing is drawn along axes: let go of what the last such scene kept.
     this.#views = [];
@@ -1657,8 +2092,10 @@ export class ChartModel {
     this.#bytes.clear();
     const items = this.items!;
     items.fields = this.fields?.(locale, this.#config.timeZone ?? "local", numberFormatter(locale));
+    const paint = this.#styles.plot(0);
     const scene = items.scene(header, mark, marks, {
       theme,
+      surface: paint?.fill,
       locale,
       measure,
       // A copy, which items found before the next scene still read.
@@ -1668,6 +2105,8 @@ export class ChartModel {
       keyed: keyedBy(this.#config),
     });
     this.#all = this.#items!.panels;
+    // The mark's room is its plot, drawn on the plot's paint.
+    if (paint) scene.panels = scene.panels.map((panel) => ({ ...panel, frame: paint }));
     return scene;
   }
 
@@ -1970,6 +2409,26 @@ export class ChartModel {
   }
 }
 
+/** The chart's furniture as `#furniture` places it, and the room it keeps from the panels. */
+interface Furniture {
+  /** The title and legends placed on the chart's sides. */
+  guides: Guide[];
+  /** The legend inside a plot, placed in a box (drawn on `surface`) once the panels are, and where. */
+  inside: ((box: Rect, surface?: string) => Guide[]) | undefined;
+  insidePlace: InsidePlace | undefined;
+  /** Whether the spacing is automatic, the chart having no padding of its own. */
+  auto: boolean;
+  /** Where the panels start below what is above them. */
+  top: number;
+  /** The room under the plots' axes: the bottom's padding, legend, and title. */
+  lift: number;
+  /** The room beside the plots' axes on each side: padding and a legend. */
+  left: number;
+  right: number;
+  /** The room left for a chart of one layout mark, which has no axes. */
+  box: Rect;
+}
+
 /** Where a chart without facets draws: one panel, without headers. */
 const ONE_PANEL: PanelGrid = { columns: 1, rows: 1, header: 0, columnHeader: 0, rowHeader: 0 };
 
@@ -2067,6 +2526,12 @@ function geometryOf(
   rows?: RowParts,
 ): Geometry[] {
   return mark.geometry(series, frame, key, rows);
+}
+
+/** A mark's geometry, cut as its `clip` says when it sets one. */
+function clipped(mark: Mark, geometry: Geometry[]): Geometry[] {
+  const clip = mark.spec.clip;
+  return clip === undefined ? geometry : geometry.map((g) => ({ ...g, clip }));
 }
 
 /** An ascending range, or null for none or an empty one. */

@@ -1,10 +1,11 @@
 import type { NumericField, Schema, Table } from "../data/table.ts";
 import { rectDrawing } from "../draw/rect.ts";
-import { textDrawing } from "../draw/text.ts";
+import { labelHalo, textDrawing } from "../draw/text.ts";
 import type { Formatter } from "../format/format.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { RectGeometry, TextGeometry } from "../scene/scene.ts";
-import type { Frozen, Position, RegionRange, RegionSpec } from "../spec/spec.ts";
+import type { AnnotationValue, Clip, Frozen, RegionRange, RegionSpec } from "../spec/spec.ts";
+import type { Halo } from "../spec/style.ts";
 import {
   AnnotationData,
   type Channel,
@@ -27,12 +28,18 @@ import {
 } from "./mark.ts";
 
 interface RegionStyle {
-  /** Set false to leave text without its readability outline. */
-  halo?: boolean;
+  /** The outline that keeps text readable: "auto" (the default), false for none, or a color of its own. */
+  halo?: Halo;
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /**
+   * What the mark's drawing is cut to: "plot", "chart", or false for
+   * nothing, so markers at the plot's edge show whole. Without it, data is
+   * cut to the plot and labels are drawn whole.
+   */
+  clip?: Clip;
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
   fill?: string;
@@ -207,7 +214,7 @@ export class RegionMark implements Mark<Frozen<RegionSpec>> {
       out.push({
         kind: "text",
         draw: textDrawing,
-        halo: this.spec.halo !== false,
+        halo: labelHalo(this.spec.halo, theme.text, frame),
         key: seriesKey(key, "region label"),
         fill: theme.text,
         anchor: "start",
@@ -219,7 +226,7 @@ export class RegionMark implements Mark<Frozen<RegionSpec>> {
     return out;
   }
 
-  #pair(axis: "x" | "y"): [Position | undefined, Position | undefined] {
+  #pair(axis: "x" | "y"): [AnnotationValue | undefined, AnnotationValue | undefined] {
     return axis === "x" ? [this.spec.x1, this.spec.x2] : [this.spec.y1, this.spec.y2];
   }
 
@@ -308,6 +315,7 @@ export function region<S extends Schema>(
         "axis",
         "facet",
         "panel",
+        "clip",
       ],
     ),
   } as RegionSpec;

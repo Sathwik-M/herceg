@@ -10,6 +10,7 @@ import { rule } from "../../src/marks/rule.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { AreaGeometry, LineGeometry, Scene } from "../../src/scene/scene.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig, width = 600, height = 300) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -18,7 +19,7 @@ function build(config: ChartConfig, width = 600, height = 300) {
 }
 
 const yLabels = (scene: Scene) =>
-  scene.panels[0]!.axes.find((a) => a.orient === "left")!.ticks.map((t) => t.label);
+  scene.panels[0]!.axes.find((a) => a.side === "left")!.ticks.map((t) => t.label);
 
 describe("areas with gaps", () => {
   it("closes band edges over intervals where both edges exist", () => {
@@ -109,7 +110,7 @@ describe("domains", () => {
   it("includes zero on x when asked", () => {
     const data = table({ x: [100, 200], y: [1, 2] });
     const { scene } = build({ marks: [line(data, { x: "x", y: "y" })], x: { zero: true } });
-    expect(scene.panels[0]!.axes.find((a) => a.orient === "bottom")!.ticks[0]!.label).toBe("0");
+    expect(scene.panels[0]!.axes.find((a) => a.side === "bottom")!.ticks[0]!.label).toBe("0");
   });
 
   it("does not scan data for y when the domain is fixed", () => {
@@ -144,7 +145,7 @@ describe("layout", () => {
       x: { format: { year: "numeric", month: "long", day: "numeric" } },
       y: { show: false },
     });
-    const first = scene.panels[0]!.axes.find((a) => a.orient === "bottom")!.ticks[0]!;
+    const first = scene.panels[0]!.axes.find((a) => a.side === "bottom")!.ticks[0]!;
     expect(
       first.position - estimateText(first.label, "12px sans-serif") / 2,
     ).toBeGreaterThanOrEqual(0);
@@ -165,7 +166,7 @@ describe("layout", () => {
       legend: true,
     });
     expect(model.series().map((s) => s.label)).toEqual(["c"]);
-    expect(scene.legend).toHaveLength(1);
+    expect(legendOf(scene)).toHaveLength(1);
   });
 });
 

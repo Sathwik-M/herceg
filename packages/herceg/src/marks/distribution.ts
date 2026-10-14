@@ -13,7 +13,7 @@ import {
 } from "../data/table.ts";
 import { insetDomain } from "../model/axis.ts";
 import type { Geometry } from "../scene/scene.ts";
-import type { BoxenSpec, BoxPlotSpec, Frozen, ViolinSpec } from "../spec/spec.ts";
+import type { BoxenSpec, BoxPlotSpec, Clip, Frozen, ViolinSpec } from "../spec/spec.ts";
 import { BandShares } from "./dodge.ts";
 import {
   type AxisFormat,
@@ -64,6 +64,12 @@ export type DistributionOptions<S extends Schema> = (
   label?: string;
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /**
+   * What the mark's drawing is cut to: "plot", "chart", or false for
+   * nothing, so markers at the plot's edge show whole. Without it, data is
+   * cut to the plot and labels are drawn whole.
+   */
+  clip?: Clip;
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
   /**

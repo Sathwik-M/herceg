@@ -21,7 +21,7 @@ import type {
 import type { ColumnContent, GridColumnLayout, PlacedColumn } from "../grid/columns.ts";
 import type { GridModel } from "../grid/model.ts";
 import type { ThemeName, ThemeSpec } from "../spec/spec.ts";
-import { resolveTheme, themeReadsPage } from "../theme.ts";
+import { resolveTokens, themeReadsPage } from "../theme.ts";
 import { ColumnControls } from "./grid-columns.ts";
 import { GRID_CSS, themeProperties } from "./grid-style.ts";
 import { readPage, watchPage } from "./page-theme.ts";
@@ -360,7 +360,7 @@ export class Grid<S extends Schema = Schema, M extends BaseGridModel<S> = GridMo
 
   #applyTheme() {
     this.#pageChanged = false;
-    const theme = readPage(this.#container, (page) => resolveTheme(this.#options.theme, page));
+    const theme = readPage(this.#container, (page) => resolveTokens(this.#options.theme, page));
     const properties = themeProperties(theme, this.model.rowHeight, this.#headerHeight);
     for (const [name, value] of Object.entries(properties))
       this.root.style.setProperty(name, value);

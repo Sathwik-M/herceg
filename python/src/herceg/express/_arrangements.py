@@ -16,6 +16,7 @@ from ._common import (
     SERIES_GROUP,
     Source,
     Statistics,
+    axis_defaults,
     by,
     category_column,
     check_n_boot,
@@ -132,8 +133,8 @@ def pairplot(
     settings: dict[str, Any] = dict(options)
     settings.setdefault("width", _PAIR_PANEL * k + 80)
     settings.setdefault("height", _PAIR_PANEL * k + 60)
-    settings.setdefault("resolve_x", "columns")
-    settings.setdefault("resolve_y", "independent")
+    axis_defaults(settings, "x_axis", scope="column")
+    axis_defaults(settings, "y_axis", scope="panel")
     settings["panels"] = panels
     settings["panel_columns"] = k
     drawn = {"hist": "histograms", "kde": "kernel densities", None: "nothing"}[diagonal]
@@ -294,9 +295,9 @@ def jointplot(
         panel_columns=2,
         panel_row_heights=[1, ratio],
         panel_column_widths=[ratio, 1],
-        resolve_x="columns",
-        resolve_y="rows",
     )
+    axis_defaults(settings, "x_axis", scope="column")
+    axis_defaults(settings, "y_axis", scope="row")
     fits = kind == "reg" and len(np.unique(xv)) > 1
     used_seed = seed_of(seed, "jointplot") if fits and ci is not None else None
     failures = BandFailures()
@@ -576,9 +577,9 @@ def clustermap(
         panel_columns=2,
         panel_row_heights=ratio,
         panel_column_widths=ratio,
-        resolve_x="columns",
-        resolve_y="rows",
     )
+    axis_defaults(settings, "x_axis", scope="column")
+    axis_defaults(settings, "y_axis", scope="row")
     linkage_name = f"{method} linkage, {metric} distances"
     scaling = ""
     if z_score is not None:

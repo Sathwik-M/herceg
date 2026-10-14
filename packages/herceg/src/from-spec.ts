@@ -2,19 +2,16 @@
 // written by other languages (the Python package) or stored as JSON.
 
 import { type Chart, createChart, MountedChart } from "./dom/chart.ts";
+import type { Fonts } from "./fonts/registry.ts";
 import type { MeasureText } from "./layout/text.ts";
 import { type PdfExportOptions, type PdfOptions, renderToPDF } from "./pdf.ts";
 import { renderToSVG } from "./render/static.ts";
+import type { SvgSizing } from "./render/svg.ts";
 import { type LoadedSpec, type LoadOptions, loadSpec, type SpecBuffer } from "./spec/load.ts";
 import type { ChartSpec } from "./spec/spec.ts";
 
-export type {
-  PdfExportOptions,
-  PdfFontOptions,
-  PdfFontSource,
-  PdfFonts,
-  PdfPageOptions,
-} from "./pdf.ts";
+export type { Fonts } from "./fonts/registry.ts";
+export type { PdfExportOptions, PdfPageOptions } from "./pdf.ts";
 export type * from "./spec/spec.ts";
 export { SPEC_VERSION } from "./spec/spec.ts";
 export { validateSpec } from "./spec/validate.ts";
@@ -53,12 +50,14 @@ export function carryNodePositions(from: Chart, to: Chart): void {
 
 /**
  * Standalone SVG for a spec, without a DOM. Sizes default to 640 x 320 CSS
- * pixels when the spec has none.
+ * pixels when the spec has none; `options` say how the SVG sizes and
+ * scales, and what text is measured with: supplied `fonts`, whose families
+ * the SVG names, or a `measureText` of its own.
  */
 export function specToSVG(
   spec: ChartSpec,
   buffers: readonly SpecBuffer[] = [],
-  options: { measureText?: MeasureText } = {},
+  options: SvgSizing & { fonts?: Fonts; measureText?: MeasureText } = {},
 ): string {
   const { config } = loadSpec(spec, buffers);
   return renderToSVG({

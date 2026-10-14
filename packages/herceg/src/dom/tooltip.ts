@@ -31,9 +31,9 @@ export class Tooltip {
     bounds: { width: number; height: number },
   ) {
     const { element } = this;
-    element.style.background = theme.tooltipBackground;
+    element.style.background = theme.style.tooltip.fill;
     element.style.color = theme.text;
-    element.style.border = `1px solid ${theme.tooltipBorder}`;
+    element.style.border = `1px solid ${theme.style.tooltip.stroke}`;
     element.style.boxShadow = "0 1px 2px rgba(16, 24, 40, 0.06), 0 6px 16px rgba(16, 24, 40, 0.12)";
     element.style.font = `${theme.fontSize}px ${theme.font}`;
     element.replaceChildren();

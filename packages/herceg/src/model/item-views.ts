@@ -25,11 +25,11 @@ import type { ChartMark } from "../marks/mark.ts";
 import type { LayoutClock, NodePositions } from "../marks/node-positions.ts";
 import type { FieldReader } from "../marks/tooltip-fields.ts";
 import type { DrillRoot } from "../marks/tree-data.ts";
-import type { Panel, Rect, Scene } from "../scene/scene.ts";
+import type { Guide, Panel, Rect, Scene } from "../scene/scene.ts";
 import type { CameraSpec } from "../spec/spec.ts";
 import type { Camera } from "../three/camera.ts";
 import type { ItemInspection } from "./inspect.ts";
-import { EDGE, type LegendPart } from "./legend.ts";
+import type { LegendPart } from "./legend.ts";
 import type { ChartConfig, ChartModel, Viewport } from "./model.ts";
 import type { LayoutConfig, LayoutOptions, PanelItem } from "./panel-layout.ts";
 import type { SelectionOwner } from "./selected-rows.ts";
@@ -110,10 +110,13 @@ export type ItemFrame = Omit<
   "bounds" | "id" | "rows" | "root" | "moved" | "viewport" | "nodePositions" | "clock"
 >;
 
-/** The title and legends above a chart, and where the room below them starts. */
-export type Header = Pick<Scene, "title" | "legend" | "colorLegends" | "glyphLegends"> & {
-  top: number;
-};
+/** The title and legends around a chart, and the room they leave for its mark. */
+export interface Header {
+  guides: Guide[];
+  box: Rect;
+  /** The legend inside the mark's room, placed once it is known. */
+  inside: ((box: Rect) => Guide[]) | undefined;
+}
 
 /** What a layout mark has that a method needs: a tree to drill, nodes to move, a plane to view. */
 type Has = "drill" | "moves" | "plane";
@@ -256,8 +259,11 @@ export class ItemViews {
     if (sync) throw new Error(`${type} sync: no axes to sync; drop interaction.sync`);
     if (config.x?.seams) throw new Error(`${type} seams: no x axis to mark seams on; drop x.seams`);
     // Shared, as panels' scales would be, is no change.
-    if (Object.values(config.resolve ?? {}).some((resolution) => resolution !== "shared"))
-      throw new Error(`${type} resolve: its panels have no scales to resolve; drop resolve`);
+    for (const axis of ["x", "y", "yRight"] as const) {
+      const scope = config[axis]?.scope;
+      if (scope !== undefined && scope !== "chart")
+        throw new Error(`${type} ${axis}.scope: its panels have no scales to share; drop scope`);
+    }
   }
 
   /** The chart whose layout marks these are. */
@@ -526,31 +532,13 @@ export class ItemViews {
   scene(header: Header, mark: LayoutMark, marks: readonly ChartMark[], frame: ItemFrame): Scene {
     const { width, height, pixelRatio } = this.#model;
     this.#begin(false);
-    const plot: Rect = {
-      x: EDGE,
-      y: header.top,
-      width: Math.max(0, width - 2 * EDGE),
-      height: Math.max(0, height - header.top - EDGE),
-    };
+    const plot = header.box;
     const panel = this.#draw({ key: "", label: "", plot }, mark, 0, marks, frame, {}, "");
     let vertices = 0;
     for (const item of panel.marks) vertices += item.draw.size(item);
-    const { title, legend, colorLegends, glyphLegends } = header;
     const { theme } = frame;
-    const panels = [panel];
-    return {
-      width,
-      height,
-      pixelRatio,
-      theme,
-      title,
-      headers: [],
-      panels,
-      legend,
-      colorLegends,
-      glyphLegends,
-      vertices,
-    };
+    const guides = [...header.guides, ...(header.inside?.(plot) ?? [])];
+    return { width, height, pixelRatio, theme, panels: [panel], guides, vertices };
   }
 
   /**

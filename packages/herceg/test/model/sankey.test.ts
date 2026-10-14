@@ -17,6 +17,7 @@ import type {
 } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ChartSpec } from "../../src/spec/spec.ts";
+import { legendOf } from "../helpers/guides.ts";
 
 // Coal and gas feed electricity, homes, and industry; electricity loses some.
 // The last four rows are left out: a negative value, a missing target, a
@@ -72,7 +73,7 @@ function items(model: ChartModel): ItemInspection[] {
 describe("sankey", () => {
   it("draws a bar per node and a band per source and target", () => {
     const { scene, model } = chart();
-    expect(scene.legend).toEqual([]);
+    expect(legendOf(scene)).toEqual([]);
     expect(nodes(scene).reduce((sum, m) => sum + m.count, 0)).toBe(6);
     const bands = links(scene).shapes as PathShape[];
     expect(bands).toHaveLength(7);
@@ -145,7 +146,7 @@ describe("sankey", () => {
     );
     expect(end!.anchor).toBe("end");
     expect(end!.labels).toEqual(expect.arrayContaining(["Homes 100", "Industry 90"]));
-    expect(start!.halo).toBe(true);
+    expect(start!.halo).toEqual({ color: "#ffffff", width: 3, opacity: 1 });
     // Every label stays inside the chart.
     for (const mark of [start!, end!]) {
       for (let i = 0; i < mark.count; i++) {

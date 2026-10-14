@@ -3,8 +3,6 @@
 // diverging ramp maps a midpoint to its middle color, and each side of the
 // midpoint onto its own half of the ramp.
 
-import { cssColor } from "./css-color.ts";
-
 /** Odd, so one entry is the ramp's exact middle, and below 256, so an index fits a byte. */
 const LUT_SIZE = 255;
 
@@ -85,10 +83,29 @@ export function isLightColor(color: string): boolean | undefined {
   return rgba && luminance([rgba[0], rgba[1], rgba[2]]) > 0.179;
 }
 
-/** WCAG contrast of a color over an opaque surface; undefined for unreadable colors. */
-export function colorContrast(fill: string, backdrop: string): number | undefined {
-  const top = cssColor(fill);
-  const bottom = cssColor(backdrop);
+/** Reads a CSS color: channels from 0 to 255, alpha from 0 to 1. */
+export type ColorReader = (color: string) => [number, number, number, number] | undefined;
+
+/**
+ * Reads hex, `rgb()`, and `hsl()` colors; not names, which need the full
+ * CSS color table (`cssColor`), which charts that draw no text marks leave out.
+ */
+export const plainColor: ColorReader = (color) => parseColor(color.trim().toLowerCase());
+
+/** Whether a color `read` reads is light (see `isLightColor`); undefined when it cannot read it. */
+export function readsLight(color: string, read: ColorReader): boolean | undefined {
+  const rgba = read(color);
+  return rgba && luminance([rgba[0], rgba[1], rgba[2]]) > 0.179;
+}
+
+/** WCAG contrast of a color over an opaque surface, as `read` reads them; undefined for unreadable colors. */
+export function colorContrast(
+  fill: string,
+  backdrop: string,
+  read: ColorReader,
+): number | undefined {
+  const top = read(fill);
+  const bottom = read(backdrop);
   if (!top || !bottom || bottom[3] < 1) return undefined;
   const mixed = top.slice(0, 3).map((c, i) => c * top[3] + bottom[i]! * (1 - top[3]));
   const a = luminance(mixed as [number, number, number]) + 0.05;

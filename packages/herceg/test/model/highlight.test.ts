@@ -207,7 +207,7 @@ describe("highlighting", () => {
     const [panel] = model.panels();
     // Series b stands right of the bands' centers: its run starts at its own
     // first point (over the cap that ends the line) and reaches its second.
-    const cap = scene.theme.lineWidth / 2;
+    const cap = scene.theme.style.line.strokeWidth / 2;
     const end = second!.path.coords[2]!;
     expect(first).toBeGreaterThan(panel!.x.map(0));
     expect(svg).toContain(
@@ -266,7 +266,7 @@ describe("highlighting", () => {
     const model = new ChartModel({
       marks: [mark],
       facet: facet("half"),
-      resolve: { y: "independent" },
+      y: { scope: "panel" },
       locale: "en-US",
       timeZone: "UTC",
     });
@@ -350,7 +350,7 @@ describe("highlighting", () => {
     const svg = renderSvg(scene, {});
     const [panel] = model.panels();
     // Rows 0 and 5 end the line: their runs reach over its round caps.
-    const cap = scene.theme.lineWidth / 2;
+    const cap = scene.theme.style.line.strokeWidth / 2;
     const span = (a: number, b: number, end: number) => {
       const [pa, pb] = [panel!.x.map(a), panel!.x.map(b)];
       const pe = panel!.x.map(end);
@@ -377,7 +377,7 @@ describe("highlighting", () => {
     const rect = (from: number, to: number) => {
       const scene = model.scene(estimateText);
       const [panel] = model.panels();
-      const cap = scene.theme.lineWidth / 2;
+      const cap = scene.theme.style.line.strokeWidth / 2;
       const [a, b] = [panel!.x.map(from) - cap, panel!.x.map(to) + cap];
       return [renderSvg(scene, {}), `<rect x="${a}" y="${panel!.plot.y}" width="${b - a}"`];
     };
@@ -391,7 +391,7 @@ describe("highlighting", () => {
     log.store.set("focus", selectWhere(true));
     const scene = log.model.scene(estimateText);
     const [panel] = log.model.panels();
-    const cap = scene.theme.lineWidth / 2;
+    const cap = scene.theme.style.line.strokeWidth / 2;
     const [a, b] = [panel!.x.map(1) - cap, panel!.x.map(2) + cap];
     expect(renderSvg(scene, {})).toContain(`<rect x="${a}" y="${panel!.plot.y}" width="${b - a}"`);
   });
@@ -467,7 +467,9 @@ describe("highlighting", () => {
     });
     across.store.set("focus", selectRows(new RowSet(times).addAll([0, 1, 5, 6])));
     const scene = across.model.scene(estimateText);
-    expect(renderSvg(scene, {})).toContain(rect(across.model, 0, 10, scene.theme.lineWidth / 2));
+    expect(renderSvg(scene, {})).toContain(
+      rect(across.model, 0, 10, scene.theme.style.line.strokeWidth / 2),
+    );
   });
 
   it("joins a line along y across rows a break on x hides", () => {
@@ -479,7 +481,7 @@ describe("highlighting", () => {
     along.store.set("focus", selectRows(new RowSet(times).addAll([0, 1, 5, 6])));
     const scene = along.model.scene(estimateText);
     const [panel] = along.model.panels();
-    const cap = scene.theme.lineWidth / 2;
+    const cap = scene.theme.style.line.strokeWidth / 2;
     const [a, b] = [panel!.y.map(0), panel!.y.map(6)];
     const [top, bottom] = [Math.min(a, b) - cap, Math.max(a, b) + cap];
     expect(renderSvg(scene, {})).toContain(

@@ -1,9 +1,10 @@
 import type { NumericField, Schema, Table } from "../data/table.ts";
 import { guideSegmentDrawing } from "../draw/segments.ts";
-import { textDrawing } from "../draw/text.ts";
+import { labelHalo, textDrawing } from "../draw/text.ts";
 import { LabelBoxes, segmentMeetsBox, segmentsMeet } from "../layout/label-boxes.ts";
 import type { SegmentGeometry, TextGeometry } from "../scene/scene.ts";
-import type { Frozen, TextSpec } from "../spec/spec.ts";
+import type { Clip, Frozen, TextSpec } from "../spec/spec.ts";
+import type { Halo } from "../spec/style.ts";
 import { AnnotationData, position, readsTable, type TextField, valueAt } from "./annotation.ts";
 import { definedFields } from "./line.ts";
 import {
@@ -19,12 +20,14 @@ import {
 } from "./mark.ts";
 
 interface TextStyle {
-  /** Set false to leave text without its readability outline. */
-  halo?: boolean;
+  /** The outline that keeps text readable: "auto" (the default), false for none, or a color of its own. */
+  halo?: Halo;
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /** What the text is cut to: "plot", "chart", or false (the default: text of points outside the plot is left out). */
+  clip?: Clip;
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
   /** Defaults to the theme's text color. */
@@ -46,7 +49,7 @@ interface TextStyle {
   id?: string;
 }
 
-/** Room kept around each label against others, in pixels; a halo reaches 1.5. */
+/** Room kept around each label against others, in pixels, at least: a default halo reaches 1.5. */
 const LABEL_GAP = 2;
 /** Room between a moved label and its point, in pixels. */
 const POINT_GAP = 5;
@@ -187,8 +190,11 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
     const placed = overlap === "show" ? undefined : new LabelBoxes();
     const moving = overlap === "move";
     const font = `${theme.fontSize}px ${theme.font}`;
+    const halo = labelHalo(this.spec.halo, spec.fill ?? theme.text, frame);
+    // Room around each label, which wider halos reach past.
+    const room = Math.max(LABEL_GAP, (halo?.width ?? 0) / 2 + 0.5);
     // Half a label's height, with the room kept around it.
-    const half = Math.ceil(theme.fontSize * 0.6) + LABEL_GAP;
+    const half = Math.ceil(theme.fontSize * 0.6) + room;
     const inPlot = (x0: number, y0: number, x1: number, y1: number) =>
       x0 >= plot.x && x1 <= plot.x + plot.width && y0 >= plot.y && y1 <= plot.y + plot.height;
     const pointAt = (row: number) => [frame.x.map(valueAt(x, row)), frame.y.map(valueAt(y, row))];
@@ -232,7 +238,7 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
       const [px, py] = pointAt(rowAt(item)) as [number, number];
       // From the anchor to the label's center, and half its box's width.
       const shift = anchor === "start" ? width / 2 : anchor === "end" ? -width / 2 : 0;
-      const reach = width / 2 + LABEL_GAP;
+      const reach = width / 2 + room;
       for (let p = from; p < to; p++) {
         const ring = Math.ceil(p / AROUND.length);
         const [ax, ay] = AROUND[(p - 1) % AROUND.length] ?? [0, 0];
@@ -254,7 +260,7 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
           // box, clear of other labels (so none from a point under one),
           // other rows' dots, and other lines.
           const ex = Math.min(Math.max(px, cx - width / 2), cx + width / 2);
-          const ey = Math.min(Math.max(py, y0 + LABEL_GAP), y1 - LABEL_GAP);
+          const ey = Math.min(Math.max(py, y0 + room), y1 - room);
           const length = Math.hypot(ex - px, ey - py);
           const sx = px + ((ex - px) / length) * POINT_SIZE;
           const sy = py + ((ey - py) / length) * POINT_SIZE;
@@ -316,7 +322,7 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
     out.push({
       kind: "text",
       draw: textDrawing,
-      halo: this.spec.halo !== false,
+      halo,
       key: id,
       fill: spec.fill ?? theme.text,
       anchor,
@@ -365,6 +371,7 @@ export function text<S extends Schema>(
       "axis",
       "facet",
       "panel",
+      "clip",
     ]),
   };
   if (table?.name !== undefined && readsTable([spec.x, spec.y], spec.textField)) {

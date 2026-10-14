@@ -265,7 +265,7 @@ def test_facets_palette_and_options_pass_through():
     )
     spec, _ = chart.to_spec()
     assert spec["facet"] == {"column": "sex"}
-    assert spec["theme"] == {"palette": ["#111111", "#222222"], "extends": "dark"}
+    assert spec["theme"] == {"extends": "dark", "tokens": {"palette": ["#111111", "#222222"]}}
     assert spec["title"] == "Tips" and spec["width"] == 500
     with pytest.raises(ValueError, match="barplot facet: express computes statistics per panel"):
         hx.barplot(TIPS, x="day", y="tip", facet_column="sex", facet="day")
@@ -736,7 +736,7 @@ def test_express_charts_render_and_update_wherever_charts_do():
     # Rows the chart draws stream in as in any chart; jitter keeps earlier points in place.
     widget.append({"species": ["Adelie"], "flipper": [200.0], "sex": ["f"]})
     widget.update(title="More strips")
-    with pytest.raises(ValueError, match='Chart resolve_x: expected "shared" in a live chart'):
+    with pytest.raises(ValueError, match='Chart x scope: expected "chart" in a live chart'):
         hx.pairplot(PENGUINS, vars=["flipper", "mass"]).widget()
     streamlit = pytest.importorskip("herceg.streamlit")
     spec, buffers = hx.histplot(PENGUINS, x="flipper", kde=True).to_spec()
@@ -755,7 +755,7 @@ def test_pairplot_pairs_every_number_column_in_subplots():
         f"{i},{j}" for i in range(3) for j in range(3)
     ]
     assert spec["grid"]["columns"] == 3
-    assert spec["resolve"] == {"x": "columns", "y": "independent"}
+    assert (spec["x"]["scope"], spec["y"]["scope"]) == ("column", "panel")
     kinds = {mark["panel"]: mark["type"] for mark in spec["marks"]}
     assert kinds == {
         f"{i},{j}": "line" if i == j else "point" for i in range(3) for j in range(3)
@@ -861,7 +861,7 @@ def test_jointplot_shares_the_scatter_plots_scales_with_its_margins():
     spec, _ = chart.to_spec()
     assert [panel["id"] for panel in spec["panels"]] == ["x", "corner", "joint", "y"]
     assert spec["grid"] == {"columns": 2, "rowHeights": [1, 5], "columnWidths": [5, 1]}
-    assert spec["resolve"] == {"x": "columns", "y": "rows"}
+    assert (spec["x"]["scope"], spec["y"]["scope"]) == ("column", "row")
     point, top, right = spec["marks"]
     assert point["panel"] == "joint" and top["x"] == "x" and right["y"] == "y"
     # The margins count the same rows as the scatter plot.
@@ -1270,7 +1270,7 @@ def test_pointplot_pads_its_lines_with_the_categories_of_their_panels_axis():
     shared = joined()
     assert len(shared) == 16 and int(np.isnan(shared).sum()) == 10
     # Panels' own x axes hold their own days, where m's lines still break.
-    independent = joined(resolve_x="independent")
+    independent = joined(x_axis=hg.Axis(scope="panel"))
     assert len(independent) == 8 and int(np.isnan(independent).sum()) == 2
 
 
@@ -1327,14 +1327,14 @@ def test_swarm_warning_reads_the_value_axis_as_the_chart_draws_it():
     }
     with pytest.warns(UserWarning, match="g 'a'"):
         hx.swarmplot(panels, x="g", y="v", facet_column="p")
-    quiet(data=panels, x="g", y="v", facet_column="p", resolve_y="independent")
+    quiet(data=panels, x="g", y="v", facet_column="p", y_axis=hg.Axis(scope="panel"))
     # Panels of a band axis of their own hold only their own categories, in wider bands.
     level = hg.Axis(domain=(-1, 1))
     bands = {"g": np.repeat(["a", "b"], 25), "p": np.repeat(["P1", "P2"], 25), "v": np.zeros(50)}
     with pytest.warns(UserWarning) as warned:
         hx.swarmplot(bands, x="g", y="v", facet_column="p", y_axis=level)
     assert ["g 'a' (p 'P1')" in str(w.message) for w in warned] == [True, False]
-    quiet(data=bands, x="g", y="v", facet_column="p", y_axis=level, resolve_x="independent")
+    quiet(data=bands, x="g", y="v", facet_column="p", y_axis=level, x_axis=hg.Axis(scope="panel"))
     # Band axes hold every category of their rows, drawn or not, and no other.
     logged = {
         "g": ["a"] * 25 + ["b", "c"],
@@ -1347,7 +1347,7 @@ def test_swarm_warning_reads_the_value_axis_as_the_chart_draws_it():
             x="g",
             y="v",
             facet_column="p",
-            resolve_x="independent",
+            x_axis=hg.Axis(scope="panel"),
             y_axis=hg.Axis(type="log", domain=(0.1, 10)),
         )
     alone = {"g": ["a"] * 50, "s": ["A"] * 50, "v": np.zeros(50)}

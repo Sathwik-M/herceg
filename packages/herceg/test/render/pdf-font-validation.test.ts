@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { parseTrueType } from "../../src/fonts/truetype.ts";
 import { subsetTrueType, writeSfnt } from "../../src/render/pdf-font-subset.ts";
-import { parseTrueType } from "../../src/render/pdf-truetype.ts";
 
 const fixture = () =>
   parseTrueType(
@@ -198,6 +198,7 @@ describe("PDF OS/2 versions", () => {
     expect(subsetTrueType(font, new Map([[65, font.glyph(65)]])).data.length).toBeLessThan(
       font.data.length,
     );
-    expect(() => parseTrueType(os2Fixture(version, version === 0 ? 68 : 86, 2))).toThrow(/fsType/);
+    // Embedding permissions are read here and checked where a PDF embeds the face.
+    expect(parseTrueType(os2Fixture(version, version === 0 ? 68 : 86, 2)).fsType).toBe(2);
   });
 });

@@ -23,7 +23,7 @@ function build(config: ChartConfig, width = 600, height = 300) {
 }
 
 const axis = (scene: Scene, orient: "left" | "right") =>
-  scene.panels[0]!.axes.find((a) => a.orient === orient);
+  scene.panels[0]!.axes.find((a) => a.side === orient);
 
 const traffic = table({
   t: [0, 1, 2, 3],
@@ -45,7 +45,7 @@ describe("right y axis", () => {
     expect(left.domain[1]).toBeLessThan(100);
     expect(right.domain[1]).toBeGreaterThanOrEqual(4800);
     const rightAxis = axis(scene, "right")!;
-    expect(rightAxis.offset).toBe(scene.panels[0]!.plot.x + scene.panels[0]!.plot.width);
+    expect(rightAxis.edge).toBe(scene.panels[0]!.plot.x + scene.panels[0]!.plot.width);
     expect(rightAxis.ticks.map((t) => t.label)).toContain("4,000");
     expect(rightAxis.title?.text).toBe("req/s");
     // The right series is drawn with the right scale.
@@ -114,7 +114,7 @@ describe("right y axis", () => {
     for (const keys of [[0], [1], [0, 1]]) {
       model.hidden.clear();
       for (const i of keys) model.hidden.add(model.series()[i]!.key);
-      const orients = model.scene(estimateText).panels[0]!.axes.map((a) => a.orient);
+      const orients = model.scene(estimateText).panels[0]!.axes.map((a) => a.side);
       expect(orients).toEqual(["bottom", "left", "right"]);
     }
   });
@@ -123,7 +123,7 @@ describe("right y axis", () => {
     const { scene } = build({
       marks: [line(traffic, { x: "t", y: "latency" }), rule({ x: 2, axis: "right" })],
     });
-    expect(scene.panels[0]!.axes.map((a) => a.orient)).toEqual(["bottom", "left"]);
+    expect(scene.panels[0]!.axes.map((a) => a.side)).toEqual(["bottom", "left"]);
   });
 
   it("widen the right margin at once and narrow it only on resize", () => {
@@ -161,7 +161,8 @@ describe("right y axis", () => {
       ],
       yRight: { title: "req/s" },
     });
-    expect(svg).toMatch(/text-anchor="start" dominant-baseline="middle">4,000<\/text>/);
+    // Right labels start at the axis: the anchor SVG starts text at by default.
+    expect(svg).toMatch(/<text x="[\d.]+" y="[\d.]+" dominant-baseline="middle">4,000<\/text>/);
     expect(svg).toMatch(/transform="rotate\(90 /);
     const spec: ChartSpec = {
       data: { t: { columns: { x: [0, 1], a: [1, 2], b: [100, 200] } } },
@@ -209,9 +210,7 @@ describe("right y axis", () => {
       ],
     });
     expect(axis(scene, "right")!.ticks.length).toBeGreaterThan(0);
-    expect(scene.panels[0]!.axes.find((a) => a.orient === "bottom")!.ticks.length).toBeGreaterThan(
-      0,
-    );
+    expect(scene.panels[0]!.axes.find((a) => a.side === "bottom")!.ticks.length).toBeGreaterThan(0);
     expect(axis(scene, "left")!.ticks).toEqual([]);
   });
 

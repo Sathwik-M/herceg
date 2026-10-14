@@ -1,23 +1,32 @@
 // Compile-time tests: checked by npm run typecheck, never executed.
 
 import type { Chart } from "../../src/dom/handle.ts";
+import { type FontSource, type Fonts, prepareFonts } from "../../src/fonts.ts";
 import { specToPDF } from "../../src/from-spec.ts";
-import { type PdfFontSource, type PdfFonts, pdfFonts, renderToPDF } from "../../src/pdf.ts";
+import { renderToPDF } from "../../src/pdf.ts";
+import { renderToSVG } from "../../src/render/static.ts";
 import type { ChartSpec } from "../../src/spec/spec.ts";
 
-declare const sources: readonly PdfFontSource[];
+declare const sources: readonly FontSource[];
 declare const spec: ChartSpec;
-const fonts: PdfFonts = pdfFonts(sources, { fallback: ["Symbols"], missingGlyph: "?" });
+const fonts: Fonts = prepareFonts(sources);
+// @ts-expect-error fallback and missingGlyph set PDF text: they are export options
+prepareFonts(sources, { fallback: ["Symbols"] });
+// The same fonts measure SVG exports and live charts.
+renderToSVG({ width: 320, height: 120, marks: [], fonts });
+// @ts-expect-error fonts are prepared, not a list of sources
+renderToSVG({ width: 320, height: 120, marks: [], fonts: sources });
 renderToPDF({ width: 320, height: 120, marks: [], fonts });
 specToPDF(spec, { fonts });
-// @ts-expect-error fallback belongs to pdfFonts, not export options
+renderToPDF(
+  { width: 320, height: 120, marks: [] },
+  { fonts, fallback: ["Symbols"], missingGlyph: "?" },
+);
+specToPDF(spec, { fonts, fallback: ["Symbols"], missingGlyph: "?" });
+// @ts-expect-error fallback is the document's, not a chart's
 renderToPDF({ width: 320, height: 120, marks: [], fonts, fallback: ["Symbols"] });
-// @ts-expect-error missingGlyph belongs to pdfFonts, not export options
+// @ts-expect-error missingGlyph is the document's, not a chart's
 renderToPDF({ width: 320, height: 120, marks: [], fonts, missingGlyph: "?" });
-// @ts-expect-error spec export options only take prepared fonts
-specToPDF(spec, { fonts, fallback: ["Symbols"] });
-// @ts-expect-error spec export options only take prepared fonts
-specToPDF(spec, { fonts, missingGlyph: "?" });
 
 // A mounted chart's PDF shows it as it is, taking export settings only.
 declare const chart: Chart;

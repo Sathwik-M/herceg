@@ -59,6 +59,8 @@ export interface LayoutFrame {
    */
   fitRows?: readonly (Uint32Array | undefined)[] | undefined;
   theme: Theme;
+  /** What the panel draws on, for halos: its plot's fill, or the chart's background when absent. */
+  surface?: string | undefined;
   locale: string | undefined;
   measure: MeasureText;
   /** Keys of items hidden through the legend. */

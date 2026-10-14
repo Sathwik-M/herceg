@@ -8,7 +8,9 @@
 
 import type { RowView } from "../data/row-view.ts";
 import type { Table, TableChange } from "../data/table.ts";
-import { canvasMeasurer, type MeasureText } from "../layout/text.ts";
+import { checkFonts, type PageFonts, USE_FONTS } from "../fonts/prepared.ts";
+import type { Fonts } from "../fonts/registry.ts";
+import type { MeasureText } from "../layout/text.ts";
 import { Polyline } from "../lod/polyline.ts";
 import { monotonePolyline } from "../marks/curve.ts";
 import { tablesOf, viewOf } from "../marks/layout-mark.ts";
@@ -16,6 +18,7 @@ import { type AxisFormat, keepsKey } from "../marks/mark.ts";
 import { placeAt, rowOf, type Series } from "../marks/series.ts";
 import type { DrillRoot } from "../marks/tree-data.ts";
 import { planAxis } from "../model/axis.ts";
+import { axisGuide } from "../model/axis-guide.ts";
 import { describeChart } from "../model/describe.ts";
 import {
   type ChartConfig,
@@ -28,9 +31,11 @@ import {
 import type { NavigatorControls } from "../model/navigator.ts";
 import type { RowLink, RowSelectionChange } from "../model/row-selection.ts";
 import type { SelectionOwner } from "../model/selected-rows.ts";
+import { styleSources } from "../model/styles.ts";
+import { titleText } from "../model/titles.ts";
 import { canvasRasterUrl, paintCanvas } from "../render/canvas.ts";
-import { EXPORT_SCENE, type ExportsScene } from "../render/export-scene.ts";
-import { renderSvg } from "../render/svg.ts";
+import { EXPORT_FONTS, EXPORT_SCENE, type ExportsScene } from "../render/export-scene.ts";
+import { checkSizing, renderSvg, type SvgSizing } from "../render/svg.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import {
   type CloudPainter,
@@ -57,6 +62,7 @@ import {
   panelInfo,
 } from "./handle.ts";
 import { Legend } from "./legend.ts";
+import { measurer, onFacesLoaded } from "./measurers.ts";
 import { readPage, watchPage } from "./page-theme.ts";
 import { observeVisibility, schedule, unschedule } from "./scheduler.ts";
 import { SvgLayer, svgElement } from "./svg-layer.ts";
@@ -104,23 +110,6 @@ const SVG_BELOW = 2000;
 const DEFAULT_HEIGHT = 320;
 
 let nextId = 0;
-let sharedMeasure: MeasureText | undefined;
-
-/**
- * Without a canvas to measure with (some test environments), glyphs are
- * taken to be 0.6 em wide; browsers always measure, so charts do not carry
- * the static estimator's font tables.
- */
-const roughText: MeasureText = (text, font) =>
-  text.length * 0.6 * (Number(/(\d+(?:\.\d+)?)px/.exec(font)?.[1]) || 12);
-
-function measurer(document: Document): MeasureText {
-  if (!sharedMeasure) {
-    const context = document.createElement("canvas").getContext("2d");
-    sharedMeasure = context ? canvasMeasurer(context) : roughText;
-  }
-  return sharedMeasure;
-}
 
 /**
  * What a scene leaves to the GPU painter: large point series ("points"), a
@@ -172,6 +161,11 @@ export class MountedChart implements Chart, ExportsScene {
   /** Whether `#clouds` draws 3D charts' clouds too (render/webgl3d.ts loaded). */
   #clouds3d = false;
   #cloudsLoading: Promise<void> | undefined;
+  /** The fonts measured with, as the page uses them, how, and their faces' loading while pending. */
+  #fonts: Fonts | undefined;
+  #page: PageFonts | undefined;
+  #fontsMeasure: MeasureText | undefined;
+  #fontsLoading: Promise<void> | undefined;
   #scene: Scene | undefined;
   /** Moves the axes to views asked for, once loaded for `animation`; null if it failed to load. */
   #animation: ViewAnimation | null | undefined;
@@ -324,6 +318,18 @@ export class MountedChart implements Chart, ExportsScene {
     container.append(this.root);
 
     try {
+      // When faces load in the page, any chart's, what was measured before
+      // is measured again (a new measurer, so caches by measurer let go),
+      // and the margins kept for it laid out afresh.
+      this.#cleanup.push(
+        onFacesLoaded(document, () => {
+          const measure = this.#page?.measure;
+          if (measure) this.#fontsMeasure = (text, font) => measure(text, font);
+          this.#model.relayout();
+          this.#invalidate();
+        }),
+      );
+      this.#useFonts(options.fonts);
       this.#listen();
       this.#applyOptions();
       this.#cleanup.push(observeVisibility(this.root, (visible) => this.#setVisible(visible)));
@@ -360,6 +366,8 @@ export class MountedChart implements Chart, ExportsScene {
   update(options: ChartUpdate): void {
     const next: Record<string, unknown> = { ...this.#options, ...options };
     for (const [key, value] of Object.entries(options)) if (value === undefined) delete next[key];
+    // Fonts the page refuses leave the chart as it was.
+    this.#useFonts(next.fonts);
     this.#options = next as unknown as ChartOptions;
     const y = this.#model.yViewport;
     readPage(this.#container, (page) => this.#model.update(this.#options, page));
@@ -542,6 +550,7 @@ export class MountedChart implements Chart, ExportsScene {
 
   get loading(): Promise<void> | undefined {
     const pending = [
+      this.#fontsLoading,
       this.#cloudsLoading,
       this.#animationLoading,
       this.#valuesLoading,
@@ -706,8 +715,9 @@ export class MountedChart implements Chart, ExportsScene {
     this.#flush();
   }
 
-  toSVG(): string {
-    return this[EXPORT_SCENE]((scene, model) => this.#svgOf(scene, model));
+  toSVG(options: SvgSizing = {}): string {
+    checkSizing(options, "toSVG");
+    return this[EXPORT_SCENE]((scene, model) => this.#svgOf(scene, model, options));
   }
 
   toPNG(options?: { scale?: number }): Promise<Blob> {
@@ -716,18 +726,24 @@ export class MountedChart implements Chart, ExportsScene {
       (scene, model) => [this.#svgOf(scene, model), scene.width, scene.height] as const,
     );
     return import("./png-export.ts").then((png) =>
-      png.svgToPng(svg, width, height, this.root.ownerDocument, options),
+      png.svgToPng(svg, width, height, this.root.ownerDocument, options, this.#fonts?.faces),
     );
   }
 
   /** The SVG export of a scene of the chart. */
-  #svgOf(scene: Scene, model: ChartModel): string {
+  #svgOf(scene: Scene, model: ChartModel, sizing: SvgSizing = {}): string {
     const document = this.root.ownerDocument;
     return renderSvg(scene, {
+      ...sizing,
+      unkerned: this.#fonts !== undefined,
       idPrefix: `${this.#id}-export`,
       encodeRaster: (mark) => canvasRasterUrl(mark, document),
       description: describeChart(model),
     });
+  }
+
+  get [EXPORT_FONTS](): Fonts | undefined {
+    return this.#options.fonts;
   }
 
   [EXPORT_SCENE]<T>(use: (scene: Scene, model: ChartModel) => T): T {
@@ -739,7 +755,7 @@ export class MountedChart implements Chart, ExportsScene {
     const { width, height } = this.#size();
     if (width !== this.#model.width || height !== this.#model.height) this.#dirty = true;
     const drawn = this.#drawPending();
-    const result = use(this.#model.scene(measurer(this.root.ownerDocument)), this.#model);
+    const result = use(this.#model.scene(this.#measure()), this.#model);
     // Listeners hear of the frame once the export is made: what they
     // change then is drawn on the next frame, as after any other.
     if (drawn) this.#finishFrame(true);
@@ -899,9 +915,35 @@ export class MountedChart implements Chart, ExportsScene {
     if (visible && (this.#dirty || this.#pageChanged)) schedule(this.#scheduled);
   }
 
+  /**
+   * Measures with `fonts` from now on, their faces claimed on the page and
+   * registered with it; once faces load, the chart is laid out and drawn again.
+   */
+  #useFonts(fonts: unknown): void {
+    checkFonts(fonts, "chart");
+    if (fonts === this.#fonts) return;
+    const document = this.root.ownerDocument;
+    const page = fonts?.[USE_FONTS](document);
+    this.#fonts = fonts;
+    this.#page = page;
+    this.#fontsMeasure = page?.measure;
+    // Supplied fonts measure glyph by glyph: the chart's text is drawn so.
+    const style = this.root.style;
+    style.fontKerning = style.fontVariantLigatures = fonts ? "none" : "";
+    const loaded = page?.loaded?.then(() => {
+      if (this.#fontsLoading === loaded) this.#fontsLoading = undefined;
+    });
+    this.#fontsLoading = loaded;
+  }
+
+  /** What the chart measures text with: its fonts, or its document's canvas. */
+  #measure(): MeasureText {
+    return this.#fontsMeasure ?? measurer(this.root.ownerDocument);
+  }
+
   #applyOptions() {
     const options = this.#options;
-    this.root.setAttribute("aria-label", options.title ?? "Chart");
+    this.root.setAttribute("aria-label", titleText(options.title) ?? "Chart");
     // Re-subscribe to the tables the marks read, and to the views of rows they show.
     const tables = new Set<Table | RowView>(
       options.marks.flatMap((mark) => {
@@ -980,7 +1022,8 @@ export class MountedChart implements Chart, ExportsScene {
           : "pan-x";
     this.#loadControls();
     // Themes that follow the page re-read it when it may have switched themes.
-    const follows = themeReadsPage(options.theme);
+    // So do charts whose guides' and subplots' styles read it.
+    const follows = themeReadsPage(options.theme, styleSources(options));
     if (follows && !this.#unwatchPage) {
       this.#unwatchPage = watchPage(this.#container.ownerDocument, () => {
         this.#pageChanged = true;
@@ -1059,7 +1102,7 @@ export class MountedChart implements Chart, ExportsScene {
     this.#model.setSize(width, height, window?.devicePixelRatio ?? 1);
     this.root.style.width = `${width}px`;
     this.root.style.height = `${height}px`;
-    const measure = measurer(this.root.ownerDocument);
+    const measure = this.#measure();
     const cloudsAllowed = this.#cloudsAllowed();
     const animation = this.#animation;
     if (animation?.playing) {
@@ -1100,11 +1143,12 @@ export class MountedChart implements Chart, ExportsScene {
       this.#canvas.style.height = `${height}px`;
       // Until the painter has loaded, clouds are left out rather than drawn
       // slowly on the CPU; `loading` settles once they are on screen.
-      paintCanvas(this.#canvas, scene, {
-        painter: this.#clouds ?? undefined,
-        owner: this,
-        defer: waiting,
-      });
+      paintCanvas(
+        this.#canvas,
+        scene,
+        { painter: this.#clouds ?? undefined, owner: this, defer: waiting },
+        !this.#fonts,
+      );
     } else if (this.#canvas) {
       // Release the backing store when marks move back to SVG.
       this.#canvas.width = 0;
@@ -1115,7 +1159,7 @@ export class MountedChart implements Chart, ExportsScene {
     // Uploads this chart no longer draws are released.
     this.#clouds?.endFrame(this);
     this.#svg.render(scene, { marks: !this.#onCanvas });
-    this.#legend.update(scene.legend, scene.theme);
+    this.#legend.update(scene.guides.find((guide) => guide.kind === "legend"));
     this.#model.items?.drawControls(scene);
     this.#drawTime = performance.now() - started;
     this.#describe();
@@ -1245,7 +1289,13 @@ export class MountedChart implements Chart, ExportsScene {
             this.root.ownerDocument.defaultView,
             // The scene on screen shows the chart's options, unless a frame is pending.
             !this.#dirty,
-            { planAxis, Polyline, monotonePolyline },
+            {
+              planAxis,
+              axisGuide,
+              Polyline,
+              monotonePolyline,
+              measure: (text: string, font: string) => this.#measure()(text, font),
+            },
           ),
       )
       // Without it, values change at once.
@@ -1477,7 +1527,7 @@ export class MountedChart implements Chart, ExportsScene {
       crosshair.draw(drawn, active, this.#pointer, {
         model: this.#model,
         scene,
-        measure: measurer(this.root.ownerDocument),
+        measure: this.#measure(),
         labelGap: tickLabelGap(theme.fontSize),
         surface: surface(theme),
       });

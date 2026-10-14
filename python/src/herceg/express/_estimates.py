@@ -201,8 +201,9 @@ def pointplot(
     chart.point(*xy, series=series, dodge=spread, radius=4, label=label, legend_group=SERIES_GROUP)
     est.error_bars(chart, dodge=spread)
     if drawn:
-        resolve = options.get("resolve_y") if est.horizontal else options.get("resolve_x")
-        joined = est.joined(resolve)
+        axis = options.get("y_axis" if est.horizontal else "x_axis")
+        scope = axis.get("scope") if isinstance(axis, Mapping) else getattr(axis, "scope", None)
+        joined = est.joined(scope)
         for style in drawn:
             levels = [i for i, given in enumerate(styles) if given == style]
             chart.line(
@@ -654,17 +655,17 @@ class _CategoryEstimates:
         """The series' levels in order, or one name without series."""
         return self.variables[self.series].labels if self.series else (self.value,)
 
-    def joined(self, resolve: str | None) -> dict[str, Column]:
+    def joined(self, scope: str | None) -> dict[str, Column]:
         """The estimates with a row for every category of each group (facet
         panel and series) that its panel's category axis holds, missing where
         the group has no estimate, so a line through them breaks there, as
-        Seaborn's do. A shared axis holds every category; with ``resolve``
-        "independent", "rows", or "columns", one holds the categories with an
+        Seaborn's do. A shared axis holds every category; with the axis'
+        ``scope`` "panel", "row", or "column", one holds the categories with an
         estimate in the panels sharing it, so padding adds none to it."""
         keys, codes, centers = self._estimates
         groups = list(dict.fromkeys(tuple(key) for key in keys))
         names = list(self.variables)
-        sharing = sharing_fields(resolve, self.facet_row, self.facet_column)
+        sharing = sharing_fields(scope, self.facet_row, self.facet_column)
         at = [names.index(name) for name in sharing]
 
         def axis_of(key: tuple[int, ...]) -> tuple[int, ...]:

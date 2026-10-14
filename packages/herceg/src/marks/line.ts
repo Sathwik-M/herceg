@@ -3,7 +3,8 @@ import { lineDrawing } from "../draw/line.ts";
 import type { Breaks } from "../lod/m4.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { LineGeometry } from "../scene/scene.ts";
-import type { Curve, Dash, Frozen, LineSpec } from "../spec/spec.ts";
+import type { Clip, Curve, Dash, Frozen, LineSpec } from "../spec/spec.ts";
+import { dashPattern } from "../style/style.ts";
 import { BandShares, STILL } from "./dodge.ts";
 import {
   type Bands,
@@ -38,6 +39,12 @@ import { IndexUse, tracePath, unionExtent } from "./trace.ts";
 interface LineStyle<S extends Schema> {
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /**
+   * What the mark's drawing is cut to: "plot", "chart", or false for
+   * nothing, so markers at the plot's edge show whole. Without it, data is
+   * cut to the plot and labels are drawn whole.
+   */
+  clip?: Clip;
   /** With the chart's `panel`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
   /** Category field: one line per value. */
@@ -197,7 +204,7 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
     this.#indexes.drew(frame.owner, frame.scene, this.table);
     // Parts of series (a highlight's selected rows) stand in their wholes' slots.
     if (!series.every((s) => s.whole)) this.#shares?.split(series, frame, spec.legendGroup, true);
-    const strokeWidth = spec.strokeWidth ?? frame.theme.lineWidth;
+    const strokeWidth = spec.strokeWidth ?? frame.theme.style.line.strokeWidth;
     const dash = dashPattern(spec.dash, strokeWidth);
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
@@ -288,6 +295,7 @@ export function line<S extends Schema>(
       "axis",
       "facet",
       "panel",
+      "clip",
     ]),
   };
   if (table.name !== undefined) spec.data = table.name;
@@ -305,20 +313,4 @@ export function definedFields<T extends object, K extends keyof T>(
     if (source[key] !== undefined) out[key] = source[key];
   }
   return out;
-}
-
-/** Matplotlib's default patterns, scaled by the resolved stroke width. */
-export function dashPattern(value: Dash | undefined, width: number): readonly number[] | undefined {
-  if (typeof value !== "string") return value;
-  switch (value) {
-    case "-":
-      return [];
-    case "--":
-      return [3.7 * width, 1.6 * width];
-    case ":":
-      return [width, 1.65 * width];
-    case "-.":
-      return [6.4 * width, 1.6 * width, width, 1.6 * width];
-  }
-  throw new Error("dash: expected -, --, :, -.");
 }

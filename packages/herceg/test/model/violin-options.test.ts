@@ -18,6 +18,7 @@ import type {
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ChartSpec, ViolinSpec } from "../../src/spec/spec.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
+import { legendOf } from "../helpers/guides.ts";
 import legacyViolins from "./fixtures/violin-legacy.json";
 
 const data = () =>
@@ -334,7 +335,7 @@ describe("violin options", () => {
       const areas = scene.panels[0]!.marks.filter((m) => m.kind === "area") as (AreaGeometry & {
         lower: Polyline;
       })[];
-      expect(areas.map((a) => a.fill)).toEqual(scene.legend.map((e) => e.color));
+      expect(areas.map((a) => a.fill)).toEqual(legendOf(scene).map((e) => e.color));
       expect(areas[0]!.fill).not.toBe(areas[1]!.fill);
       areas.forEach((area, i) => {
         const side = (i === 0 ? -1 : 1) * (horizontal ? -1 : 1);
@@ -444,7 +445,7 @@ describe("violin options", () => {
     const { model, scene } = build({
       marks: [violin(samples, { x: "g", y: "v", series: "s", split: true })],
     });
-    expect(scene.legend.map((entry) => entry.label)).toEqual(["first", "second"]);
+    expect(legendOf(scene).map((entry) => entry.label)).toEqual(["first", "second"]);
     const areas = scene.panels[0]!.marks.filter((m) => m.kind === "area") as AreaGeometry[];
     expect(extent(areas[0]!.upper, 0)[1]).toBeLessThan(model.xScale()!.map(0));
     expect(extent(areas[1]!.upper, 0)[0]).toBeGreaterThan(model.xScale()!.map(1));
@@ -636,9 +637,9 @@ describe("violin options", () => {
           }),
         ],
         facet: facet("p"),
-        resolve: { [horizontal ? "y" : "x"]: "independent" },
+        ...(horizontal ? { y: { scope: "panel" } } : { x: { scope: "panel" } }),
       });
-      expect(scene.legend.map((e) => e.label)).toEqual(["first", "second"]);
+      expect(legendOf(scene).map((e) => e.label)).toEqual(["first", "second"]);
       expect(model.panels().map((p) => (horizontal ? p.y : p.x).categories)).toEqual([
         ["a", "b"],
         ["c"],

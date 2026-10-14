@@ -16,6 +16,7 @@ import { viridis } from "../../src/scale/schemes.ts";
 import type { LineGeometry, PolygonGeometry, Scene } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
+import { keysOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -64,9 +65,9 @@ describe("contours", () => {
     expect(drawn[0]!.fillOpacity).toBe(1);
     expect(model.xScale()!.domain).toEqual([-1, 1]);
     // The legend keys each band's color and range.
-    expect(scene.glyphLegends).toHaveLength(1);
-    expect(scene.glyphLegends[0]!.entries.map((e) => e.label.text)).toEqual(["2 – 5", "5 – 8"]);
-    expect(scene.glyphLegends[0]!.title.text).toBe("z");
+    expect(keysOf(scene)).toHaveLength(1);
+    expect(keysOf(scene)[0]!.entries.map((e) => e.label.text)).toEqual(["2 – 5", "5 – 8"]);
+    expect(keysOf(scene)[0]!.title.text).toBe("z");
   });
 
   it("draw lines at each threshold, round ones by default", () => {
@@ -99,7 +100,7 @@ describe("contours", () => {
     });
     expect(lines(one.scene)[0]).toMatchObject({ stroke: "#333333", strokeWidth: 2 });
     // One color says nothing a legend would.
-    expect(one.scene.glyphLegends).toHaveLength(0);
+    expect(keysOf(one.scene)).toHaveLength(0);
   });
 
   it("read a matrix table as it is, without a value of x and y per row", () => {
@@ -506,6 +507,6 @@ describe("contours", () => {
     // Each band at its middle value: 2.5 and 7.5 of 0 to 10.
     const [low, high] = polygons(scene).map((p) => p.colors[0]);
     expect(low).not.toBe(high);
-    expect(scene.glyphLegends[0]!.entries.map((e) => e.fill)).toEqual([low, high]);
+    expect(keysOf(scene)[0]!.entries.map((e) => e.fill)).toEqual([low, high]);
   });
 });

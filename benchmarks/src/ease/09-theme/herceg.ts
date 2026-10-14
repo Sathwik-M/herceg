@@ -7,6 +7,6 @@ export function render(container: HTMLElement) {
     title: "Latency by service",
     marks: [line(latency, { x: "time", y: "latency", series: "service" })],
     y: { title: "ms" },
-    theme: { extends: "dark", palette: ["#5b8def", "#f08a4b", "#3fbf8f"] },
+    theme: { extends: "dark", tokens: { palette: ["#5b8def", "#f08a4b", "#3fbf8f"] } },
   });
 }

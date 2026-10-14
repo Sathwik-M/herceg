@@ -69,6 +69,67 @@ describe("renderToSVG", () => {
   });
 });
 
+describe("renderToSVG sizing", () => {
+  const sparkline = {
+    width: 140,
+    height: 48,
+    padding: 0,
+    legend: false,
+    x: { show: false },
+    y: { show: false },
+    marks: [line(metrics, { x: "t", y: "api" })],
+  } as const;
+  const root = (svg: string) => svg.slice(0, svg.indexOf(">") + 1);
+
+  it("is the chart's size by default", () => {
+    expect(root(renderToSVG(sparkline))).toContain('width="140" height="48" viewBox="0 0 140 48"');
+    expect(renderToSVG(sparkline)).not.toContain("vector-effect");
+  });
+
+  it("is fluid without width and height, stretched or fitted as asked", () => {
+    const fluid = root(renderToSVG({ ...sparkline, sizing: "fluid", preserveAspectRatio: "none" }));
+    expect(fluid).not.toMatch(/ (width|height)=/);
+    expect(fluid).toContain('viewBox="0 0 140 48" preserveAspectRatio="none"');
+    expect(root(renderToSVG({ ...sparkline, preserveAspectRatio: "xMinYMid slice" }))).toContain(
+      'width="140" height="48" viewBox="0 0 140 48" preserveAspectRatio="xMinYMid slice"',
+    );
+  });
+
+  it("keeps strokes their width in pixels when asked", () => {
+    const svg = renderToSVG({
+      ...sparkline,
+      sizing: "fluid",
+      strokeScaling: "fixed",
+      idPrefix: "spark 1",
+    });
+    // Scoped to this document, so an SVG inlined in a page leaves the page's own alone.
+    expect(svg).toMatch(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" id="spark 1"/);
+    expect(svg).toContain('<style>[id="spark 1"] *{vector-effect:non-scaling-stroke}</style>');
+    // Any prefix selects its document: quotes and backslashes are escaped in the selector.
+    expect(renderToSVG({ ...sparkline, strokeScaling: "fixed", idPrefix: '9"\\' })).toContain(
+      '<style>[id="9\\22 \\5c "] *{',
+    );
+  });
+
+  it("refuses fonts that were not prepared", () => {
+    expect(() => renderToSVG({ ...sparkline, fonts: [] as never })).toThrow(
+      "renderToSVG fonts: expected prepared fonts; wrap the font sources in prepareFonts(...) from herceg/fonts",
+    );
+  });
+
+  it("refuses sizes it does not know", () => {
+    expect(() => renderToSVG({ ...sparkline, sizing: "auto" as "fluid" })).toThrow(
+      'renderToSVG sizing: expected "fixed" or "fluid"; received "auto"',
+    );
+    expect(() =>
+      renderToSVG({ ...sparkline, preserveAspectRatio: "xMidYMid stretch" as "none" }),
+    ).toThrow('renderToSVG preserveAspectRatio: expected "none" or an alignment');
+    expect(() => renderToSVG({ ...sparkline, strokeScaling: true as never })).toThrow(
+      'renderToSVG strokeScaling: expected "scale" or "fixed"; received true',
+    );
+  });
+});
+
 describe("renderToSVG for bars and heatmaps", () => {
   it("renders grouped bars as one path per series", () => {
     const sales = table({ region: ["N", "S", "E"], q1: [10, 20, 30], q2: [5, -10, 15] });

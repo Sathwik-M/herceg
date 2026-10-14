@@ -1,5 +1,6 @@
 // Changes of values moving: bars and pie slices matched between two scenes
 // and interpolated, evaluated at explicit times.
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { category, encodedCategory, time } from "../../src/data/column.ts";
 import { type Table, type TableChange, table } from "../../src/data/table.ts";
@@ -24,6 +25,7 @@ import { pie } from "../../src/marks/pie.ts";
 import { PointMark, point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { planAxis } from "../../src/model/axis.ts";
+import { axisGuide } from "../../src/model/axis-guide.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderSvg } from "../../src/render/svg.ts";
@@ -32,7 +34,7 @@ import type { PositionScale } from "../../src/scale/scale.ts";
 import {
   type ArcGeometry,
   type AreaGeometry,
-  type AxisGeometry,
+  type AxisGuide,
   CLOUD_POINTS,
   type LineGeometry,
   type PointGeometry,
@@ -52,7 +54,7 @@ afterEach(() => {
 });
 
 const VALUES = { duration: 200, values: true } as const;
-const BUILDERS = { planAxis, Polyline, monotonePolyline };
+const BUILDERS = { planAxis, axisGuide, Polyline, monotonePolyline, measure: estimateText };
 
 /** A chart model drawn at 600 x 300 that animates values. */
 function chart(config: Partial<ChartConfig> & Pick<ChartConfig, "marks">) {
@@ -147,7 +149,7 @@ describe("bars changing values", () => {
     const model = chart({
       marks: [bar(data, { x: "region", y: "sales" })],
       y: { domain: [-20, 20] },
-      theme: { barRadius: 4 },
+      theme: { style: { bar: { radius: 4 } } },
     });
     const zero = model.scene(estimateText) && model.panels()[0]!.y.map(0);
     const { tween } = change(model, () => data.setColumn("sales", [-10, 10]));
@@ -359,11 +361,11 @@ describe("pies changing values", () => {
 
 /** Seven eighths: eased progress half way through a change. */
 const HALF = 0.875;
-const axisOf = (scene: Scene, orient: AxisGeometry["orient"]) =>
-  scene.panels[0]!.axes.find((axis) => axis.orient === orient)!;
-const labels = (axis: AxisGeometry) => axis.ticks.map(({ label }) => label);
+const axisOf = (scene: Scene, orient: AxisGuide["side"]) =>
+  scene.panels[0]!.axes.find((axis) => axis.side === orient)!;
+const labels = (axis: AxisGuide) => axis.ticks.map(({ label }) => label);
 /** Ticks alike: the same labels, at positions alike to a thousandth of a pixel. */
-function expectTicks(actual: AxisGeometry, expected: AxisGeometry) {
+function expectTicks(actual: AxisGuide, expected: AxisGuide) {
   expect(labels(actual)).toEqual(labels(expected));
   actual.ticks.forEach(({ position }, i) => {
     expect(position).toBeCloseTo(expected.ticks[i]!.position, 3);
