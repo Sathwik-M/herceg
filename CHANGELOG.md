@@ -18,7 +18,8 @@ The first public release. What it contains:
   - line, area, bar, point, heatmap, histogram, box plot, letter-value (boxen) plot, violin, error bar, candlestick, rug, and dendrogram;
   - rule, region, and text annotations;
   - pie, treemap, sunburst, gauge, funnel, radar, Sankey, network, maps (shapes and points), and 3D points, lines, and surfaces;
-  - custom marks.
+  - custom marks;
+  - matplotlib dash strings (`"-"`, `"--"`, `":"`, `"-."`) on lines, rules, and custom shape styles, scaled by stroke width.
 - **Composition:** marks compose in one chart, in facets, and in subplots, with shared or independent scales, right axes, and range navigators; 3D layers share CPU-rendered subplots with independent cameras and controls (3D facets are refused).
 - **Rendering:** SVG or Canvas chosen per chart, WebGL for large point clouds and standalone 3D charts, and level-of-detail reduction for large lines and areas.
 - **Interaction:**
@@ -40,4 +41,5 @@ The first public release. What it contains:
 - `hg.*` charts from pandas, Polars, PyArrow, and NumPy data, sent as binary columns;
 - output to notebooks, HTML, SVG, PNG, and PDF;
 - live notebook widgets and a Streamlit component, with camera state per 3D panel;
-- `herceg.express`: Seaborn-style statistical charts with recompute on new data.
+- `herceg.express`: Seaborn-style statistical charts with recompute on new data;
+- helpful unknown-option errors for matplotlib names, restricted to the callable's supported options.

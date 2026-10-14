@@ -4068,6 +4068,16 @@ and Intl format options; no functions or typed arrays. The TypeScript API
 builds the same structures: `line(table, options)` returns a mark (a
 `ChartMark`) whose `spec` is the portable part, a frozen copy of what built it (`Frozen<T>`),
 since the mark's caches depend on it: charts change by taking new marks.
+
+Line and rule specs preserve `dash` as a pixel array or one of `"-"`,
+`"--"`, `":"`, and `"-."`. Mark geometry resolves string styles using
+matplotlib's default patterns and the final stroke width, including the
+theme's line width; arrays pass through unscaled. Renderers consume only
+numeric arrays, so SVG, Canvas, and PDF share those semantics. JavaScript
+custom shape styles use the same resolver. Python's helper and mark-method
+errors suggest foreign option names only when that callable takes the
+target; matplotlib names are diagnostic hints, not option aliases.
+
 Mark implementations are attached to the mark
 objects rather than looked up in a registry, so unused mark types are tree
 shaken away. Field options are typed from the table schema: numeric encodings

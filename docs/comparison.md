@@ -23,6 +23,13 @@ Each entry is one of:
 Measurements come from one machine and one browser. They describe relative
 behavior under the stated configuration, not universal speedups.
 
+Python helpers and `Chart` mark methods give option hints for common
+matplotlib spellings, restricted to each callable's supported options.
+The [Python porting table](../python/README.md#from-matplotlib) covers calls
+and limits. Lines, rules, and JavaScript custom shape styles accept the
+four matplotlib dash strings, scaled by stroke width using matplotlib's
+default patterns; numeric dash arrays remain pixels.
+
 ## Status
 
 Herceg renders line, area, bar, point (scatter), heatmap, contour, rug, dendrogram, error bar,

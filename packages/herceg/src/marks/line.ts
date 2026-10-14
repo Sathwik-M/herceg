@@ -3,7 +3,7 @@ import { lineDrawing } from "../draw/line.ts";
 import type { Breaks } from "../lod/m4.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { LineGeometry } from "../scene/scene.ts";
-import type { Curve, Frozen, LineSpec } from "../spec/spec.ts";
+import type { Curve, Dash, Frozen, LineSpec } from "../spec/spec.ts";
 import { BandShares, STILL } from "./dodge.ts";
 import {
   type Bands,
@@ -50,7 +50,8 @@ interface LineStyle<S extends Schema> {
   /** Constant color for every line of the mark. */
   stroke?: string;
   strokeWidth?: number;
-  dash?: readonly number[];
+  /** Pixel dash array, or a matplotlib style scaled by the stroke width. */
+  dash?: Dash;
   curve?: Curve;
   /** Name of a single line in legends and tooltips. Defaults to the value field. */
   label?: string;
@@ -191,11 +192,13 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
   }
 
   geometry(series: readonly Series[], frame: Frame): LineGeometry[] {
+    const { spec } = this;
     const out: LineGeometry[] = [];
     this.#indexes.drew(frame.owner, frame.scene, this.table);
     // Parts of series (a highlight's selected rows) stand in their wholes' slots.
-    if (!series.every((s) => s.whole))
-      this.#shares?.split(series, frame, this.spec.legendGroup, true);
+    if (!series.every((s) => s.whole)) this.#shares?.split(series, frame, spec.legendGroup, true);
+    const strokeWidth = spec.strokeWidth ?? frame.theme.lineWidth;
+    const dash = dashPattern(spec.dash, strokeWidth);
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
       out.push({
@@ -203,8 +206,8 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
         draw: lineDrawing,
         key: s.key,
         stroke: s.color,
-        strokeWidth: this.spec.strokeWidth ?? frame.theme.lineWidth,
-        dash: this.spec.dash,
+        strokeWidth,
+        dash,
         path: this.#trace(s, frame),
       });
     }
@@ -266,19 +269,18 @@ export function line<S extends Schema>(
   table: Table<S>,
   options: LineOptions<S>,
 ): ChartMark<Frozen<LineSpec>> {
-  const field = (value: string | readonly string[]) =>
-    typeof value === "string" ? value : [...value];
   const spec: LineSpec = {
     type: "line",
-    x: field(options.x),
-    y: field(options.y),
     ...definedFields(options, [
+      "x",
+      "y",
       "tooltip",
       "orient",
       "series",
       "dodge",
       "stroke",
       "strokeWidth",
+      "dash",
       "curve",
       "label",
       "legendGroup",
@@ -288,7 +290,6 @@ export function line<S extends Schema>(
       "panel",
     ]),
   };
-  if (options.dash !== undefined) spec.dash = [...options.dash];
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.
   return new LineMark(spec, table as unknown as Table);
@@ -304,4 +305,20 @@ export function definedFields<T extends object, K extends keyof T>(
     if (source[key] !== undefined) out[key] = source[key];
   }
   return out;
+}
+
+/** Matplotlib's default patterns, scaled by the resolved stroke width. */
+export function dashPattern(value: Dash | undefined, width: number): readonly number[] | undefined {
+  if (typeof value !== "string") return value;
+  switch (value) {
+    case "-":
+      return [];
+    case "--":
+      return [3.7 * width, 1.6 * width];
+    case ":":
+      return [width, 1.65 * width];
+    case "-.":
+      return [6.4 * width, 1.6 * width, width, 1.6 * width];
+  }
+  throw new Error("dash: expected -, --, :, -.");
 }

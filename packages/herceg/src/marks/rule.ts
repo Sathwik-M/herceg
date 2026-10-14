@@ -1,9 +1,9 @@
 import type { NumericField, Schema, Table } from "../data/table.ts";
 import { ruleDrawing } from "../draw/rule.ts";
 import type { RuleGeometry } from "../scene/scene.ts";
-import type { Frozen, RulePosition, RuleSpec } from "../spec/spec.ts";
+import type { Dash, Frozen, RulePosition, RuleSpec } from "../spec/spec.ts";
 import { AnnotationData, position, readsTable, type TextField, valueAt } from "./annotation.ts";
-import { definedFields } from "./line.ts";
+import { dashPattern, definedFields } from "./line.ts";
 import type { AxisFormat, ChartMark, Frame, MARK, Mark, MarkKey, RowParts } from "./mark.ts";
 import { frozen } from "./mark.ts";
 
@@ -16,7 +16,8 @@ interface RuleStyle {
   panel?: string;
   stroke?: string;
   strokeWidth?: number;
-  dash?: readonly number[];
+  /** Pixel dash array, or a matplotlib style scaled by strokeWidth (default 1). */
+  dash?: Dash;
   /** Text drawn by every rule. */
   label?: string;
   id?: string;
@@ -115,6 +116,8 @@ export class RuleMark implements Mark<Frozen<RuleSpec>> {
     const lo = Math.min(scale.domain[0], scale.domain[1]);
     const hi = Math.max(scale.domain[0], scale.domain[1]);
     const out: RuleGeometry[] = [];
+    const strokeWidth = spec.strokeWidth ?? 1;
+    const dash = dashPattern(spec.dash, strokeWidth) ?? [4, 4];
     this.#data.each(rows, (i) => {
       const value = valueAt(channel, i);
       // Rules are drawn unclipped, so ones outside the visible range are skipped.
@@ -126,8 +129,8 @@ export class RuleMark implements Mark<Frozen<RuleSpec>> {
         draw: ruleDrawing,
         key: `${JSON.stringify(key)}:${i}`,
         stroke: spec.stroke ?? frame.theme.muted,
-        strokeWidth: spec.strokeWidth ?? 1,
-        dash: spec.dash ?? [4, 4],
+        strokeWidth,
+        dash,
         x1: vertical ? at : plot.x,
         x2: vertical ? at : plot.x + plot.width,
         y1: vertical ? plot.y : at,
@@ -166,7 +169,6 @@ export function rule<S extends Schema>(
         ...options,
         x: position(options.x),
         y: position(options.y),
-        dash: options.dash && [...options.dash],
       },
       [
         "id",

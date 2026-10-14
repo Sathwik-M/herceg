@@ -1099,3 +1099,26 @@ it("casts bare histogram boolean flags and keeps their values in the mark spec",
     dodge: true,
   });
 });
+
+it.each([
+  ["-", ""],
+  ["--", "7.4 3.2"],
+  [":", "2 3.3"],
+  ["-.", "12.8 3.2 2 3.2"],
+] as const)("passes dash %s through Vue marks", (dash, expected) => {
+  mount(
+    `<Chart renderer="svg">
+    <Line :data="metrics" x="t" y="a" :strokeWidth="2" :dash="dash" />
+    <Rule :y="2" :strokeWidth="2" :dash="dash" />
+    <Custom :draw="draw" />
+  </Chart>`,
+    () => ({
+      metrics,
+      dash,
+      draw: ({ path }: DrawContext) => path("M0 0L10 10", { stroke: "red", strokeWidth: 2, dash }),
+    }),
+  );
+  const strokes = host.querySelectorAll('[stroke-dasharray]:not([stroke-dasharray=""])');
+  expect(strokes).toHaveLength(expected ? 3 : 0);
+  for (const stroke of strokes) expect(stroke.getAttribute("stroke-dasharray")).toBe(expected);
+});

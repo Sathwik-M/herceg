@@ -2851,3 +2851,24 @@ it("uses the surface for saturated text halos in PDF and honors halo:false", () 
     expect(svg.includes('stroke="#ffffff" stroke-opacity="1"')).toBe(halo);
   }
 });
+
+it.each([
+  ["-", "[] 0 d"],
+  ["--", "[7.4 3.2] 0 d"],
+  [":", "[2 3.3] 0 d"],
+  ["-.", "[12.8 3.2 2 3.2] 0 d"],
+] as const)("exports dash %s in lines, rules, and custom shapes to PDF", (dash, command) => {
+  const data = table({ x: [0, 1], y: [1, 2] });
+  const marks = [
+    line(data, { x: "x", y: "y", dash, strokeWidth: 2 }),
+    rule({ y: 1, dash, strokeWidth: 2 }),
+    custom({
+      draw({ path }) {
+        path("M0 0L10 10", { stroke: "red", strokeWidth: 2, dash });
+      },
+    }),
+  ];
+  const pdf = readPdf(renderToPDF({ marks, width: 400, height: 200 }));
+  if (dash === "-") expect(pdf.content).not.toMatch(/\[(?:[\d.]+ ?)+\] 0 d/);
+  else expect(pdf.content.split(command)).toHaveLength(4);
+});

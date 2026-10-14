@@ -67,3 +67,9 @@ def live(widget: ChartWidget, state: ChartState) -> None:
 hg.Chart({"first": [0], "second": [1], "height": [2]}).dendrogram(
     "first", "second", "height", leaves=["a", "b"], side="right", stroke_width=2
 )
+
+
+# Dash strings are typed on every Python surface that takes dash.
+dash_style: hg.Dash = "-."
+hg.line({"x": [0, 1], "y": [1, 2]}, "x", "y", dash=dash_style)
+hg.Chart({"x": [0, 1], "y": [1, 2]}).line("x", "y", dash=":").rule(y=1, dash="--")

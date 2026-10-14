@@ -1,6 +1,13 @@
 <!-- A chart whose options, marks, and handlers the tests change through props. -->
 <script lang="ts">
-  import type { ChartListener, ChartMark, DrawContext, Chart as HercegChart, Table } from "herceg";
+  import type {
+    ChartListener,
+    ChartMark,
+    Dash,
+    DrawContext,
+    Chart as HercegChart,
+    Table,
+  } from "herceg";
   import { Chart, Custom, Line, Region, Rule } from "../src/index.js";
   import Pair from "./Pair.svelte";
 
@@ -10,6 +17,8 @@
     band = false,
     pair = false,
     limit,
+    dash,
+    strokeWidth,
     draw,
     marks,
     options = {},
@@ -21,12 +30,17 @@
     band?: boolean;
     pair?: boolean;
     limit?: number;
+    dash?: Dash;
+    strokeWidth?: number;
     draw?: (context: DrawContext) => void;
     marks?: readonly ChartMark[];
     options?: Record<string, unknown>;
     chart?: HercegChart | null;
     onselect?: ChartListener<"select"> | undefined;
   } = $props();
+
+  const dashOptions = $derived(dash === undefined ? {} : { dash });
+  const widthOptions = $derived(strokeWidth === undefined ? {} : { strokeWidth });
 </script>
 
 <Chart bind:chart {marks} {onselect} {...options}>
@@ -34,13 +48,13 @@
     <Region y1={1} y2={2} />
   {/if}
   {#each fields as field (field)}
-    <Line {data} x="t" y={field} />
+    <Line {data} x="t" y={field} {...dashOptions} {...widthOptions} />
   {/each}
   {#if pair}
     <Pair {data} />
   {/if}
   {#if limit !== undefined}
-    <Rule y={limit} label="limit" />
+    <Rule y={limit} label="limit" {...dashOptions} {...widthOptions} />
   {/if}
   {#if draw}
     <Custom {draw} />

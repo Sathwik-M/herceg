@@ -14,6 +14,48 @@ import herceg as hg
 hg.line(df, x="time", y=["p50", "p99"], title="Request latency")
 ```
 
+## From matplotlib
+
+Herceg takes tables and field names. Start with `data = {"x": xs, "y": ys}`;
+compose marks with `hg.Chart(data)`. Option names have one spelling; common
+matplotlib names in unknown-option errors suggest the options that callable takes.
+
+| matplotlib | Herceg |
+| --- | --- |
+| `ax.plot(xs, ys)` | `hg.line(data, x="x", y="y")`, or `chart.line("x", "y")` |
+| `ax.scatter(xs, ys)` | `hg.scatter(data, x="x", y="y")`, or `chart.point("x", "y")` |
+| `ax.bar(categories, heights)` | `hg.bar(data, x="category", y="height")` with those columns |
+| `ax.fill_between(xs, low, high)` | `chart.area(x="x", y1="low", y2="high")` with those columns |
+| `ax.axhline(value)` / `ax.axvline(value)` | `chart.rule(y=value)` / `chart.rule(x=value)` |
+| `ax.text(x, y, text)` / `ax.annotate(text, (x, y))` | `chart.text(x=x, y=y, label=text)`; `dx`/`dy` offset text in pixels |
+| `plt.subplots(...)` | `hg.Chart(data, panels=["a", "b"], panel_columns=2)`; marks name `panel="a"` or `"b"` |
+| `ax.twinx()` | `hg.Chart(data, y_right=hg.Axis(...))`; supported marks use `axis="right"` |
+| `ax.legend()` | `legend=True` on the chart (automatic for multiple series); `label` names a single series |
+| `fig.savefig(path)` | `chart.save(path)` for HTML, SVG, PNG, or PDF |
+| `linewidth` / `lw` | `stroke_width` on lines, rules, and other outlined marks |
+| `linestyle` / `ls` | `dash` on 2D lines and rules |
+| `marker`, `markersize` / `ms` | Points use `symbol` and `radius` (CSS pixels; matplotlib's `markersize` is a diameter in points); `size` names a column for area encoding |
+| `color` / `c`, `edgecolor`, `facecolor` | Lines use `stroke`; bars use `fill`; points use `fill` for a constant or `color` for a column, plus `stroke` for outlines |
+| `alpha` | `fill_opacity` on marks that take it; no line opacity option |
+| `cmap`, `vmin` / `vmax` | `colors="viridis"` and `color_domain=(low, high)` on color-scaled marks |
+| `bins`, `density=True` | `hg.histogram(data, x="y", bins=20, normalize="density")` |
+| `ax.set_xlim(...)` / `ax.set_ylim(...)` | `hg.Chart(data, x=hg.Axis(domain=(low, high)), y=hg.Axis(domain=(low, high)))`; helpers use `x_axis` / `y_axis` |
+| `zorder` | Marks draw in the order given; add marks in the desired order |
+
+`dash` accepts `"-"` (solid), `"--"` (dashed), `":"` (dotted), and `"-."`
+(dashdot). Their [matplotlib default patterns](https://matplotlib.org/stable/users/explain/customizing.html)
+are `[]`, `[3.7, 1.6]`, `[1, 1.65]`, and `[6.4, 1.6, 1, 1.6]`, each
+multiplied by the resolved stroke width. A numeric array such as `[6, 4]`
+uses CSS pixels without scaling. Specs keep the string, so theme widths
+apply when drawing; `herceg.express.pointplot` uses the same patterns for
+its line styles.
+
+There is no pyplot state, combined plot format string (`"ro--"`), line
+marker option (compose `.line(...)` and `.point(...)`), arbitrary `zorder`,
+annotation arrows, secondary x axis (`twiny`), or matplotlib's full artist
+and coordinate-transform API. Marker symbols and color schemes use
+Herceg's `hg.SYMBOLS` and `hg.SCHEMES`, not matplotlib's complete catalogs.
+
 ## Charts
 
 One call makes a chart of one kind:

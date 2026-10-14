@@ -91,6 +91,11 @@ accepts one handle and optional paper, margin, font, and metadata settings
 rectangle; each chart's locale scopes its visible content while generated
 alternatives retain their English language.
 
+`Line` and `Rule` accept `dash="-"`, `"--"`, `":"`, or `"-."`, as well
+as pixel arrays. String patterns scale with `strokeWidth` (the theme's
+line width when omitted on `Line`); arrays stay in CSS pixels. `Custom`
+shape styles accept the same values. See the engine's [dash patterns](../herceg/README.md#marks).
+
 ## Tooltips
 
 Mark components take `tooltip={{ fields: [...] }}` for more of the row a

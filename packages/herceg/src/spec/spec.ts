@@ -708,6 +708,9 @@ interface RowTooltip {
  */
 export type Curve = "linear" | "step" | "step-before" | "step-after" | "monotone";
 
+/** Pixel dash array, or a matplotlib style scaled by the resolved stroke width. */
+export type Dash = readonly number[] | "-" | "--" | ":" | "-.";
+
 /**
  * Which axis a line or area runs along: the axis of its positions, which it
  * is traced and read along ("x" or "y"). By default y when `y` is a
@@ -739,8 +742,8 @@ export interface LineSpec extends SeriesBase, RowTooltip {
   /** Constant color; otherwise colors come from the palette per series. */
   stroke?: string;
   strokeWidth?: number;
-  /** SVG-style dash pattern in pixels. */
-  dash?: readonly number[];
+  /** Pixel dash array, or a matplotlib style scaled by strokeWidth. */
+  dash?: Dash;
   curve?: Curve;
   /** Legend and tooltip name for a single-field line without `series`. */
   label?: string;
@@ -849,7 +852,7 @@ interface RuleStyle extends MarkBase {
   type: "rule";
   stroke?: string;
   strokeWidth?: number;
-  dash?: readonly number[];
+  dash?: Dash;
   /** Text drawn by every rule. */
   label?: string;
   /** Category or number field with each rule's text, for rules from data. */

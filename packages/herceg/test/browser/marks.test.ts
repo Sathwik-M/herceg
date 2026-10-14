@@ -1218,3 +1218,33 @@ describe("heatmaps on number axes in the browser", () => {
     chart.destroy();
   });
 });
+
+it.each([
+  ["-", []],
+  ["--", [7.4, 3.2]],
+  [":", [2, 3.3]],
+  ["-.", [12.8, 3.2, 2, 3.2]],
+] as const)("renders dash %s in live SVG and Canvas", (dash, expected) => {
+  const data = table({ x: [0, 1], y: [1, 2] });
+  const marks = [
+    line(data, { x: "x", y: "y", dash, strokeWidth: 2 }),
+    rule({ y: 1, dash, strokeWidth: 2 }),
+    custom({
+      draw({ path }) {
+        path("M0 0L10 10", { stroke: "red", strokeWidth: 2, dash });
+      },
+    }),
+  ];
+  const svg = createChart(host, { marks, renderer: "svg" });
+  expect(svg.root.querySelectorAll('[stroke-dasharray]:not([stroke-dasharray=""])').length).toBe(
+    expected.length ? 3 : 0,
+  );
+  for (const path of svg.root.querySelectorAll('[stroke-dasharray]:not([stroke-dasharray=""])'))
+    expect(path.getAttribute("stroke-dasharray")).toBe(expected.join(" "));
+  svg.destroy();
+  const dashes = vi.spyOn(CanvasRenderingContext2D.prototype, "setLineDash");
+  const canvas = createChart(host, { marks, renderer: "canvas" });
+  expect(dashes).toHaveBeenCalledWith([...expected]);
+  canvas.destroy();
+  dashes.mockRestore();
+});

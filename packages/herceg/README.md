@@ -544,6 +544,16 @@ aggregates pass the default column limit.
 
 ## Marks
 
+Lines, rules, and custom shape styles accept `dash` as a pixel array or
+`"-"` (solid), `"--"` (dashed), `":"` (dotted), or `"-."` (dashdot).
+The string patterns are `[]`, `[3.7, 1.6]`, `[1, 1.65]`, and
+`[6.4, 1.6, 1, 1.6]`, multiplied by the resolved `strokeWidth`, following
+[matplotlib's defaults](https://matplotlib.org/stable/users/explain/customizing.html).
+Arrays remain unscaled CSS pixels. For example,
+`line(metrics, { x: "time", y: "p50", strokeWidth: 2, dash: "--" })`
+draws `[7.4, 3.2]`. Portable line and rule specs keep the string; custom
+shape styles are JavaScript only.
+
 ```ts
 // One line per y field, sharing x.
 line(metrics, { x: "time", y: ["p50", "p99"] });
@@ -1385,6 +1395,8 @@ the notes), — not yet (refused with an error), · not applicable.
 | point3d, line3d | — | ✓ | · | · | turning | — | — | — | — | ✓ | ✓ | ✓ | — |
 | surface | — | ✓ | · | · | turning | — | — | — | — | · | ✓ | · | — |
 
+- Lines, rules, and custom shapes support all four dash strings on SVG,
+  Canvas (for data marks), and static SVG/PDF export.
 - Line and area gaps preserve isolated finite rows as stroke-sized dots on
   every renderer and export. Bars colored by their own category keep full
   bands, labels, and category legends. Text halos can be disabled on every

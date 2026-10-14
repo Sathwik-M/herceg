@@ -958,11 +958,11 @@ function indicesOf(
  * Specs are small plain objects; copying them is cheap.
  */
 export function frozen<T>(spec: T): Frozen<T> {
-  if (Array.isArray(spec)) return Object.freeze(spec.map(frozen)) as Frozen<T>;
-  if (typeof spec !== "object" || spec === null) return spec as Frozen<T>;
-  const copy = {};
-  // Defined rather than assigned: a JSON key "__proto__" stays a key.
-  for (const [key, value] of Object.entries(spec))
-    Object.defineProperty(copy, key, { value: frozen(value), enumerable: true });
-  return Object.freeze(copy) as Frozen<T>;
+  if (!spec || typeof spec !== "object") return spec as Frozen<T>;
+  // fromEntries keeps a JSON key "__proto__" as an own property.
+  return Object.freeze(
+    Array.isArray(spec)
+      ? spec.map(frozen)
+      : Object.fromEntries(Object.entries(spec).map(([key, value]) => [key, frozen(value)])),
+  ) as Frozen<T>;
 }

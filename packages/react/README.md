@@ -68,6 +68,11 @@ nodes move while zoomed and `setItemPosition` still uses layout units.
 When zoom is on, Alt+Shift+arrows moves the node read; Shift+arrows and 0
 navigate the view. The toolbar restores moved nodes.
 
+`Line` and `Rule` accept `dash="-"`, `"--"`, `":"`, or `"-."`, as well
+as pixel arrays. String patterns scale with `strokeWidth` (the theme's
+line width when omitted on `Line`); arrays stay in CSS pixels. `Custom`
+shape styles accept the same values. See the engine's [dash patterns](../herceg/README.md#marks).
+
 ## Tooltips
 
 Mark elements take `tooltip={{ fields: [...] }}` for more of the row a
