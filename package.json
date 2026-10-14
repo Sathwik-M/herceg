@@ -25,7 +25,8 @@
     "test:python": "npm run build:python && cd python && uv run --extra dev pytest",
     "lint:python": "cd python && uv run --extra dev ruff check src tests examples && uv run --extra dev ruff format --check src tests examples && uv run --extra dev mypy",
     "test:package": "node scripts/test-package.mjs",
-    "test:python-package": "node scripts/test-python-package.mjs"
+    "test:python-package": "node scripts/test-python-package.mjs",
+    "version:set": "node scripts/set-version.mjs"
   },
   "engines": {
     "node": ">=22.12"

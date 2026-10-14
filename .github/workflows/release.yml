@@ -1,0 +1,76 @@
+name: Release
+
+# Publishing a GitHub release tagged vX.Y.Z publishes that version of every
+# package. Both registries trust this workflow (OIDC), so no tokens are
+# stored: PyPI through the trusted publisher for project "herceg" (workflow
+# release.yml, environment pypi), npm through each package's trusted
+# publisher, which npm lets a package have once it exists.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        # The tag, every npm package, and the Python package must agree.
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for p in herceg react vue svelte; do
+            v=$(node -p "require('./packages/$p/package.json').version")
+            [ "$v" = "$tag" ] || { echo "packages/$p is $v, the tag is $tag"; exit 1; }
+          done
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' python/pyproject.toml)
+          [ "$v" = "$tag" ] || { echo "python/pyproject.toml is $v, the tag is $tag"; exit 1; }
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+  pypi:
+    needs: check
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: astral-sh/setup-uv@v6
+      - run: npm ci
+      - run: npm run test:python-package
+      - run: rm -rf python/dist && cd python && uv build
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python/dist
+
+  npm:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test:package
+      # Publishing through a trusted publisher needs npm 11.5.1 or later.
+      - run: npm install --global npm@11
+      # The engine first, so the adapters never point at a version that is not out.
+      - run: |
+          for w in herceg @herceg/react @herceg/vue @herceg/svelte; do
+            npm publish --workspace "$w" --access public
+          done

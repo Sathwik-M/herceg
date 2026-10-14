@@ -57,10 +57,26 @@ npm run build:python     # bundle herceg's JavaScript into the Python package
 npm run test:python      # build:python, then pytest (uv environment in python/)
 npm run test:python-package # build, inspect, install, and smoke-test the Python wheel
 npm run lint:python      # ruff check, format check, and mypy type check of the Python package
+npm run version:set -- X.Y.Z # set one version on every published package (see Releasing)
 ```
 
 Keep this list in sync with `package.json` as build, test, and Python commands
 are added.
+
+### Releasing
+
+Every published package (`herceg`, `@herceg/react`, `@herceg/vue`,
+`@herceg/svelte`, and the Python `herceg`) shares one version. To release:
+1. Set it with `npm run version:set -- X.Y.Z`.
+2. Move CHANGELOG.md's "Unreleased" entries under that version.
+3. Commit, and wait for CI to pass.
+4. Publish a GitHub release tagged `vX.Y.Z`. `.github/workflows/release.yml`
+   then publishes to PyPI and npm through their trusted publishers, without
+   stored tokens.
+
+npm lets a package trust a workflow only once the package exists, so the
+first version of each npm package is published by hand
+(`npm publish --workspace <name> --access public`, engine first).
 
 ### Codex reviews and design advice
 

@@ -40,6 +40,35 @@ benchmark suite.
 - [docs/comparison.md](docs/comparison.md): feature and benchmark comparison.
 - [benchmarks/README.md](benchmarks/README.md): benchmark methodology.
 - [AGENTS.md](AGENTS.md): engineering principles and contribution rules.
+- [CHANGELOG.md](CHANGELOG.md): what each release contains.
+
+## Quick start
+
+```ts
+import { createChart, line, table, time } from "herceg";
+
+const latency = table({
+  time: time(["2026-01-01", "2026-01-02", "2026-01-03"]),
+  p50: [120, 135, 128],
+});
+
+createChart(document.querySelector("#chart")!, {
+  title: "Request latency",
+  marks: [line(latency, { x: "time", y: "p50" })],
+  y: { title: "ms" },
+});
+```
+
+```python
+import herceg as hg
+
+hg.line(df, x="time", y="p50", title="Request latency")  # a pandas, Polars, or PyArrow table
+```
+
+The packages are not on npm or PyPI yet. To use them from a checkout, run
+`npm install` and `npm run build` (the engine and adapters are then in
+`packages/*/dist`), and for Python `npm run build:python` followed by
+`pip install ./python`.
 
 ## Roadmap
 
