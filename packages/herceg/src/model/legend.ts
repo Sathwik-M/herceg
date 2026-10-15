@@ -4,6 +4,7 @@
 
 import { type Align, alignedAt } from "../layout/place.ts";
 import { type MeasureText, textHalo, textHeight, textItem, textWidth } from "../layout/text.ts";
+import type { ColorRamp } from "../marks/mark.ts";
 import { type Guide, type GuideItem, LEGEND_SWATCH, type LegendItem } from "../scene/scene.ts";
 import type { TextPaint } from "../style/style.ts";
 
@@ -49,6 +50,8 @@ export interface LegendText {
   locale: string | undefined;
   /** What the legend is drawn on, for halos: the chart's background, or a plot's fill. */
   surface: string;
+  /** Reads the colors and font of styles legends set (see `ChartStyles.read`). */
+  read?: <T extends object>(style: T, path: string) => T;
 }
 
 /**
@@ -59,6 +62,10 @@ export interface LegendText {
 export interface LegendPart {
   /** Parts with the same key show once: marks sharing a scale share its legend. */
   readonly key: string;
+  /** The color scale a colorbar of the part draws, for parts of color scales. */
+  readonly colorbar?: ColorbarScale | undefined;
+  /** What a key of glyphs varies in; parts without one show color. */
+  readonly channel?: "size" | "shape" | "color" | undefined;
   /** Starts a row of its own; the model puts such parts after those that do not. */
   readonly breaks?: boolean;
   /**
@@ -78,6 +85,25 @@ export interface LegendContent {
   /** Keys of hidden series. */
   hidden: ReadonlySet<string>;
 }
+
+/**
+ * A color scale as a colorbar draws it: a continuous ramp, or the bands of
+ * a contour's levels in their colors.
+ */
+export type ColorbarScale =
+  | {
+      readonly kind: "ramp";
+      readonly ramp: ColorRamp;
+      /** Where each of the ramp's stops sits along it, from 0 to 1 (see `rampOffsets`). */
+      readonly offsets: readonly number[];
+    }
+  | {
+      readonly kind: "steps";
+      readonly title: string;
+      /** The bands' edges, ascending: one more than the colors. */
+      readonly levels: readonly number[];
+      readonly colors: readonly string[];
+    };
 
 /** What parts add to the layout: their guides, and what to do once the rows are placed. */
 export interface LegendOut {

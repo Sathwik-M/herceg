@@ -97,6 +97,8 @@ interface AreaCommon {
    * name share a color, one legend entry, and visibility.
    */
   legendGroup?: string;
+  /** `false` leaves the mark out of the chart's legends. */
+  legend?: false;
   id?: string;
 }
 
@@ -947,6 +949,7 @@ export function area<S extends Schema>(
       "curve",
       "label",
       "legendGroup",
+      "legend",
       "id",
       "axis",
       "facet",

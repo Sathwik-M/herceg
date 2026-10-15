@@ -81,6 +81,8 @@ interface BarStyle<S extends Schema> {
    * name share a color, one legend entry, and visibility.
    */
   legendGroup?: string;
+  /** `false` leaves the mark out of the chart's legends. */
+  legend?: false;
   /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
   tooltip?: MarkTooltip<S>;
   id?: string;
@@ -1040,6 +1042,7 @@ export function bar<S extends Schema>(
       "fillOpacity",
       "label",
       "legendGroup",
+      "legend",
       "labels",
       "halo",
       "id",

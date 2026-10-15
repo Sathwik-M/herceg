@@ -723,8 +723,12 @@ function paintItem(page: PdfPage, item: GuideItem): void {
         const [r, g, b] = color(stop) ?? [0, 0, 0];
         return [r, g, b];
       });
-      const y = item.y + item.height / 2;
-      const shading = page.gradient([item.x, y, item.x + item.width, y], stops, item.offsets);
+      const { x, y, width, height } = item;
+      // Left to right, or for a vertical colorbar, bottom to top.
+      const axis = item.vertical
+        ? [x + width / 2, y + height, x + width / 2, y]
+        : [x, y + height / 2, x + width, y + height / 2];
+      const shading = page.gradient(axis as [number, number, number, number], stops, item.offsets);
       const outline = new PathBuilder();
       outline.roundedRect(item.x, item.y, item.width, item.height, item.radius);
       page.write(`q\n${outline.operators}W n /${shading} sh Q\n`);

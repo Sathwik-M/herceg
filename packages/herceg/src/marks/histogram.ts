@@ -95,6 +95,8 @@ interface HistogramStyle<S extends Schema> {
    * name share a color, one legend entry, and visibility.
    */
   legendGroup?: string;
+  /** `false` leaves the mark out of the chart's legends. */
+  legend?: false;
   id?: string;
   colors?: never;
   colorDomain?: never;
@@ -1216,6 +1218,7 @@ export function histogram<S extends Schema>(
         "normalize",
         "colorMidpoint",
         "label",
+        "legend",
         "facet",
         "panel",
         "clip",
@@ -1246,6 +1249,7 @@ export function histogram<S extends Schema>(
       "fillOpacity",
       "label",
       "legendGroup",
+      "legend",
       "axis",
       "facet",
       "panel",

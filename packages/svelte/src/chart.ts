@@ -50,13 +50,31 @@ export interface ChartProps extends Omit<ChartUpdate, "marks" | "renderTooltip">
   onrender?: ChartListener<"render"> | undefined;
 }
 
-/** JSON with object keys sorted, so equal settings written in any order compare equal. */
+/**
+ * Ids of the functions options hold (tick generators, formatters), so that
+ * a new function compares as a change and the same one as none.
+ */
+const functionIds = new WeakMap<object, number>();
+let functions = 0;
+
+/**
+ * JSON with object keys sorted, so equal settings written in any order
+ * compare equal, and functions by identity.
+ */
 export function canonical(value: unknown): string {
-  return JSON.stringify(value, (_, v: unknown) =>
-    v && typeof v === "object" && !Array.isArray(v)
+  return JSON.stringify(value, (_, v: unknown) => {
+    if (typeof v === "function") {
+      let id = functionIds.get(v);
+      if (id === undefined) {
+        id = ++functions;
+        functionIds.set(v, id);
+      }
+      return `function ${id}`;
+    }
+    return v && typeof v === "object" && !Array.isArray(v)
       ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
-      : v,
-  );
+      : v;
+  });
 }
 
 /**

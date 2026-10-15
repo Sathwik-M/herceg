@@ -1466,6 +1466,10 @@ the notes), — not yet (refused with an error), · not applicable.
   the chart does not grow, so what passes its edges is still cut there.
 - Every built-in mark exports through `renderToPDF`; each chart is one page and
   one Figure, including its facets or subplots.
+- Marks with legend entries or a color legend take `legend: false`, which
+  leaves them out of the chart's legends while they still draw. Heatmaps,
+  2D histograms, contours, and points colored by a number field show their
+  color scale in a colorbar (`guides: [colorbar()]`; see Scales and guides).
 - Selected rows and Highlight are what charts bound to a selection store do
   (`rowSelection`, see [Selected rows](#selected-rows)): brushes, lassos, and
   clicks write rows to its channel, and the chart highlights what the channel
@@ -2889,12 +2893,14 @@ is internal, and charts take only marks the mark functions make.
 | `title`, `description` | Accessible name and description; the title is drawn: a string, or `{ text, place?: { side: "top" \| "bottom" }, style? }` (see Titles, legends, and padding). |
 | `padding` | Pixels of whitespace around what the chart draws, one number or `{ top?, right?, bottom?, left? }`; `0` lets a chart without axes fill its size. Left out, spacing is automatic. |
 | `width`, `height` | Fixed size; omitted dimensions follow the container (a block one in Firefox, where a chart in a `<span>` keeps its first width). |
-| `x`, `y` | The scales named "x" and "y" and their axes: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `scope` (`"chart"`, `"panel"`, `"row"`, or `"column"`: which facet panels or subplots share one instance of the scale; x the chart's by default, y each subplot's own and the chart's in facets), `title`, `grid`, `ticks`, `format` (Intl options, for tick labels and tooltips), `tooltipFormat` (Intl options for tooltips, the keyboard, and crosshair labels only; see Tooltips), `show`, `style` (the axis' `tickLabel`, `axisTitle`, `axisLine`, `tick`, and `grid` styles; see Styles); on a time x axis, `breaks: timeBreaks([...])` and `seams: true` or `{ minSpacing?: number }` (see Financial charts). |
+| `x`, `y` | The scales named "x" and "y" and their axes (the short forms of `scales` and `guides`; see Scales and guides): `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `scope` (`"chart"`, `"panel"`, `"row"`, or `"column"`: which facet panels or subplots share one instance of the scale; x the chart's by default, y each subplot's own and the chart's in facets), `title`, `grid`, `ticks` (a count, `{ every }`, `{ values }`, or a function), `format` (Intl options, `{ number }` or `{ time }` patterns, or a function, for tick labels and tooltips), `tooltipFormat` (as `format`, for tooltips, the keyboard, and crosshair labels only; see Tooltips), `show`, `style` (the axis' `tickLabel`, `axisTitle`, `axisLine`, `tick`, and `grid` styles; see Styles); on a time x axis, `breaks: timeBreaks([...])` and `seams: true` or `{ minSpacing?: number }` (see Financial charts). |
 | `yRight` | The scale "yRight" and its axis on the right, for marks with `axis: "right"`, with the same options as `y` (its `scope` as `y`'s unless given). |
 | `facet` | `facet(field, { columns? })`: a panel per value of a category field, wrapped; or `facet({ row?, column? })`: a grid by two fields (see Small multiples). |
 | `panels` | `panels([{ id, title?, x?, y?, style? }, ...], { columns?, rowHeights?, columnWidths? })`: subplots whose marks name them in `panel` (see Subplots); a subplot's `title` is a string or `{ text, style? }`, and its `style` sets its own roles (`plot`, `panelTitle`, and the axes' roles). |
 | `navigator` | `rangeNavigator({ height?, marks? })`: a strip under the plot (under every panel, with facets or subplots) over the whole x axis, whose window shows and moves the x range in view (see Range navigator). |
-| `legend` | Shown by default for two or more series; `true` or `{ place?, style? }` shows it for one, `false` hides it. Entries toggle series. `place` puts it on a side or inside a plot (see Titles, legends, and padding); `style` sets its `legendLabel`, `legendTitle`, and `tickLabel` styles. |
+| `legend` | Shown by default for two or more series; `true` or an object shows it for one, `false` hides it. Entries toggle series. `place` puts it on a side or inside a plot (see Titles, legends, and padding); `columns`, `rows`, `order`, `title`, `entries`, `merge`, and `swatches` lay it out (see Legends); `style` sets its `legendLabel`, `legendTitle`, and `tickLabel` styles. |
+| `scales` | `{ x?, y?, yRight? }`: the position scales' settings (`type`, `domain`, `nice`, `zero`, `scope`, `tooltipFormat`) over the short forms' (see Scales and guides). |
+| `guides` | `[axis(...), legend(...), colorbar(...)]`: axes beyond or in place of the automatic ones, legends of the scales they name, and colorbars (see Scales and guides). |
 | `tooltip` | `true` (default), `false`, or `{ mode?: "nearest-x" \| "nearest-y" \| "nearest", axisLabels?: true }`; `axisLabels` labels the crosshair on the axes. Marks take `tooltip: { fields }` for data of their rows (see Tooltips). |
 | `renderTooltip` | JavaScript only: the tooltip's content of your own, text or a node, in the built-in box (see Tooltips). |
 | `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom); maps and networks pan and zoom both ways (`true` or `"xy"`), and treemaps and sunbursts drill into nodes (`true`). `drag: true` moves a network's nodes. `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom), unless it selects rows for `rowSelection`. `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. `rotate: false` stops dragging from turning 3D charts, whose `zoom` is `true` or `false`. Maps and networks take a `"lasso"` brush and no other. |
@@ -2911,6 +2917,9 @@ Time axes try coarser calendar tick intervals when `format` repeats labels,
 then drop any remaining duplicates, including nonadjacent ones. A date-only
 format therefore uses day ticks rather than repeated hour labels. The
 default date/time formats stay unchanged where they distinguish ticks.
+Ticks you choose (`every`, `values`, a function) and labels a function
+writes keep every tick and leave out a label that repeats the one before it
+(an axis guide's `labels: { duplicates: "show" }` keeps them).
 `tooltipFormat` formats tooltip, keyboard, and crosshair values independently;
 it does not change the axis ticks. Pass the same Intl options there when
 those values should use the same precision.
@@ -2928,7 +2937,7 @@ for an x range), `selection` and `selectionPanels` (see Small multiples for
 `getLegend()`, `getHiddenKeys()`, `setHiddenKeys(keys)`, and
 `setVisibility(keys, visible)` (see Hiding series), `on(event, listener)`,
 `render()`, `toSVG(sizing?)` and `toPNG()` (see Export), `destroy()`, and `loading`
-(a promise while the chart's `fonts` load, the GPU painter for large point series, the animation
+(a promise while the guide compiler loads for a chart that needs it (see Scales and guides), the chart's `fonts` load, the GPU painter for large point series, the animation
 code, the controls of a 3D chart, a map, a tree, or a network, the brush, a
 navigator's sliders, or what reads tooltip fields and draws
 `renderTooltip`'s content load, otherwise undefined). The brush loads when a chart can brush
@@ -3228,6 +3237,153 @@ where labels reach past the plot. With it (`0` included), `padding` is the
 whitespace outside everything the chart draws: tick labels, titles, and
 legends keep their room. A sparkline sets `padding: 0`, hides its axes
 (`show: false`), and gives its axes exact domains (`nice: false`).
+
+### Scales and guides
+
+A chart's position scales and the guides that explain them have a general
+form, `scales` and `guides`, of which `x`, `y`, `yRight`, and `legend` are
+the short forms. `x: { domain, title, ticks }` is `scales: { x: { domain }
+}` with an axis of x titled and ticked so; `legend: { columns: 3 }` is the
+automatic legend laid out in three columns. `scales` sets a scale's
+settings over its short form's; an axis in `guides` takes the place of its
+scale's automatic axis on the same side (its unset settings taken from the
+short form) or is drawn on another side too; a legend or colorbar in
+`guides` shows the scales it names, and the automatic legend the rest.
+
+```ts
+import { axis, colorbar, createChart, legend } from "herceg";
+
+createChart(element, {
+  timeZone: "UTC",
+  x: { ticks: { every: "6 hours" }, format: { time: "%H:%M" } },
+  guides: [
+    axis({
+      scale: "x",
+      tick: { direction: "in" },
+      layers: [{ id: "day", ticks: { every: "day" }, format: { time: "%a %b %-d" }, labels: { row: 1 } }],
+    }),
+    axis({ scale: "y", place: { side: "right" } }),
+  ],
+  marks: [line(metrics, { x: "time", y: "load" })],
+});
+```
+
+Charts asking for more than a count of ticks, Intl formats, and the
+automatic axes and legend load the guide compiler, which plans these: a live
+chart draws once it is here (`chart.loading` settles with that frame, and
+updates keep the last frame meanwhile), while `renderToSVG`, PDF, and specs
+bring it with them. Other charts never load it.
+
+| `scales` | Description |
+| --- | --- |
+| `x`, `y`, `yRight` | `type`, `domain`, `nice`, `zero`, `scope`, `tooltipFormat`, over the short form's (marks place values on these three). |
+
+#### Ticks
+
+| `ticks` | Ticks |
+| --- | --- |
+| `6`, `{ count: 6 }` | About six round values (the default chooses a count from the axis' length). |
+| `{ every: 10, anchor?: 5 }` | One every 10 on a number axis, from `anchor` (0 by default). |
+| `{ every: "6 hours" }`, `{ every: { unit, step? } }` | Calendar steps in the chart's `timeZone`: `"day"`, `"2 weeks"`, `"month"`, ... (millisecond, second, minute, hour, day, week, month, year), at the same places whatever the view: hours within the day, days within the month, weeks from a Monday, months within the year. |
+| `{ every: { milliseconds: 21600000 }, anchor? }` | Elapsed time, the same length across daylight saving changes. |
+| `{ values: [15, 95] }` | Exactly these, those inside the domain: numbers, epoch milliseconds or `Date`s on time axes. |
+| `(context) => values` | JavaScript only: values from the axis' `{ scale, type, domain, pixels, count, timeZone, locale }`, called as the axis is planned. |
+
+Log axes take a count or values; category axes label the categories that
+fit, and take neither. Ticks inside time-axis breaks are left out. Zoomed
+far out, steps closer than two pixels give way to coarser ones on the same
+boundaries: every n-th number, or a multiple of a calendar step (every 15
+minutes for every minute, then hours, days, ...).
+
+#### Formats
+
+| `format` | Writes |
+| --- | --- |
+| Intl options | `Intl.NumberFormat` options on number axes, `Intl.DateTimeFormat` options on time axes. |
+| `{ number: ",.2f" }` | A d3-format pattern: `[sign][,][.precision][~][type]`, sign `-` (default), `+`, `(` (parentheses around negatives), or ` `; `,` groups thousands; `~` trims trailing zeros; type `d` (whole), `f` (fixed), `e` (exponent), `g` (significant digits), `s` (SI prefix, `"1.5k"`), `%`, or none (as `~g` with 12 digits). Digits and separators are the locale's. |
+| `{ time: "%b %d %H:%M" }` | A strftime pattern in the chart's time zone: `%Y %y %m %d %e %H %I %M %S %L` (milliseconds), `%p`, `%a %A %b %B` (the locale's names), `%z` (+hhmm), `%%`; `%-d` drops the padding. |
+| `(value, context) => string` | JavaScript only: `context` is `{ kind: "tick" \| "value", scale, type, timeZone, locale, index?, values? }`; `""` leaves a tick unlabeled. |
+
+Specs and Python carry Intl options and patterns; functions stay in
+JavaScript, and `validateSpec` refuses them with their path.
+
+#### Axes
+
+`axis({ scale, ...options })` (or `{ type: "axis", scale, ... }`):
+
+| Option | Description |
+| --- | --- |
+| `scale` | `"x"`, `"y"`, or `"yRight"`. |
+| `place` | `{ side }`: x `"bottom"` (default) or `"top"`; y `"left"` (default) or `"right"`; yRight `"right"`. A scale has one axis per side; an x axis above needs panels without headers, and a y axis on the right, beside each row's last panel, rows that share y. |
+| `id` | A name of the guide's own. |
+| `title`, `ticks`, `format`, `grid`, `show`, `style` | As the short form's; on the default side they set the scale's axis. Grid lines follow the axis on the default side, or with none there, the first listed. |
+| `tick` | `{ direction?: "out" \| "in" \| "cross", length? }` or `false`: x axes draw 5-pixel ticks out, y axes none, by default. |
+| `labels` | `{ rotation?, collision?, row?, priority?, duplicates? }` or `false` (see Tick labels). |
+| `line` | Draws the axis' line: x axes do, y axes do not, by default. |
+| `layers` | More layers of ticks: `[{ id, ticks?, format?, tick?, labels?, style? }]`, each its own ticks, labels (in `labels.row`), and tick marks, such as minor ticks (`labels: false`) or day boundaries in a second row. A position ticked by several layers is drawn once, as long as the longest. |
+
+#### Tick labels
+
+| `labels` | Description |
+| --- | --- |
+| `rotation` | Degrees clockwise from -90 to 90 (`-45` reads upward, ending at its tick), or `{ candidates: [0, -45, -90] }`: the first at which neighbors do not overlap in each panel's plot. On x axes; labels that may turn are written on one line. |
+| `collision` | What labels that would overlap do: `"show"` (default), `"hide"` (every n-th kept), and on x axes `"stagger"` (every other one a row further out) and `"wrap"` (broken at spaces, three lines at most). Category axes keep every n-th by default. |
+| `row` | 0 by the axis line, 1 beyond it, ...: layers' labels in rows of their own. On x axes. |
+| `priority` | Which labels of a row stay where they collide: the higher. |
+| `duplicates` | `"hide"` (default) leaves out a label that repeats the one before it; `"show"` keeps it. |
+
+#### Legends
+
+The short form `legend` and `legend({ ... })` take:
+
+| Option | Description |
+| --- | --- |
+| `place` | A side or a place inside a plot (see Titles, legends, and padding). |
+| `columns`, `rows` | Entries in a grid of this many columns, or rows; one of them. |
+| `order` | `"row"` fills row by row (the default with `columns`), `"column"` down each column (the default with `rows`). |
+| `title` | A string, or `{ text, style? }`, above the entries. |
+| `entries` | Entries of your own in place of the series': `[{ key, label, swatch? \| sample?: { mark }, targets?: [{ mark }] }]`. A `swatch` is `{ type: "line", stroke, strokeWidth?, dash? }`, `{ type: "rect", fill, stroke? }`, `{ type: "circle", fill, stroke?, size? }` (lines, boxes, and circles take `opacity`), or `{ type: "composite", parts }`; `sample` draws a mark's look, its symbol for points; entries with `targets` hide and show those marks, others explain. |
+| `merge` | `"semantic"`: one entry for the series several marks (across panels too) show of the same value of the same field, or with the same name, toggling them together. |
+| `swatches` | `"mark"`: swatches that look like the marks: a line of a line's width and dash, a box of an area's or bar's fill, a point's symbol. |
+| `style` | `legendLabel`, `legendTitle`, `tickLabel`. |
+| `scales` | (`legend()` only) The scales it lists, `[{ mark, channel }]` with a mark's `id` and `"series"`, `"color"`, `"size"`, or `"symbol"`; every one by default, in place of the automatic legend. |
+| `id`, `show` | (`legend()` only) A name of its own; `false` draws none. |
+
+A mark's `legend: false` leaves its series, ramps, and keys out of the
+legends.
+
+```ts
+createChart(element, {
+  panels: panels(sites, { columns: 3 }),
+  marks: [/* a line per site in each panel, and a dashed average */],
+  legend: { place: { side: "bottom", align: "center" }, columns: 3, merge: "semantic", swatches: "mark" },
+});
+```
+
+#### Colorbars
+
+`colorbar({ ...options })` draws a color scale's colors along its values,
+with ticks as an axis plans them over the scale's domain (rounded, never the
+raw ends unless asked with `values`), in place of its ramp in the automatic
+legend; a diverging scale's middle color sits at its midpoint, and a
+contour's bands are boxes between their levels, ticked at them.
+
+| Option | Description |
+| --- | --- |
+| `scale` | `{ mark, channel: "color" }`; the chart's only color scale by default. |
+| `place` | A side, `{ side: "right" }` by default: beside the plots it stands, low values at the bottom; above or below them it lies, low values at the left. |
+| `title` | A string, or `{ text, style? }`, above it. |
+| `ticks`, `format`, `tick`, `labels`, `layers` | As an axis' along the bar, its tick marks on the bar's outer edge, out of it or (`direction: "in"`) into it (a contour's ticks are at its levels by default). Lying colorbars take label rows and turns as x axes do. |
+| `length`, `thickness` | Pixels along its values (most of the chart's height beside the plots, up to 240) and across it (12). |
+| `style` | `tick`, `tickLabel`, `legendTitle`. |
+| `id`, `show` | A name of its own; `false` draws none. |
+
+```ts
+createChart(element, {
+  marks: [heatmap(cells, { x: "hour", y: "zone", color: "gain", colorMidpoint: 0 })],
+  guides: [colorbar({ title: "Gain (%)", ticks: 6, format: { number: "+.0f" } })],
+});
+```
 
 ### Text halos
 

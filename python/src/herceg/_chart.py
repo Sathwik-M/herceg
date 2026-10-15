@@ -20,19 +20,29 @@ import numpy as np
 from . import _geo, _render
 from ._data import Column, Matrix, Table, listed, shown
 from ._derive import BinSpec, Derived, Expr, _fields_of, bin_spec
+from ._guides import (
+    Format,
+    Guide,
+    LegendOptions,
+    Scale,
+    Ticks,
+    format_spec,
+    guides_spec,
+    legend_spec,
+    scales_spec,
+    ticks_spec,
+)
 from ._rows import RowSelection, SelectionBinding, bindings
 from ._style import (
     AXIS_ROLES,
     PANEL_ROLES,
     HaloOption,
-    Legend,
     Style,
     Theme,
     ThemeName,
     Title,
     halo_spec,
     insets,
-    legend_spec,
     style_spec,
     theme_spec,
     title_spec,
@@ -225,10 +235,12 @@ def _break(rule: Break | dict[str, Any]) -> dict[str, Any]:
             return Break(**fields)._spec()
         except TypeError:
             raise ValueError(
-                "Axis breaks: expected keys weekdays, hours, dates, or from and to; "
+                "AxisOptions breaks: expected keys weekdays, hours, dates, or from and to; "
                 f"received {sorted(rule)}"
             ) from None
-    raise TypeError(f"Axis breaks: expected hg.Break objects or dicts; received {shown(rule)}")
+    raise TypeError(
+        f"AxisOptions breaks: expected hg.Break objects or dicts; received {shown(rule)}"
+    )
 
 
 #: Intl.NumberFormat options, as herceg's spec reader knows them.
@@ -254,18 +266,20 @@ def _check_format(format: dict[str, Any] | None, role: str, known: frozenset[str
         raise ValueError(f"{role}: {shown(unknown[0])} is not an Intl format option")
 
 
-#: Which panels share one instance of a scale (``Axis.scope``).
+#: Which panels share one instance of a scale (``AxisOptions.scope``).
 Scope = Literal["chart", "panel", "row", "column"]
 SCOPES = ("chart", "panel", "row", "column")
 
 
 @dataclass
-class Axis:
+class AxisOptions:
     """Scale and axis options for x or y. Unset options use herceg's defaults.
 
     ``breaks``, on a time x axis only, leave out spans of time (see ``Break``)::
 
-        hg.Axis(breaks=[hg.Break(weekdays=("sat", "sun")), hg.Break(hours=("16:00", "09:30"))])
+        hg.AxisOptions(
+            breaks=[hg.Break(weekdays=("sat", "sun")), hg.Break(hours=("16:00", "09:30"))]
+        )
 
     ``seams=True`` marks their collapsed boundaries with dashed vertical lines;
     ``seams={"min_spacing": 40}`` sets their minimum spacing in CSS pixels.
@@ -291,9 +305,9 @@ class Axis:
     nice: bool | None = None
     zero: bool | None = None
     grid: bool | None = None
-    ticks: int | None = None
-    format: dict[str, Any] | None = None
-    tooltip_format: dict[str, Any] | None = None
+    ticks: int | Ticks | dict[str, Any] | None = None
+    format: Format | dict[str, Any] | None = None
+    tooltip_format: Format | dict[str, Any] | None = None
     show: bool | None = None
     breaks: Sequence[Break | dict[str, Any]] | None = None
     seams: bool | dict[str, float] | None = None
@@ -301,17 +315,22 @@ class Axis:
     style: Style | dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
-        _check_format(self.format, "Axis format", _NUMBER_FORMAT | _TIME_FORMAT)
-        _check_format(self.tooltip_format, "Axis tooltip_format", _NUMBER_FORMAT | _TIME_FORMAT)
+        for name in ("format", "tooltip_format"):
+            value = getattr(self, name)
+            # Intl options as a dict of their names; patterns are hg.Format.
+            if isinstance(value, dict) and not set(value) & {"number", "time"}:
+                _check_format(value, f"AxisOptions {name}", _NUMBER_FORMAT | _TIME_FORMAT)
         if self.scope is not None and self.scope not in SCOPES:
-            raise ValueError(f"Axis scope: expected {listed(SCOPES)}; received {shown(self.scope)}")
+            raise ValueError(
+                f"AxisOptions scope: expected {listed(SCOPES)}; received {shown(self.scope)}"
+            )
 
     def _spec(self) -> dict[str, Any]:
         seams = self.seams
         if seams is not None and not isinstance(seams, bool):
             if not isinstance(seams, dict) or any(key != "min_spacing" for key in seams):
                 raise ValueError(
-                    "Axis seams: expected True, False, or a dict with min_spacing; "
+                    "AxisOptions seams: expected True, False, or a dict with min_spacing; "
                     f"received {shown(seams)}"
                 )
             spacing = seams.get("min_spacing", 40)
@@ -322,13 +341,13 @@ class Axis:
                 or spacing <= 0
             ):
                 raise ValueError(
-                    "Axis seams min_spacing: expected a finite, positive number of pixels; "
+                    "AxisOptions seams min_spacing: expected a finite, positive number of pixels; "
                     f"received {shown(spacing)}"
                 )
             seams = {"minSpacing": seams["min_spacing"]} if seams else {}
         if seams is not None and seams is not False and self.breaks is None:
             raise ValueError(
-                "Axis seams: mark the breaks of a time x axis, and the axis has none; "
+                "AxisOptions seams: mark the breaks of a time x axis, and the axis has none; "
                 "give breaks or drop seams"
             )
         spec = {
@@ -338,14 +357,14 @@ class Axis:
             "nice": self.nice,
             "zero": self.zero,
             "grid": self.grid,
-            "ticks": self.ticks,
-            "format": self.format,
-            "tooltipFormat": self.tooltip_format,
+            "ticks": ticks_spec(self.ticks, "AxisOptions ticks"),
+            "format": format_spec(self.format, "AxisOptions format"),
+            "tooltipFormat": format_spec(self.tooltip_format, "AxisOptions tooltip_format"),
             "show": self.show,
             "breaks": [_break(rule) for rule in self.breaks] if self.breaks is not None else None,
             "seams": seams,
             "scope": self.scope,
-            "style": style_spec(self.style, "Axis style", AXIS_ROLES),
+            "style": style_spec(self.style, "AxisOptions style", AXIS_ROLES),
         }
         return {key: value for key, value in spec.items() if value is not None}
 
@@ -435,7 +454,7 @@ class TooltipField:
     values: ``field`` names it, ``label`` names it in the tooltip (the
     column's name by default), and ``format`` writes it, as Intl format
     options (``{"maximumFractionDigits": 0}``, ``{"weekday": "short"}``), as
-    ``Axis.format`` takes them. Without a format, numbers are written as the
+    ``AxisOptions.format`` takes them. Without a format, numbers are written as the
     chart's other numbers, times as the x axis writes them when it is a time
     axis (else as dates and times), and categories as they are."""
 
@@ -665,9 +684,9 @@ class Panel:
 
     id: str
     title: str | Title | dict[str, Any] | None = None
-    y: Axis | dict[str, Any] | None = None
-    x: Axis | dict[str, Any] | None = None
-    y_right: Axis | dict[str, Any] | None = None
+    y: AxisOptions | dict[str, Any] | None = None
+    x: AxisOptions | dict[str, Any] | None = None
+    y_right: AxisOptions | dict[str, Any] | None = None
     camera: Camera | dict[str, Any] | None = None
     style: Style | dict[str, Any] | None = None
 
@@ -689,8 +708,10 @@ class _SharedOptions(TypedDict, total=False):
     description: str | None
     width: int | None
     height: int | None
-    y_right: Axis | dict[str, Any] | None
-    legend: bool | Legend | dict[str, Any] | None
+    y_right: AxisOptions | dict[str, Any] | None
+    legend: bool | LegendOptions | dict[str, Any] | None
+    scales: dict[str, Scale | dict[str, Any]] | None
+    guides: Sequence[Guide] | None
     padding: float | dict[str, float] | None
     tooltip: bool | TooltipMode | Tooltip | None
     zoom: bool | Literal["x", "y", "xy"] | None
@@ -728,9 +749,9 @@ class ChartUpdate(_SharedOptions, total=False):
     """Chart options a live chart can change (``widget.update``): those of
     ``Chart`` but data, facets, and panels. ``None`` takes an option's default."""
 
-    x: Axis | dict[str, Any] | None
-    y: Axis | dict[str, Any] | None
-    z: Axis | dict[str, Any] | None
+    x: AxisOptions | dict[str, Any] | None
+    y: AxisOptions | dict[str, Any] | None
+    z: AxisOptions | dict[str, Any] | None
 
 
 class ChartOptions(ChartUpdate, _LayoutOptions, _BindingOptions, total=False):
@@ -743,9 +764,9 @@ class HelperOptions(_SharedOptions, _LayoutOptions, _BindingOptions, total=False
     chart's ``x``, ``y``, and ``z``, since the helpers' ``x``, ``y``, and ``z``
     name columns."""
 
-    x_axis: Axis | dict[str, Any] | None
-    y_axis: Axis | dict[str, Any] | None
-    z_axis: Axis | dict[str, Any] | None
+    x_axis: AxisOptions | dict[str, Any] | None
+    y_axis: AxisOptions | dict[str, Any] | None
+    z_axis: AxisOptions | dict[str, Any] | None
 
 
 _P = ParamSpec("_P")
@@ -815,7 +836,7 @@ class Chart:
     Marks are added with methods that return the chart, so calls chain::
 
         chart = (
-            hg.Chart(df, title="Latency", y=hg.Axis(title="ms"))
+            hg.Chart(df, title="Latency", y=hg.AxisOptions(title="ms"))
             .line(x="time", y=["p50", "p99"])
             .rule(y=250, label="SLO")
         )
@@ -834,9 +855,9 @@ class Chart:
         description: str | None = None,
         width: int | None = None,
         height: int | None = None,
-        x: Axis | dict[str, Any] | None = None,
-        y: Axis | dict[str, Any] | None = None,
-        y_right: Axis | dict[str, Any] | None = None,
+        x: AxisOptions | dict[str, Any] | None = None,
+        y: AxisOptions | dict[str, Any] | None = None,
+        y_right: AxisOptions | dict[str, Any] | None = None,
         facet: str | None = None,
         facet_columns: int | None = None,
         facet_row: str | None = None,
@@ -845,7 +866,9 @@ class Chart:
         panel_columns: int | None = None,
         panel_row_heights: Sequence[float] | None = None,
         panel_column_widths: Sequence[float] | None = None,
-        legend: bool | Legend | dict[str, Any] | None = None,
+        legend: bool | LegendOptions | dict[str, Any] | None = None,
+        scales: dict[str, Scale | dict[str, Any]] | None = None,
+        guides: Sequence[Guide] | None = None,
         padding: float | dict[str, float] | None = None,
         tooltip: bool | TooltipMode | Tooltip | None = True,
         zoom: bool | Literal["x", "y", "xy"] | None = False,
@@ -857,7 +880,7 @@ class Chart:
         locale: str | None = None,
         time_zone: str | None = None,
         projection: ProjectionName | Projection | dict[str, Any] | None = None,
-        z: Axis | dict[str, Any] | None = None,
+        z: AxisOptions | dict[str, Any] | None = None,
         camera: Camera | dict[str, Any] | None = None,
         box_aspect: tuple[float, float, float] | None = None,
         rotate: bool | None = True,
@@ -917,7 +940,7 @@ class Chart:
             raise ValueError("Chart panels: facets or panels, not both; drop one")
         if panel_list:
             _check_subplot_ranges({"zoom": zoom, "brush": brush})
-        axes = {"x": x, "y": y, "y_right": y_right}
+        axes = {"x": x, "y": y, "y_right": y_right, "scales": scales}
         # One window shows one x range, so every panel must share it.
         x_scope = axis_scope(axes, "x")
         if _navigator(navigator) is not None and x_scope not in (None, "chart"):
@@ -971,6 +994,8 @@ class Chart:
             "y": y,
             "y_right": y_right,
             "legend": legend,
+            "scales": scales,
+            "guides": guides,
             "padding": padding,
             "tooltip": tooltip,
             "zoom": zoom,
@@ -1011,6 +1036,7 @@ class Chart:
         curve: Curve | None = None,
         label: str | None = None,
         legend_group: str | None = None,
+        legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
@@ -1049,6 +1075,7 @@ class Chart:
                 "curve": curve,
                 "label": label,
                 "legendGroup": _legend_group(legend_group, "line"),
+                "legend": _mark_legend(legend, "line"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "line"),
                 "panel": panel,
@@ -1084,6 +1111,7 @@ class Chart:
         curve: Curve | None = None,
         label: str | None = None,
         legend_group: str | None = None,
+        legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
@@ -1219,6 +1247,7 @@ class Chart:
                 "curve": curve,
                 "label": label,
                 "legendGroup": _legend_group(legend_group, "area"),
+                "legend": _mark_legend(legend, "area"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "area"),
                 "panel": panel,
@@ -1242,6 +1271,7 @@ class Chart:
         fill_opacity: float | None = None,
         label: str | None = None,
         legend_group: str | None = None,
+        legend: Literal[False] | None = None,
         labels: bool | dict[str, Any] = False,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
@@ -1298,6 +1328,7 @@ class Chart:
                 "fillOpacity": fill_opacity,
                 "label": label,
                 "legendGroup": _legend_group(legend_group, "bar"),
+                "legend": _mark_legend(legend, "bar"),
                 "labels": None if labels is False else labels,
                 "axis": axis,
                 "facet": _mark_facet(facet, "bar"),
@@ -1323,6 +1354,7 @@ class Chart:
         stroke_width: float | None = None,
         label: str | None = None,
         legend_group: str | None = None,
+        legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
@@ -1373,6 +1405,7 @@ class Chart:
                 "strokeWidth": float(stroke_width) if stroke_width is not None else None,
                 "label": label,
                 "legendGroup": _legend_group(legend_group, "rug"),
+                "legend": _mark_legend(legend, "rug"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "rug"),
                 "panel": panel,
@@ -1403,6 +1436,7 @@ class Chart:
         cap: float | None = None,
         label: str | None = None,
         legend_group: str | None = None,
+        legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
@@ -1490,6 +1524,7 @@ class Chart:
                 "cap": cap,
                 "label": label,
                 "legendGroup": _legend_group(legend_group, "error_bar"),
+                "legend": _mark_legend(legend, "error_bar"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "error_bar"),
                 "panel": panel,
@@ -1527,6 +1562,7 @@ class Chart:
         swarm: bool = False,
         label: str | None = None,
         legend_group: str | None = None,
+        legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
@@ -1634,6 +1670,7 @@ class Chart:
                 "swarm": swarm or None,
                 "label": label,
                 "legendGroup": _legend_group(legend_group, "point"),
+                "legend": _mark_legend(legend, "point"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "point"),
                 "panel": panel,
@@ -1667,6 +1704,7 @@ class Chart:
         color_midpoint: float | None = None,
         label: str | None = None,
         legend_group: str | None = None,
+        legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
@@ -1748,6 +1786,7 @@ class Chart:
                     "colorDomain": _range(color_domain, "histogram color_domain"),
                     "colorMidpoint": _midpoint(color_midpoint, color_domain, "histogram"),
                     "label": label,
+                    "legend": _mark_legend(legend, "histogram"),
                     "facet": _mark_facet(facet, "histogram"),
                     "panel": panel,
                     "clip": _clip(clip, "histogram"),
@@ -1830,6 +1869,7 @@ class Chart:
                 "fillOpacity": fill_opacity,
                 "label": label,
                 "legendGroup": _legend_group(legend_group, "histogram"),
+                "legend": _mark_legend(legend, "histogram"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "histogram"),
                 "panel": panel,
@@ -1854,6 +1894,7 @@ class Chart:
         fall: str | None = None,
         label: str | None = None,
         legend_group: str | None = None,
+        legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
@@ -1889,6 +1930,7 @@ class Chart:
                 "fall": fall,
                 "label": label,
                 "legendGroup": _legend_group(legend_group, "candlestick"),
+                "legend": _mark_legend(legend, "candlestick"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "candlestick"),
                 "panel": panel,
@@ -2062,6 +2104,7 @@ class Chart:
         fill_opacity: float | None = None,
         label: str | None = None,
         legend_group: str | None = None,
+        legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
@@ -2144,6 +2187,7 @@ class Chart:
                 "notch": notch,
                 "outliers": outliers,
                 "legendGroup": _legend_group(legend_group, "boxplot"),
+                "legend": _mark_legend(legend, "boxplot"),
                 "clip": _clip(clip, "boxplot"),
             },
             x,
@@ -2175,6 +2219,7 @@ class Chart:
         fill_opacity: float | None = None,
         label: str | None = None,
         legend_group: str | None = None,
+        legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
@@ -2235,6 +2280,7 @@ class Chart:
                 "widthMethod": width_method,
                 "outliers": outliers,
                 "legendGroup": _legend_group(legend_group, "boxen"),
+                "legend": _mark_legend(legend, "boxen"),
                 "clip": _clip(clip, "boxen"),
             },
             x,
@@ -2264,6 +2310,7 @@ class Chart:
         fill_opacity: float | None = None,
         label: str | None = None,
         legend_group: str | None = None,
+        legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
@@ -2311,6 +2358,7 @@ class Chart:
                 "split": split,
                 "inner": inner,
                 "legendGroup": _legend_group(legend_group, "violin"),
+                "legend": _mark_legend(legend, "violin"),
                 "clip": _clip(clip, "violin"),
             },
             x,
@@ -3239,6 +3287,7 @@ class Chart:
         x_banded: bool = False,
         y_banded: bool = False,
         label: str | None = None,
+        legend: Literal[False] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
         clip: Clip | None = None,
@@ -3316,6 +3365,7 @@ class Chart:
             "reduce": reduce,
             "sampling": sampled,
             "label": label,
+            "legend": _mark_legend(legend, "heatmap"),
             "facet": _mark_facet(facet, "heatmap"),
             "panel": panel,
             "clip": _clip(clip, "heatmap"),
@@ -3459,6 +3509,7 @@ class Chart:
         stroke_width: float | None = None,
         fill_opacity: float | None = None,
         label: str | None = None,
+        legend: Literal[False] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
         clip: Clip | None = None,
@@ -3544,6 +3595,7 @@ class Chart:
                 "strokeWidth": None if stroke_width is None else float(stroke_width),
                 "fillOpacity": None if fill_opacity is None else float(fill_opacity),
                 "label": label,
+                "legend": _mark_legend(legend, "contour"),
                 "facet": _mark_facet(facet, "contour"),
                 "panel": panel,
                 "clip": _clip(clip, "contour"),
@@ -4841,6 +4893,7 @@ _NODE_FIELDS = ("node", "color", "size")
 #: which decide the columns sent.
 OPTIONS = (
     *("title", "description", "width", "height", "x", "y", "y_right", "legend", "padding"),
+    *("scales", "guides"),
     "tooltip",
     *("zoom", "brush", "sync", "animation"),
     *("renderer", "theme"),
@@ -5047,6 +5100,8 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
         "y": _axis(settings["y"], "Chart y"),
         "yRight": _axis(settings["y_right"], "Chart y_right"),
         "legend": legend_spec(settings["legend"]),
+        "scales": scales_spec(settings.get("scales")),
+        "guides": guides_spec(settings.get("guides")),
         "padding": insets(settings.get("padding"), "Chart padding"),
         "tooltip": tooltip
         if tooltip is None or isinstance(tooltip, bool)
@@ -5257,12 +5312,14 @@ def _column_spec(column: Column, buffers: list[bytes]) -> dict[str, Any]:
     return {"type": column.kind, "dtype": dtype, "buffer": index}
 
 
-def _axis(axis: Axis | dict[str, Any] | None, role: str = "Chart x") -> dict[str, Any] | None:
+def _axis(
+    axis: AxisOptions | dict[str, Any] | None, role: str = "Chart x"
+) -> dict[str, Any] | None:
     """An axis's spec; `role` is where it was given, as "Chart y" or "Panel x"."""
     if axis is None:
         return None
     if isinstance(axis, dict):
-        axis = Axis(**axis)
+        axis = AxisOptions(**axis)
     if role != "Chart x" and axis.breaks is not None:
         raise ValueError(f"{role} breaks: only the chart's x axis takes breaks; drop them")
     if role != "Chart x" and axis.seams is not None:
@@ -5277,12 +5334,16 @@ def _axis(axis: Axis | dict[str, Any] | None, role: str = "Chart x") -> dict[str
 
 
 def axis_scope(settings: Mapping[str, Any], axis: str) -> str | None:
-    """The scope the chart's ``x``, ``y``, or ``y_right`` (``axis``) sets, if any."""
-    given = settings.get(axis)
-    if given is None:
-        return None
-    scope = given.get("scope") if isinstance(given, Mapping) else given.scope
-    return scope if isinstance(scope, str) else None
+    """The scope the chart sets for its ``x``, ``y``, or ``y_right`` scale
+    (``axis``), if any: in ``scales``, or else in the axis' options."""
+    scales = settings.get("scales")
+    for given in (scales.get(axis) if isinstance(scales, Mapping) else None, settings.get(axis)):
+        if given is None:
+            continue
+        scope = given.get("scope") if isinstance(given, Mapping) else getattr(given, "scope", None)
+        if isinstance(scope, str):
+            return scope
+    return None
 
 
 def scope_of(settings: Mapping[str, Any], axis: str, *, subplots: bool) -> str:
@@ -5588,6 +5649,16 @@ def _panel_weights(
     return values
 
 
+def _mark_legend(legend: Any, mark: str) -> Literal[False] | None:
+    """A mark's ``legend``: ``False`` leaves it out of the chart's legends."""
+    if legend is not None and legend is not False:
+        raise ValueError(
+            f"{mark} legend: expected False, which leaves the mark out of the legends; "
+            f"received {shown(legend)}"
+        )
+    return legend
+
+
 def _legend_group(group: str | None, mark: str) -> str | None:
     """A mark's legend group: a name, which marks sharing it share series by."""
     if group is not None and not (isinstance(group, str) and group):
@@ -5772,11 +5843,11 @@ def _unknown_option(function: Callable[..., Any], name: str, known: set[str]) ->
     elif name in ("xlim", "ylim"):
         axis = name[0]
         if constructor:
-            hint = f"did you mean {axis}=hg.Axis(domain=...)?"
+            hint = f"did you mean {axis}=hg.AxisOptions(domain=...)?"
         elif f"{axis}_axis" in known:
-            hint = f"did you mean {axis}_axis=hg.Axis(domain=...)?"
+            hint = f"did you mean {axis}_axis=hg.AxisOptions(domain=...)?"
         elif method:
-            hint = f"set the chart's domain with hg.Chart({axis}=hg.Axis(domain=...))"
+            hint = f"set the chart's domain with hg.Chart({axis}=hg.AxisOptions(domain=...))"
     return f"{location}: no option {name!r}; {hint}"
 
 

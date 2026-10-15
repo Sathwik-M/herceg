@@ -45,6 +45,8 @@ const optionProps = {
   x: Object as Option<"x">,
   y: Object as Option<"y">,
   yRight: Object as Option<"yRight">,
+  scales: Object as Option<"scales">,
+  guides: Array as Option<"guides">,
   facet: Object as Option<"facet">,
   panels: Object as Option<"panels">,
   legend: { type: [Boolean, Object] as Option<"legend">, default: undefined },
@@ -115,13 +117,31 @@ function collectMarks(children: unknown, out: ChartMark[]): ChartMark[] {
   return out;
 }
 
-/** JSON with object keys sorted, so equal settings written in any order compare equal. */
+/**
+ * Ids of the functions options hold (tick generators, formatters), so that
+ * a new function compares as a change and the same one as none.
+ */
+const functionIds = new WeakMap<object, number>();
+let functions = 0;
+
+/**
+ * JSON with object keys sorted, so equal settings written in any order
+ * compare equal, and functions by identity.
+ */
 function canonical(value: unknown): string {
-  return JSON.stringify(value, (_, v: unknown) =>
-    v && typeof v === "object" && !Array.isArray(v)
+  return JSON.stringify(value, (_, v: unknown) => {
+    if (typeof v === "function") {
+      let id = functionIds.get(v);
+      if (id === undefined) {
+        id = ++functions;
+        functionIds.set(v, id);
+      }
+      return `function ${id}`;
+    }
+    return v && typeof v === "object" && !Array.isArray(v)
       ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
-      : v,
-  );
+      : v;
+  });
 }
 
 /**
@@ -243,7 +263,8 @@ export const Chart = defineComponent({
       return {
         marks: collectMarks(slots.default?.(), marks),
         options: { ...(options as Options), ...(rendered && { renderTooltip }) },
-        // The tooltip's renderer is a function, which canonical JSON leaves out.
+        // The tooltip's renderer is the chart's own, calling the slot: the key
+        // says whether there is one.
         key: `${canonical(options)}${rendered ? " rendered tooltip" : ""}`,
       };
     }

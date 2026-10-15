@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from .._chart import Axis, Chart, HelperOptions, Panel
+from .._chart import AxisOptions, Chart, HelperOptions, Panel
 from .._data import Column, Matrix
 from . import _numerics as numerics
 from . import _regression as regression
@@ -116,19 +116,25 @@ def pairplot(
             if corner and j > i:
                 # Left empty; panels of a column share their x settings.
                 panels.append(
-                    Panel(id, x=Axis(title=xlab, show=False), y=Axis(show=False, grid=False))
+                    Panel(
+                        id,
+                        x=AxisOptions(title=xlab, show=False),
+                        y=AxisOptions(show=False, grid=False),
+                    )
                 )
                 continue
             if i == j:
                 # A distribution has a count or density scale of its own: no y axis.
-                panels.append(Panel(id, title=xlab, x=Axis(title=xlab), y=Axis(show=False)))
+                panels.append(
+                    Panel(id, title=xlab, x=AxisOptions(title=xlab), y=AxisOptions(show=False))
+                )
                 if diagonal is not None:
                     marks.append(("diagonal", i, j))
                 continue
             # The first scatter plot of each row names its variable.
             first = j == (1 if i == 0 else 0)
-            y_axis = Axis(title=ylab if first else None, domain=y_range, nice=True)
-            panels.append(Panel(id, x=Axis(title=xlab), y=y_axis))
+            y_axis = AxisOptions(title=ylab if first else None, domain=y_range, nice=True)
+            panels.append(Panel(id, x=AxisOptions(title=xlab), y=y_axis))
             marks.append(("scatter", i, j))
     settings: dict[str, Any] = dict(options)
     settings.setdefault("width", _PAIR_PANEL * k + 80)
@@ -281,15 +287,15 @@ def jointplot(
     y_edges = (
         numerics.bin_edges(yv, None, bins, None, None, False, "jointplot") if len(rows) else empty
     )
-    hidden = Axis(show=False, grid=False)
+    hidden = AxisOptions(show=False, grid=False)
     settings: dict[str, Any] = dict(options)
     settings.setdefault("width", _JOINT_SIZE)
     settings.setdefault("height", _JOINT_SIZE)
     settings.update(
         panels=[
-            Panel("x", x=Axis(title=x), y=hidden),
+            Panel("x", x=AxisOptions(title=x), y=hidden),
             Panel("corner", x=hidden, y=hidden),
-            Panel("joint", x=Axis(title=x), y=Axis(title=y)),
+            Panel("joint", x=AxisOptions(title=x), y=AxisOptions(title=y)),
             Panel("y", x=hidden, y=hidden),
         ],
         panel_columns=2,
@@ -561,7 +567,7 @@ def clustermap(
         col_name: category_column(rank_col[cells_col.ravel()], [names[j] for j in col_order]),
         value_name: number_column(matrix.ravel()),
     }
-    hidden = Axis(show=False, grid=False)
+    hidden = AxisOptions(show=False, grid=False)
     settings: dict[str, Any] = dict(options)
     settings.setdefault("width", 640)
     settings.setdefault("height", 640)
@@ -570,8 +576,8 @@ def clustermap(
     settings.update(
         panels=[
             Panel("corner", x=hidden, y=hidden),
-            Panel("top", x=Axis(show=False), y=hidden),
-            Panel("left", x=hidden, y=Axis(show=False)),
+            Panel("top", x=AxisOptions(show=False), y=hidden),
+            Panel("left", x=hidden, y=AxisOptions(show=False)),
             Panel("matrix"),
         ],
         panel_columns=2,

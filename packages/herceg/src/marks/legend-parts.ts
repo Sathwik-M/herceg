@@ -48,22 +48,24 @@ function rampMarkup(item: RampItem, id: string): string {
 export function rampLegend(ramp: ColorRamp): LegendPart {
   const { title, domain, midpoint, stops } = ramp;
   const key = `ramp|${title}|${domain.join()}|${midpoint}|${stops.join()}`;
+  const [lo, hi] = domain;
+  // Where the midpoint falls between the ends, for diverging ramps.
+  const middle =
+    midpoint === undefined
+      ? undefined
+      : hi > lo
+        ? Math.min(1, Math.max(0, fraction(midpoint, lo, hi)))
+        : 0.5;
+  const offsets = rampOffsets(stops, middle);
   return {
     key,
+    colorbar: { kind: "ramp", ramp, offsets },
     items(text: LegendText, out: LegendOut): LegendFlowItem[] {
       const { measure, lineHeight, locale } = text;
-      const [lo, hi] = domain;
       const low = formatNumber(lo, locale);
       const high = formatNumber(hi, locale);
       const titleWidth = textWidth(title, text.title, measure) + 10;
       const lowWidth = textWidth(low, text.value, measure) + 6;
-      // Where the midpoint falls between the ends, for diverging ramps.
-      const middle =
-        midpoint === undefined
-          ? undefined
-          : hi > lo
-            ? Math.min(1, Math.max(0, fraction(midpoint, lo, hi)))
-            : 0.5;
       const at = out.guides.length;
       out.guides.push(placeRamp(0, 0));
       function placeRamp(x: number, y: number): RampGuide {
@@ -90,7 +92,7 @@ export function rampLegend(ramp: ColorRamp): LegendPart {
               height: LEGEND_SWATCH,
               radius: 2,
               stops,
-              offsets: rampOffsets(stops, middle),
+              offsets,
             },
             label(start + RAMP_WIDTH + 6, y, high, text.value, text),
           ],
@@ -125,6 +127,7 @@ export function keyLegend(key: GlyphKey): LegendPart {
   const id = `key|${title}|${channel}|${entries.map((e) => `${e.label} ${e.glyph} ${e.color}`).join("|")}`;
   return {
     key: id,
+    channel,
     breaks: true,
     items(text: LegendText, out: LegendOut): LegendFlowItem[] {
       const { measure, lineHeight } = text;

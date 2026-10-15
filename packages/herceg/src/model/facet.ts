@@ -7,13 +7,14 @@
 
 import type { NumericArray } from "../data/column.ts";
 import type { Table } from "../data/table.ts";
+import type { AxisOptions } from "../guides/options.ts";
 import { type Align, aligned } from "../layout/place.ts";
 import type { CustomSpec } from "../marks/custom.ts";
 import type { LayoutMark } from "../marks/layout-mark.ts";
 import { type BandContext, type Bands, type Mark, usesY } from "../marks/mark.ts";
 import type { Series } from "../marks/series.ts";
 import type { Rect } from "../scene/scene.ts";
-import type { AxisSpec, FacetSpec, ScaleScope } from "../spec/spec.ts";
+import type { FacetSpec, ScaleScope } from "../spec/spec.ts";
 import type { MarkSeries } from "./inspect.ts";
 import {
   type AnnotatedPanel,
@@ -254,7 +255,11 @@ export class Facet implements PanelLayout {
       : "facet by fields with fewer values";
   }
 
-  panelAxis(_axis: PanelAxis, _index: number, chart: AxisSpec | undefined): AxisSpec | undefined {
+  panelAxis(
+    _axis: PanelAxis,
+    _index: number,
+    chart: AxisOptions | undefined,
+  ): AxisOptions | undefined {
     return chart;
   }
 
@@ -279,7 +284,7 @@ export class Facet implements PanelLayout {
     split: PanelSplit,
     columns: number,
     axis: PanelAxis,
-    chart: AxisSpec | undefined,
+    chart: AxisOptions | undefined,
   ): ScaleGroups {
     return typedGroups(groups(scope, split, columns, axis), axis, () => chart);
   }

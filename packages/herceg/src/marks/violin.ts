@@ -483,6 +483,7 @@ export function violin<S extends Schema>(
       "fillOpacity",
       "label",
       "legendGroup",
+      "legend",
       "axis",
       "facet",
       "panel",

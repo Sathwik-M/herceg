@@ -22,6 +22,7 @@
 import type { Table } from "../data/table.ts";
 import { facesDrawing } from "../draw/faces.ts";
 import { type Formatter, formatNumber, timeValueFormatter } from "../format/format.ts";
+import type { AxisOptions } from "../guides/options.ts";
 import type { Mapping } from "../lod/m4.ts";
 import {
   type AxisContext,
@@ -36,7 +37,7 @@ import type { LegendEntry, LegendPart } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
 import { TIME_UNIT_MS } from "../scale/time.ts";
 import type { Batch3D, Batches3D, FaceGeometry, Geometry, Rect } from "../scene/scene.ts";
-import type { AxisSpec, CameraSpec } from "../spec/spec.ts";
+import type { CameraSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import { type Axis3D, boxGeometry, boxMargin } from "../three/axes.ts";
 import {
@@ -639,7 +640,7 @@ function planAxis3D(
   name: AxisName,
   k: number,
   layers: readonly Layer3D[],
-  spec: AxisSpec | undefined,
+  spec: AxisOptions | undefined,
   config: ChartConfig,
 ): PlannedAxis {
   const log = spec?.type === "log";
@@ -696,7 +697,17 @@ function planAxis3D(
   }
   if (extent && spec?.zero && type !== "log")
     extent = [Math.min(0, extent[0]), Math.max(0, extent[1])];
-  const count = spec?.ticks ?? 5;
+  const { ticks, format } = spec ?? {};
+  // A 3D chart's axes take a number of ticks and Intl formats only.
+  if (
+    (ticks !== undefined && typeof ticks !== "number") ||
+    typeof format === "function" ||
+    (format && ("number" in format || "time" in format))
+  )
+    throw new Error(
+      `chart ${name}: a 3D chart's axes take a number of ticks and Intl formats; give ticks a number and format Intl options`,
+    );
+  const count = ticks ?? 5;
   const domain = spec?.domain
     ? usableDomain(spec.domain, type)
     : niceAxisDomain(usableDomain(extent, type), context, count, spec?.nice ?? true);

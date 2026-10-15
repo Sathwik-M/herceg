@@ -80,6 +80,8 @@ interface HeatmapCommon<S extends Schema> {
    */
   sampling?: { reduce?: "mean" | "max" | "min" };
   label?: string;
+  /** `false` leaves the mark out of the chart's legends. */
+  legend?: false;
   /** With the chart's `facet`, draw all cells in every panel instead of splitting them. */
   facet?: "repeat";
   /**
@@ -1386,6 +1388,7 @@ export function heatmap<S extends Schema>(
   const shared = definedFields(options, [
     "tooltip",
     "label",
+    "legend",
     "id",
     "facet",
     "panel",

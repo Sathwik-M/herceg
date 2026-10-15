@@ -12,7 +12,7 @@ from typing import Any, Literal, TypedDict
 import numpy as np
 
 from .. import _data as hg_data
-from .._chart import Axis, Chart, HelperOptions
+from .._chart import AxisOptions, Chart, HelperOptions
 from .._data import Column
 from . import _numerics as numerics
 from ._common import (
@@ -53,7 +53,7 @@ Element = Literal["bars", "step", "poly"]
 Orient = Literal["v", "h", "x", "y"]
 BandwidthMethod = Literal["scott", "silverman"] | float
 
-#: Axis titles of what histogram bars measure.
+#: AxisOptions titles of what histogram bars measure.
 _MEASURES = {
     "count": "Count",
     "frequency": "Frequency",
@@ -652,7 +652,7 @@ def rugplot(
     is_x = axis == "x"
     # A rug alone has nothing on its other axis.
     settings: dict[str, Any] = dict(options)
-    settings.setdefault("y_axis" if is_x else "x_axis", Axis(show=False, grid=False))
+    settings.setdefault("y_axis" if is_x else "x_axis", AxisOptions(show=False, grid=False))
     chart = make_chart(
         table,
         settings,

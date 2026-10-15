@@ -277,6 +277,8 @@ export interface MarkIdentity {
   readonly clip?: Clip | undefined;
   /** Series of marks in the same legend group share colors, legend entries, and visibility by name. */
   readonly legendGroup?: string | undefined;
+  /** `false` leaves the mark out of the chart's legends. */
+  readonly legend?: false | undefined;
   /** What tooltips show of the rows of marks whose points are rows, besides their values. */
   readonly tooltip?: Frozen<MarkTooltipSpec> | undefined;
 }

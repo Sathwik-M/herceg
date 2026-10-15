@@ -134,6 +134,8 @@ interface CustomBase {
    */
   zero?: "x" | "y";
   id?: string;
+  /** `false` leaves the mark's series out of the legend; they still draw. */
+  legend?: false;
 }
 
 /** A custom mark that only uses the scales other marks set. */
@@ -192,6 +194,7 @@ export interface CustomSpec {
   series?: string;
   label?: string;
   tooltip?: MarkTooltipSpec;
+  legend?: false;
 }
 
 /** A series as `draw` and `pointText` see it. */
@@ -236,7 +239,7 @@ export class CustomMark implements Mark<Frozen<CustomSpec>> {
   constructor(table: Table | undefined, options: CustomDataOptions<Schema>) {
     const spec: CustomSpec = {
       type: "custom",
-      ...definedFields(options, ["id", "axis", "zero", "facet", "panel", "clip"]),
+      ...definedFields(options, ["id", "axis", "zero", "facet", "panel", "clip", "legend"]),
     };
     if (options.zero !== undefined && options.zero !== "x" && options.zero !== "y")
       throw new TypeError(

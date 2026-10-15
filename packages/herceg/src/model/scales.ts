@@ -6,8 +6,9 @@
 // to panels, so one subplot can put categories on its y axis while another
 // puts numbers on its own.
 
+import type { ChartAxisOptions } from "../guides/options.ts";
 import type { Mark } from "../marks/mark.ts";
-import type { AxisSpec, ChartAxisSpec, ScaleScope } from "../spec/spec.ts";
+import type { AxisSpec, ScaleScope } from "../spec/spec.ts";
 import type { AxisType } from "./axis.ts";
 
 /** The position scales the short forms define: x, the left y, and the right y. */
@@ -18,9 +19,9 @@ export type Scopes = Readonly<Record<ScaleName, ScaleScope>>;
 
 /** The scales' settings a chart's scopes are read from. */
 export interface ScaledConfig {
-  readonly x?: ChartAxisSpec | undefined;
-  readonly y?: ChartAxisSpec | undefined;
-  readonly yRight?: ChartAxisSpec | undefined;
+  readonly x?: ChartAxisOptions | undefined;
+  readonly y?: ChartAxisOptions | undefined;
+  readonly yRight?: ChartAxisOptions | undefined;
 }
 
 /**

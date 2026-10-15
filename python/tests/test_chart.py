@@ -21,7 +21,11 @@ DATA = {
 def test_spec_uses_the_portable_format():
     chart = (
         hg.Chart(
-            DATA, title="Latency", y=hg.Axis(title="ms", type="log"), time_zone="UTC", zoom=True
+            DATA,
+            title="Latency",
+            y=hg.AxisOptions(title="ms", type="log"),
+            time_zone="UTC",
+            zoom=True,
         )
         .line(x="t", y=["p50", "p99"], stroke_width=2)
         .rule(y=250, label="SLO")
@@ -306,7 +310,7 @@ def test_error_bars_go_either_way():
 
 def test_marks_go_on_the_right_axis():
     chart = (
-        hg.Chart(DATA, y_right=hg.Axis(title="p99"), width=300, height=150)
+        hg.Chart(DATA, y_right=hg.AxisOptions(title="p99"), width=300, height=150)
         .line(x="t", y="p50")
         .line(x="t", y="p99", axis="right")
         .rule(y=5, axis="right")
@@ -364,7 +368,7 @@ def test_facets_split_marks_into_panels():
 
 def test_right_axes_in_facets_and_panels():
     chart = (
-        hg.Chart(DATA, facet="host", y_right=hg.Axis(scope="panel"), width=400, height=200)
+        hg.Chart(DATA, facet="host", y_right=hg.AxisOptions(scope="panel"), width=400, height=200)
         .line(x="t", y="p50")
         .line(x="t", y="p99", axis="right")
     )
@@ -373,7 +377,7 @@ def test_right_axes_in_facets_and_panels():
     assert spec["marks"][1]["axis"] == "right"
     assert chart.to_svg().count("<svg") == 1
     subplots = (
-        hg.Chart(DATA, panels=[hg.Panel("a", y_right=hg.Axis(title="p99", type="log")), "b"])
+        hg.Chart(DATA, panels=[hg.Panel("a", y_right=hg.AxisOptions(title="p99", type="log")), "b"])
         .line(x="t", y="p50", panel="a")
         .line(x="t", y="p99", panel="a", axis="right")
         .line(x="t", y="p50", panel="b")
@@ -383,16 +387,19 @@ def test_right_axes_in_facets_and_panels():
     assert ">p99</text>" in subplots.to_svg()
     with pytest.raises(
         ValueError,
-        match='Axis scope: expected "chart", "panel", "row", or "column"; received "free"',
+        match='AxisOptions scope: expected "chart", "panel", "row", or "column"; received "free"',
     ):
-        hg.Axis(scope="free")  # type: ignore[arg-type]
+        hg.AxisOptions(scope="free")  # type: ignore[arg-type]
     # A scope in a chart of one panel has one instance to give.
-    assert "<svg" in hg.Chart(DATA, y_right=hg.Axis(scope="panel")).line(x="t", y="p50").to_svg()
+    assert (
+        "<svg"
+        in hg.Chart(DATA, y_right=hg.AxisOptions(scope="panel")).line(x="t", y="p50").to_svg()
+    )
     with pytest.raises(
         ValueError, match="Panel y scope: only the chart's x, y, and y_right take a scope"
     ):
-        hg.Chart(DATA, panels=[hg.Panel("a", y=hg.Axis(scope="panel"))]).to_spec()
-    zoomed = hg.Chart(DATA, facet="host", zoom="xy", y_right=hg.Axis(scope="panel"))
+        hg.Chart(DATA, panels=[hg.Panel("a", y=hg.AxisOptions(scope="panel"))]).to_spec()
+    zoomed = hg.Chart(DATA, facet="host", zoom="xy", y_right=hg.AxisOptions(scope="panel"))
     with pytest.raises(
         ValueError,
         match=r"Chart zoom: .* right y scales of their own \(y_right scope\) zoom along x only",
@@ -426,7 +433,9 @@ def test_facets_lay_panels_out_by_row_and_column():
 
 def test_facet_panels_can_have_y_scales_of_their_own():
     data = {**DATA, "zone": ["x", "y"]}
-    chart = hg.Chart(data, facet_column="zone", y=hg.Axis(scope="panel")).line(x="t", y="p50")
+    chart = hg.Chart(data, facet_column="zone", y=hg.AxisOptions(scope="panel")).line(
+        x="t", y="p50"
+    )
     spec, _ = chart.to_spec()
     assert spec["y"] == {"scope": "panel"}
     assert "<svg" in chart.to_svg()
@@ -434,21 +443,26 @@ def test_facet_panels_can_have_y_scales_of_their_own():
         ValueError,
         match=r"Chart zoom: .* y scales of their own \(y scope\) zoom along x",
     ):
-        hg.Chart(data, facet="host", y=hg.Axis(scope="panel"), zoom="xy")
+        hg.Chart(data, facet="host", y=hg.AxisOptions(scope="panel"), zoom="xy")
 
 
 def test_panels_can_have_x_scales_of_their_own():
     data = {**DATA, "zone": ["x", "y"]}
-    chart = hg.Chart(data, facet_column="zone", x=hg.Axis(scope="panel"), y=hg.Axis(scope="row"))
+    chart = hg.Chart(
+        data, facet_column="zone", x=hg.AxisOptions(scope="panel"), y=hg.AxisOptions(scope="row")
+    )
     spec, _ = chart.line(x="t", y="p50").to_spec()
     assert (spec["x"], spec["y"]) == ({"scope": "panel"}, {"scope": "row"})
     assert "<svg" in chart.to_svg()
     subplots = (
         hg.Chart(
             DATA,
-            panels=[hg.Panel("a", x=hg.Axis(title="Time")), hg.Panel("b", x={"type": "log"})],
+            panels=[
+                hg.Panel("a", x=hg.AxisOptions(title="Time")),
+                hg.Panel("b", x={"type": "log"}),
+            ],
             panel_row_heights=[2, 1],
-            x=hg.Axis(scope="panel"),
+            x=hg.AxisOptions(scope="panel"),
         )
         .line(x="t", y="p50", panel="a")
         .line(x="p50", y="p99", panel="b")
@@ -469,9 +483,9 @@ def test_panels_can_have_categories_of_their_own():
         "kind": ["p", "p", "q", "q", "q"],
         "units": [1, 2, 3, 4, 5],
     }
-    chart = hg.Chart(sales, facet="region", x=hg.Axis(scope="panel"), width=500, height=250).bar(
-        x="product", y="units", series="kind", stack=True
-    )
+    chart = hg.Chart(
+        sales, facet="region", x=hg.AxisOptions(scope="panel"), width=500, height=250
+    ).bar(x="product", y="units", series="kind", stack=True)
     spec, _ = chart.to_spec()
     assert spec["x"]["scope"] == "panel"
     assert spec["marks"][0]["stack"] is True
@@ -486,7 +500,7 @@ def test_panels_can_have_categories_of_their_own():
     assert ">audi</text>" in subplots.to_svg()
     # Error bars and candlesticks draw on each panel's own categories too.
     intervals = (
-        hg.Chart(sales, facet="region", x=hg.Axis(scope="panel"), width=500, height=250)
+        hg.Chart(sales, facet="region", x=hg.AxisOptions(scope="panel"), width=500, height=250)
         .error_bar(x="product", y="units", y_error="units")
         .candlestick(x="product", open="units", high="units", low="units", close="units")
     )
@@ -496,14 +510,14 @@ def test_panels_can_have_categories_of_their_own():
         ValueError,
         match=r'Chart sync: panels with categories of their own \(x scope "row"\) cannot sync yet',
     ):
-        hg.Chart(sales, facet="region", x=hg.Axis(scope="row"), sync="board").bar(
+        hg.Chart(sales, facet="region", x=hg.AxisOptions(scope="row"), sync="board").bar(
             x="product", y="units"
         )
     with pytest.raises(
         ValueError,
         match="Chart brush: panels with y categories of their own brush along x only",
     ):
-        hg.Chart(sales, facet="region", y=hg.Axis(scope="panel"), brush="xy").bar(
+        hg.Chart(sales, facet="region", y=hg.AxisOptions(scope="panel"), brush="xy").bar(
             x="units", y="product"
         )
     # Shared, as before, the same marks are fine.
@@ -520,8 +534,8 @@ def test_heatmaps_and_points_have_categories_of_their_own():
     cells = hg.Chart(
         load,
         facet="region",
-        x=hg.Axis(scope="panel"),
-        y=hg.Axis(scope="panel"),
+        x=hg.AxisOptions(scope="panel"),
+        y=hg.AxisOptions(scope="panel"),
         width=500,
         height=250,
     ).heatmap(x="hour", y="host", color="cpu")
@@ -533,9 +547,9 @@ def test_heatmaps_and_points_have_categories_of_their_own():
     # One image of cells per panel, each panel labeling its own categories.
     assert svg.count("<image ") == 2
     assert all(f">{label}</text>" in svg for label in ("a", "b", "d", "p", "q"))
-    strip = hg.Chart(load, facet="region", x=hg.Axis(scope="panel"), width=500, height=250).point(
-        x="hour", y="cpu"
-    )
+    strip = hg.Chart(
+        load, facet="region", x=hg.AxisOptions(scope="panel"), width=500, height=250
+    ).point(x="hour", y="cpu")
     spec, _ = strip.to_spec()
     assert (spec["marks"][0]["x"], spec["marks"][0]["y"]) == ("hour", "cpu")
     assert ">d</text>" in strip.to_svg()
@@ -550,7 +564,7 @@ def test_histograms_and_box_plots_split_by_facets():
         "host": ["p", "p", "q", "q", "r", "r"],
         "ms": [1.0, 2.0, 3.0, 110.0, 120.0, 190.0],
     }
-    binned = hg.Chart(load, facet="region", x=hg.Axis(scope="panel"), width=500, height=250)
+    binned = hg.Chart(load, facet="region", x=hg.AxisOptions(scope="panel"), width=500, height=250)
     binned = binned.histogram(x="ms", bins={"step": 10})
     spec, _ = binned.to_spec()
     assert spec["facet"] == {"field": "region"}
@@ -566,14 +580,16 @@ def test_histograms_and_box_plots_split_by_facets():
     # Each panel's bins span its own rows: N's 0 to 10, with ticks 0, 5, 10;
     # S's 110 to 190, with ticks 120 to 180.
     assert ">5</text>" in svg and ">180</text>" in svg
-    boxes = hg.Chart(load, facet="region", x=hg.Axis(scope="panel"), width=500, height=250)
+    boxes = hg.Chart(load, facet="region", x=hg.AxisOptions(scope="panel"), width=500, height=250)
     boxes = boxes.boxplot(x="host", y="ms")
     spec, _ = boxes.to_spec()
     assert spec["marks"][0] == {"type": "boxplot", "data": "data", "x": "host", "y": "ms"}
     svg = boxes.to_svg()
     # N's p and q, S's q and r, each panel labeling its own.
     assert all(f">{label}</text>" in svg for label in ("p", "q", "r"))
-    sideways = hg.Chart(load, facet="region", y=hg.Axis(scope="panel")).violin(x="ms", y="host")
+    sideways = hg.Chart(load, facet="region", y=hg.AxisOptions(scope="panel")).violin(
+        x="ms", y="host"
+    )
     assert sideways.to_spec()[0]["y"]["scope"] == "panel"
     labeled = hg.Chart(load, facet="region", width=500, height=250).text(
         x="ms", y="ms", text_field="host"
@@ -822,13 +838,13 @@ def test_heatmaps_along_number_axes_have_no_categories_to_resolve():
         "cpu": np.array([1.0, 2.0, 3.0, 4.0]),
     }
     # x scales of their own sync as any number axis does; banded hours are categories.
-    hg.Chart(load, facet="region", x=hg.Axis(scope="panel"), sync="board").heatmap(
+    hg.Chart(load, facet="region", x=hg.AxisOptions(scope="panel"), sync="board").heatmap(
         x="hour", y="host", color="cpu"
     ).to_spec()
     with pytest.raises(
         ValueError, match=r"Chart sync: panels with categories of their own \(x scope"
     ):
-        hg.Chart(load, facet="region", x=hg.Axis(scope="panel"), sync="board").heatmap(
+        hg.Chart(load, facet="region", x=hg.AxisOptions(scope="panel"), sync="board").heatmap(
             x="hour", y="host", color="cpu", x_banded=True
         )
 
@@ -875,7 +891,7 @@ def test_calendar_heatmaps_lay_out_days():
         hg.Chart(
             {**days, "team": ["a", "b"] * 6 + ["a"]},
             facet="team",
-            y=hg.Axis(scope="panel"),
+            y=hg.AxisOptions(scope="panel"),
             sync="board",
         ).heatmap(date="day", color="commits")
 
@@ -980,18 +996,20 @@ def test_theme_builders_match_typescript():
         hg.Chart(DATA, theme={"style": {"fontsize": 12}})
     with pytest.raises(ValueError, match="TextStyle font_weight: expected a whole number"):
         hg.TextStyle(font_weight=1200)
-    with pytest.raises(ValueError, match='Axis style: styles "axis_line", "tick", "tick_label"'):
-        hg.Chart(DATA, y=hg.Axis(style=hg.Style(plot=hg.PlotStyle(fill="#eee")))).to_spec()
+    with pytest.raises(
+        ValueError, match='AxisOptions style: styles "axis_line", "tick", "tick_label"'
+    ):
+        hg.Chart(DATA, y=hg.AxisOptions(style=hg.Style(plot=hg.PlotStyle(fill="#eee")))).to_spec()
 
 
 def test_titles_legends_and_padding_reach_the_spec():
     chart = hg.Chart(
         DATA,
         title=hg.Title("Weekly", place=hg.Place(side="bottom"), style={"align": "center"}),
-        legend=hg.Legend(place=hg.Place(side="right")),
+        legend=hg.LegendOptions(place=hg.Place(side="right")),
         padding={"top": 4, "left": 0},
         panels=[hg.Panel("a", title=hg.Title("A", style=hg.TextStyle(color="#c00")))],
-        y=hg.Axis(style=hg.Style(tick_label=hg.TextStyle(color="#c00"))),
+        y=hg.AxisOptions(style=hg.Style(tick_label=hg.TextStyle(color="#c00"))),
     ).line(x="t", y="p50", panel="a")
     spec, _ = chart.to_spec()
     assert spec["title"] == {
@@ -1068,9 +1086,9 @@ def test_format_options_match_typescript():
     from herceg._chart import _NUMBER_FORMAT, _TIME_FORMAT
 
     with pytest.raises(
-        ValueError, match='Axis format: "maximumFractionDigts" is not an Intl format option'
+        ValueError, match='AxisOptions format: "maximumFractionDigts" is not an Intl format option'
     ):
-        hg.Axis(format={"maximumFractionDigts": 2})
+        hg.AxisOptions(format={"maximumFractionDigts": 2})
     with pytest.raises(ValueError, match='bar labels: "hour" is not an Intl format option'):
         hg.Chart(DATA).bar(x="host", y="p50", labels={"hour": "2-digit"})
     root = Path(__file__).resolve().parents[2] / "packages" / "herceg" / "src"
@@ -1490,7 +1508,7 @@ def test_panels_draw_the_marks_that_name_them():
     chart = (
         hg.Chart(
             DATA,
-            panels=[hg.Panel("latency", title="Latency", y=hg.Axis(title="ms")), "spread"],
+            panels=[hg.Panel("latency", title="Latency", y=hg.AxisOptions(title="ms")), "spread"],
             width=400,
             height=300,
         )
@@ -1602,7 +1620,7 @@ def test_facets_of_layout_marks_refuse_what_the_browser_refuses():
         hg.Chart(SALES, facet="region").line(x="week", y="revenue").pie("product")
     with pytest.raises(ValueError, match="Chart zoom: a pie has no x axis"):
         hg.Chart(SALES, facet="region", zoom=True).pie("product")
-    seams = hg.Axis(breaks=[hg.Break(start=4, end=8)], seams=True)
+    seams = hg.AxisOptions(breaks=[hg.Break(start=4, end=8)], seams=True)
     with pytest.raises(ValueError, match="Chart x seams: a pie has no x axis"):
         hg.Chart(SALES, facet="region", x=seams).pie("product")
     with pytest.raises(
@@ -1678,7 +1696,7 @@ def test_a_layout_marks_panel_is_its_own():
         ValueError, match='pie panel: the rule with panel="\\*" draws in panel "b" too'
     ):
         hg.Chart(SALES, panels=["a", "b"]).rule(y=1, panel="*").pie("product", panel="b")
-    for own in ({"y": hg.Axis(title="n")}, {"y_right": hg.Axis(title="n")}):
+    for own in ({"y": hg.AxisOptions(title="n")}, {"y_right": hg.AxisOptions(title="n")}):
         with pytest.raises(
             ValueError, match='Panel y(_right)?: panel "b" draws a pie, which has no axes'
         ):
@@ -1853,7 +1871,10 @@ def test_tooltip_fields_belong_to_marks():
     assert "tooltip" not in spec
     # Axes write tooltips' values with formats of their own.
     spec, _ = hg.line(
-        data, "t", "p99", y_axis=hg.Axis(tooltip_format={"style": "unit", "unit": "millisecond"})
+        data,
+        "t",
+        "p99",
+        y_axis=hg.AxisOptions(tooltip_format={"style": "unit", "unit": "millisecond"}),
     ).to_spec()
     assert spec["y"] == {"tooltipFormat": {"style": "unit", "unit": "millisecond"}}
 
@@ -1900,7 +1921,7 @@ def test_helpers_name_themselves_for_options_they_do_not_take():
 
 def test_helpers_take_axes_as_x_axis_and_y_axis():
     spec, _ = hg.line(
-        DATA, "t", "p50", x_axis=hg.Axis(title="time"), y_axis={"title": "ms"}
+        DATA, "t", "p50", x_axis=hg.AxisOptions(title="time"), y_axis={"title": "ms"}
     ).to_spec()
     assert spec["x"] == {"title": "time"}
     assert spec["y"] == {"title": "ms"}
@@ -1959,8 +1980,9 @@ def test_helpers_take_every_keyword_argument_of_their_mark(helper):
     ]
     # A helper's facet is its chart's (the field splitting panels): its one
     # mark has no other marks' panels to repeat in. Its tooltip is the
-    # chart's too, whose fields go to the mark.
-    skipped = {"self", "data", "facet", "tooltip", *positional}
+    # chart's too, whose fields go to the mark, and its legend (legend=False
+    # leaves its one mark's series out as the mark's would).
+    skipped = {"self", "data", "facet", "tooltip", "legend", *positional}
     expected = [name for name in method if name not in skipped]
     assert keywords == expected
     for name in keywords:
@@ -2280,7 +2302,7 @@ def test_split_violin_exports_and_facets(horizontal, inner):
         "v": [1, 3, 2, 4, 5, 7],
     }
     chart = hg.Chart(
-        data, facet="p", **{"y" if horizontal else "x": hg.Axis(scope="panel")}
+        data, facet="p", **{"y" if horizontal else "x": hg.AxisOptions(scope="panel")}
     ).violin(
         "v" if horizontal else "g", "g" if horizontal else "v", series="s", split=True, inner=inner
     )

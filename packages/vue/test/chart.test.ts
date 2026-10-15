@@ -160,6 +160,28 @@ function spyUpdates(chart: HercegChart): (readonly unknown[])[] {
 }
 
 describe("<Chart>", () => {
+  it("takes a new tick format function as a change, and the same one as none", async () => {
+    const { view, chart } = chartRef();
+    const stars = (value: number) => `${value}*`;
+    const y = shallowRef({ format: stars });
+    mount(`<Chart ref="view" :y="y"><Line :data="metrics" x="t" y="a" /></Chart>`, () => ({
+      metrics,
+      view,
+      y,
+    }));
+    await chart().loading;
+    expect(host.textContent).toContain("4*");
+    const updates = spyUpdates(chart());
+    y.value = { format: stars };
+    await nextTick();
+    expect(updates).toHaveLength(0);
+    y.value = { format: (value: number) => `${value}!` };
+    await nextTick();
+    await frame();
+    expect(updates).toHaveLength(1);
+    expect(host.textContent).toContain("4!");
+  });
+
   for (const stack of ["fill", "center", "wiggle"] as const) {
     it(`passes ${stack} and inside-out area options through Vue`, () => {
       const { view, chart } = chartRef();

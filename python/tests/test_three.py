@@ -24,9 +24,9 @@ def test_subplot_export_pixels_follow_each_configured_camera(tmp_path, format):
                 width=800,
                 height=350,
                 legend=False,
-                x=hg.Axis(domain=(-1, 1)),
-                y=hg.Axis(domain=(-1, 1)),
-                z=hg.Axis(domain=(-1, 1)),
+                x=hg.AxisOptions(domain=(-1, 1)),
+                y=hg.AxisOptions(domain=(-1, 1)),
+                z=hg.AxisOptions(domain=(-1, 1)),
                 panels=[
                     hg.Panel("a", camera={"azimuth": azimuth}),
                     hg.Panel("b", camera={"azimuth": 90}),
@@ -98,7 +98,7 @@ def column(spec, buffers, name, table="data"):
 def test_point3d_emits_its_fields_and_the_chart_its_3d_options():
     chart = hg.Chart(
         points(),
-        z=hg.Axis(title="Height"),
+        z=hg.AxisOptions(title="Height"),
         camera=hg.Camera(azimuth=30, elevation=40, perspective=True),
         box_aspect=(2, 1, 1),
         zoom=True,

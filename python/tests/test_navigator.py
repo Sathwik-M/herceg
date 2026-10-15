@@ -50,7 +50,7 @@ def test_navigator_options_are_checked():
                     f'"{scope}"; give x scope "chart" or drop navigator'
                 ),
             ):
-                hg.Chart(KEYED, navigator=True, x=hg.Axis(scope=scope), **layout)  # type: ignore[arg-type]
+                hg.Chart(KEYED, navigator=True, x=hg.AxisOptions(scope=scope), **layout)  # type: ignore[arg-type]
 
 
 KEYED = {**DATA, "k": ["a", "b"] * 250, "r": ["x"] * 250 + ["y"] * 250}
@@ -67,7 +67,7 @@ def test_facets_and_panels_take_a_navigator():
     assert [panel["id"] for panel in spec["panels"]] == ["price", "volume"]
     for layout in ({"facet": "k", "facet_columns": 2}, {"facet_row": "r", "facet_column": "k"}):
         chart = hg.line(
-            KEYED, x="t", y="v", navigator=True, x_axis=hg.Axis(scope="chart"), **layout
+            KEYED, x="t", y="v", navigator=True, x_axis=hg.AxisOptions(scope="chart"), **layout
         )
         spec, _ = chart.to_spec()
         assert spec["navigator"] is True

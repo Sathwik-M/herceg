@@ -94,7 +94,8 @@
     void moves;
     const view = plain(options) as Options;
     const next = [...marks, ...entries.toSorted(byPosition).map((entry) => entry.mark)];
-    // The tooltip's renderer is a function, which canonical JSON leaves out.
+    // The tooltip's renderer is the chart's own, calling the prop: the key
+    // says whether there is one.
     const rendered = renderTooltip !== undefined;
     return {
       marks: next,

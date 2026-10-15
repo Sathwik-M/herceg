@@ -7,12 +7,11 @@
 // columns can travel as binary buffers next to the JSON (see `BinaryColumnSpec`).
 
 import type { Expression } from "../data/expression.ts";
-import type { Place } from "./place.ts";
+import type { FormatSpec, GuideSpec, LegendOptionsSpec, ScalesSpec, TicksSpec } from "./guides.ts";
 import type {
   AxisStyles,
   Halo,
   Insets,
-  LegendStyles,
   PanelStyles,
   StyleRoles,
   TextStyle,
@@ -20,6 +19,7 @@ import type {
 } from "./style.ts";
 
 export type { Expression, Operator } from "../data/expression.ts";
+export type * from "./guides.ts";
 export type * from "./place.ts";
 export type * from "./style.ts";
 
@@ -69,6 +69,18 @@ export interface ChartSpec {
    * the left axis.
    */
   yRight?: ChartAxisSpec;
+  /**
+   * The position scales' settings by name ("x", "y", "yRight"), over the
+   * short forms' scale settings (type, domain, nice, zero, scope).
+   */
+  scales?: ScalesSpec;
+  /**
+   * Axes, legends, and colorbars: an axis listed for a scale replaces the
+   * scale's automatic one (its unset settings taken from the short form),
+   * a legend or colorbar lists the scales it shows in place of the
+   * automatic legend's.
+   */
+  guides?: readonly GuideSpec[];
   /** Small multiples: the chart drawn once per value of a category field. */
   facet?: FacetSpec;
   /**
@@ -439,18 +451,17 @@ export interface AxisSpec {
   title?: string;
   /** Grid lines across the plot. Default true for y, and for x when it measures horizontal bars. */
   grid?: boolean;
-  /** Approximate number of ticks. */
-  ticks?: number;
-  /** Intl.NumberFormat options, or Intl.DateTimeFormat options for time. */
-  format?: Intl.NumberFormatOptions | Intl.DateTimeFormatOptions;
+  /** Which ticks it draws: about how many (a number), one `every` so often, or exactly `values`. */
+  ticks?: TicksSpec;
+  /** How tick labels are written: Intl options, or a pattern (`{ number: ",.2f" }`, `{ time: "%H:%M" }`). */
+  format?: FormatSpec;
   /**
    * How tooltips, the keyboard's announcements, and crosshair labels write
    * one value of the axis, such as `{ weekday: "short", month: "short",
-   * day: "numeric" }` or `{ style: "unit", unit: "millisecond" }`, leaving
-   * tick labels as they are: Intl options, as `format` takes them; `format`
-   * by default.
+   * day: "numeric" }` or `{ time: "%a %H:%M" }`, leaving tick labels as
+   * they are: as `format` takes them; `format` by default.
    */
-  tooltipFormat?: Intl.NumberFormatOptions | Intl.DateTimeFormatOptions;
+  tooltipFormat?: FormatSpec;
   /** Draw the axis. Default true. */
   show?: boolean;
   /** How the axis' parts look: its line, ticks, tick labels, title, and grid lines. */
@@ -472,15 +483,8 @@ export interface PanelTitleSpec {
   style?: TextStyle;
 }
 
-/** Where the series legend goes and how it looks. */
-export interface LegendSpec {
-  /**
-   * Outside on a side (above the plots by default; on the left or right in a
-   * column), or inside a plot at a corner, over what it draws.
-   */
-  place?: Place;
-  style?: LegendStyles;
-}
+/** The automatic legend: where it goes, how it lays out its entries, and how it looks. */
+export type LegendSpec = LegendOptionsSpec;
 
 /**
  * One of the chart's position scales (x, y, or yRight) and its axis: the
@@ -729,8 +733,14 @@ interface MarkBase {
   panel?: string;
 }
 
+/** What a mark that legends show gives them. */
+interface Legended {
+  /** `false` leaves the mark's series, color ramps, and keys out of the chart's legends. */
+  legend?: false;
+}
+
 /** What marks drawing series (which legends list) have besides `MarkBase`. */
-interface SeriesBase extends MarkBase {
+interface SeriesBase extends MarkBase, Legended {
   /**
    * Marks naming the same group share series by name: series of the same
    * name (a `series` value, or a mark's `label`) share a color, one legend
@@ -1689,7 +1699,7 @@ export type Histogram1DSpec = SeriesBase & {
  * fields) both fall in a bin of each, colored on a continuous scale from 0
  * by what they measure. Bins holding nothing are left empty.
  */
-export interface Histogram2DSpec extends MarkBase {
+export interface Histogram2DSpec extends MarkBase, Legended {
   type: "histogram";
   x: Field;
   y: Field;
@@ -1782,7 +1792,7 @@ interface PointStyleSpec extends SeriesBase, RowTooltip {
 export type HeatmapSpec = HeatmapGridSpec | HeatmapCalendarSpec;
 
 /** The options both forms of heatmap share. */
-interface HeatmapBase extends MarkBase, RowTooltip {
+interface HeatmapBase extends MarkBase, Legended, RowTooltip {
   type: "heatmap";
   /** Number or time field: each cell's value, mapped to color. */
   color: Field;
@@ -1819,7 +1829,7 @@ export type CellReduce = "last" | "mean" | "sum" | "min" | "max";
  * points; points without a value leave holes. Contours end where the grid
  * does.
  */
-export interface ContourSpec extends MarkBase {
+export interface ContourSpec extends MarkBase, Legended {
   type: "contour";
   /** Number or time field: each grid point's x. */
   x: Field;

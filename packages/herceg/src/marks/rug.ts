@@ -38,6 +38,8 @@ interface RugStyle<S extends Schema> {
    * name share a color, one legend entry, and visibility.
    */
   legendGroup?: string;
+  /** `false` leaves the mark out of the chart's legends. */
+  legend?: false;
   axis?: "left" | "right";
   facet?: "repeat";
   /**
@@ -309,6 +311,7 @@ export function rug<S extends Schema>(
       "strokeWidth",
       "label",
       "legendGroup",
+      "legend",
       "axis",
       "facet",
       "panel",

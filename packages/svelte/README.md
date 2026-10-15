@@ -24,7 +24,8 @@ The chart's text alternative describes its overview and current x range,
 and its control of every panel's x when there are several.
 
 `<Chart>` accepts every chart option as a prop (`title`, `x`, `y`, `legend`,
-`padding`, `tooltip`, `interaction`, `renderer`, `theme`, `fonts`, `width`, `height`, ...). Its
+`scales`, `guides`, `padding`, `tooltip`, `interaction`, `renderer`, `theme`,
+`fonts`, `width`, `height`, ...). Its
 children are mark components: `<Line>`, `<Area>`, `<Bar>`, `<Point>`,
 `<Heatmap>`, `<Contour>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`,
 `<BoxPlot>`, `<Boxen>`, `<Violin>`, `<Treemap>`, `<Sunburst>`, `<Gauge>`, `<Funnel>`,
@@ -164,7 +165,9 @@ number of changes:
 
 Props are the whole configuration: removing a prop restores its default.
 When a prop changes, the chart compares the options and every mark's spec
-and table, and is left alone when they are equal. Arrays and objects are
+and table, and is left alone when they are equal. Functions in options
+(tick generators, formatters) are compared by identity, so a function made
+anew in a `$derived` updates the chart each time it is made. Arrays and objects are
 copied as the chart reads them, so changing `$state` in place
 (`fields.push("p99")`) updates the chart as replacing it would. Changes are
 applied in an effect that runs before the effects of the component around

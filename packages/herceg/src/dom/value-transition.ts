@@ -556,6 +556,9 @@ export function plan(
   const labeled = (list: readonly AxisGuide[]) =>
     list.map(({ side, ticks }) => `${side}${ticks.length > 0}`).join();
   if (axes && (!plannable(axes) || labeled(shown.axes) !== labeled(drawn.axes))) return undefined;
+  // Axes the guides list plan their layers with the scene; they cannot follow a moving scale.
+  if (axes && drawn.axes.some((guide) => guide.layers && motions[guide.scale as Axis].moves))
+    return undefined;
   const tween: Tween = {
     start: shown.time,
     duration,

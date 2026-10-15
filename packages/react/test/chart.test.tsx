@@ -86,6 +86,36 @@ const metrics = table({ t: [0, 1, 2, 3], a: [1, 2, 3, 4], b: [4, 3, 2, 1] });
 const paths = () => host.querySelectorAll("svg g[clip-path] path");
 
 describe("<Chart>", () => {
+  it("takes a new tick format function as a change, and the same one as none", async () => {
+    let chart: HercegChart | null = null;
+    let updates = 0;
+    const draw = (format: (value: number) => string) =>
+      root.render(
+        <Chart
+          ref={(value) => {
+            chart = value;
+          }}
+          y={{ format }}
+          onRender={() => updates++}
+        >
+          <Line data={metrics} x="t" y="a" />
+        </Chart>,
+      );
+    const stars = (value: number) => `${value}*`;
+    act(() => draw(stars));
+    await act(() => chart!.loading);
+    expect(host.textContent).toContain("4*");
+    act(() => draw(stars));
+    await act(frame);
+    const settled = updates;
+    act(() => draw(stars));
+    await act(frame);
+    expect(updates).toBe(settled);
+    act(() => draw((value) => `${value}!`));
+    await act(frame);
+    expect(host.textContent).toContain("4!");
+  });
+
   for (const stack of ["fill", "center", "wiggle"] as const) {
     it(`passes ${stack} and inside-out area options through React`, () => {
       let chart: HercegChart | null = null;

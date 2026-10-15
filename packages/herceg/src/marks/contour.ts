@@ -27,7 +27,7 @@ import type { Theme } from "../theme.ts";
 import { contourFormError } from "./contour-input.ts";
 import { bandRings, GridTracer, type ScalarGrid, type Traced } from "./contour-trace.ts";
 import { distinct } from "./heatmap-cells.ts";
-import { keyLegend } from "./legend-parts.ts";
+import { keyLegend, rampLegend } from "./legend-parts.ts";
 import { definedFields } from "./line.ts";
 import {
   type BandContext,
@@ -75,6 +75,8 @@ export interface ContourOptions<S extends Schema> {
   fillOpacity?: number;
   /** What the field is, in the legend and tooltips; the `color` field's name by default. */
   label?: string;
+  /** `false` leaves the mark out of the chart's legends. */
+  legend?: false;
   /** Draw every row in every facet panel instead of the panel's own. */
   facet?: "repeat";
   /**
@@ -461,17 +463,31 @@ export class ContourMark implements Mark<Frozen<ContourSpec>> {
     return false;
   }
 
-  /** A key of each band's color and range, or of each line's color and level. */
-  legends(series: readonly Series[]): LegendPart[] {
+  /**
+   * A key of each band's color and range, or of each line's color and
+   * level; a colorbar of it draws the bands at their levels, or the lines'
+   * ramp.
+   */
+  legends(series: readonly Series[], theme: Theme): LegendPart[] {
     if (series.length === 0 || (!this.#bands && this.spec.stroke !== undefined)) return [];
     const glyph = this.#bands ? "M-5,-5h10v10h-10Z" : "M-6,-1h12v2h-12Z";
-    return [
-      keyLegend({
-        title: this.spec.label ?? this.spec.color,
-        channel: "color",
-        entries: series.map((s) => ({ label: s.label, glyph, r: 5, color: s.color })),
-      }),
-    ];
+    const title = this.spec.label ?? this.spec.color;
+    const key = keyLegend({
+      title,
+      channel: "color",
+      entries: series.map((s) => ({ label: s.label, glyph, r: 5, color: s.color })),
+    });
+    const scale = this.#colorScale(theme);
+    const colorbar: LegendPart["colorbar"] = this.#bands
+      ? { kind: "steps", title, levels: this.#levels(), colors: series.map((s) => s.color) }
+      : scale &&
+        rampLegend({
+          stops: scale.legendStops(),
+          domain: scale.domain,
+          title,
+          midpoint: scale.midpoint,
+        }).colorbar;
+    return [{ ...key, colorbar }];
   }
 
   xExtent(series: readonly Series[], log: boolean, breaks?: unknown) {
@@ -1228,6 +1244,7 @@ export function contour<S extends Schema>(
       "strokeWidth",
       "fillOpacity",
       "label",
+      "legend",
       "facet",
       "panel",
       "clip",

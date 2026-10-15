@@ -26,7 +26,8 @@ The chart's text alternative describes its overview and current x range,
 and its control of every panel's x when there are several.
 
 `<Chart>` accepts every chart option as a prop (`title`, `x`, `y`, `legend`,
-`padding`, `tooltip`, `interaction`, `renderer`, `theme`, `fonts`, `width`, `height`, ...). Its
+`scales`, `guides`, `padding`, `tooltip`, `interaction`, `renderer`, `theme`,
+`fonts`, `width`, `height`, ...). Its
 children are mark elements: `<Line>`, `<Area>`, `<Bar>`, `<Point>`,
 `<Heatmap>`, `<Contour>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`,
 `<BoxPlot>`, `<Boxen>`, `<Violin>`, `<Treemap>`, `<Sunburst>`, `<Gauge>`, `<Funnel>`,
@@ -189,7 +190,9 @@ function Live() {
 Props are the chart's whole configuration: removing a prop restores its
 default. They are compared on each render, and when neither the options nor
 any mark's spec or table changed, the chart is left alone, so writing marks
-and option objects inline is fine. Changes are applied during React's layout
+and option objects inline is fine. Functions in options (tick generators,
+formatters) are compared by identity: an inline function updates the chart
+on every render, so define it outside the component or memoize it. Changes are applied during React's layout
 phase, so a parent's layout effect can already read them through `ref`.
 
 ## Grids

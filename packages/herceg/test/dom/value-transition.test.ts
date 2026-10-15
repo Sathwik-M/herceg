@@ -15,6 +15,8 @@ import {
   type Tween,
   ValueAnimation,
 } from "../../src/dom/value-transition.ts";
+import { guideCompiler } from "../../src/guides/compile.ts";
+import { axis } from "../../src/guides/options.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { Polyline } from "../../src/lod/polyline.ts";
 import { area } from "../../src/marks/area.ts";
@@ -27,6 +29,7 @@ import { rule } from "../../src/marks/rule.ts";
 import { planAxis } from "../../src/model/axis.ts";
 import { axisGuide } from "../../src/model/axis-guide.ts";
 import { facet } from "../../src/model/facet.ts";
+import { GUIDE_KIT } from "../../src/model/guides.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderSvg } from "../../src/render/svg.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
@@ -414,6 +417,26 @@ describe("axes moving with values", () => {
     expect(e![1]).toBeCloseTo(placed(30 + 15 * HALF, from, to, HALF), 3);
     // The x axis stays.
     expect(axisOf(middle, "bottom")).toBe(axisOf(tween!.scene, "bottom"));
+  });
+
+  it("show at once a change that moves an axis the guides list", () => {
+    const data = table({ x: [1, 2, 3], y: [10, 20, 30] });
+    const model = new ChartModel(
+      {
+        locale: "en-US",
+        animation: VALUES,
+        marks: [point(data, { x: "x", y: "y" })],
+        guides: [
+          axis({ scale: "y", layers: [{ id: "minor", ticks: { every: 1 }, labels: false }] }),
+        ],
+      },
+      undefined,
+      guideCompiler(GUIDE_KIT),
+    );
+    model.setSize(600, 300, 1);
+    expect(change(model, () => data.set("y", 2, 45)).tween).toBeUndefined();
+    // A change its axes stay through still moves.
+    expect(change(model, () => data.set("y", 1, 25)).tween).toBeDefined();
   });
 
   it("move points, lines, and rules with their axes", () => {
