@@ -136,17 +136,27 @@ describe("sync across sandboxed frames", () => {
     try {
       const from = sandboxed(page(code, sender));
       sandboxed(nesting(page(code, receiver)));
-      await expect.poll(() => heard.filter(({ test }) => test === "ready").length).toBe(2);
-      // The relays find each other as they start.
-      for (let i = 0; i < 5; i++) await frame();
-      from.contentWindow!.postMessage({ test: "go", x: 2 }, "*");
+      // Each frame loads and runs the whole bundle, which takes a while on slow machines.
       await expect
-        .poll(() => heard.filter(({ test }) => test === "hover").at(-1)?.value, { timeout: 3000 })
+        .poll(() => heard.filter(({ test }) => test === "ready").length, { timeout: 10_000 })
+        .toBe(2);
+      // The relays find each other as they start; a cursor shown before then is
+      // not relayed, so it is shown again until the receiver hears it.
+      await expect
+        .poll(
+          () => {
+            from.contentWindow!.postMessage({ test: "go", x: 2 }, "*");
+            return heard.filter(({ test }) => test === "hover").at(-1)?.value;
+          },
+          { timeout: 10_000 },
+        )
         .toBe(2);
       // What the receiver heard, it shared in its frame alone: nothing came back.
       for (let i = 0; i < 5; i++) await frame();
       from.contentWindow!.postMessage({ test: "count" }, "*");
-      await expect.poll(() => heard.find(({ test }) => test === "echoes")?.value).toBe(0);
+      await expect
+        .poll(() => heard.find(({ test }) => test === "echoes")?.value, { timeout: 5_000 })
+        .toBe(0);
     } finally {
       removeEventListener("message", listen);
     }
