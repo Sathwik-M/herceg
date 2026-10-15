@@ -1,6 +1,5 @@
 import {
   type AxisFormat,
-  type ChartOptions,
   type CustomSeries,
   custom,
   type DataDrawContext,
@@ -21,7 +20,7 @@ import {
   time,
   timeBreaks,
 } from "herceg";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type App,
   computed,
@@ -34,8 +33,10 @@ import {
   ref,
   shallowReactive,
   shallowRef,
+  toRaw,
 } from "vue";
 import { prepareFonts } from "../../herceg/src/fonts.ts";
+import { EXPORT_SCENE, type ExportsScene } from "../../herceg/src/render/export-scene.ts";
 import {
   Area,
   Bar,
@@ -66,26 +67,10 @@ import {
   Violin,
 } from "../src/index.ts";
 
-// The options each chart was last given, at creation and by `update`, which
-// tests compare with the props that made them.
-const given = vi.hoisted(() => new WeakMap<object, Record<string, unknown>>());
-vi.mock("herceg", async (original) => {
-  const herceg = await original<typeof import("herceg")>();
-  return {
-    ...herceg,
-    createChart(container: HTMLElement, options: ChartOptions) {
-      const chart = herceg.createChart(container, options);
-      given.set(chart, { ...options });
-      const update = chart.update.bind(chart);
-      chart.update = (changes) => {
-        Object.assign(given.get(chart)!, changes);
-        update(changes);
-      };
-      return chart;
-    },
-  };
-});
-const optionsOf = (chart: HercegChart) => given.get(chart) as unknown as ChartOptions;
+// Read the chart's applied configuration through the export seam, without
+// depending on Browser Mode intercepting the herceg module to record options.
+const optionsOf = (chart: HercegChart) =>
+  (chart as HercegChart & ExportsScene)[EXPORT_SCENE]((_, model) => model.config);
 
 let host: HTMLDivElement;
 let app: App | undefined;
@@ -1046,13 +1031,19 @@ describe("<Chart>", () => {
   it("exposes the chart through a template ref and destroys it on unmount", async () => {
     const { view } = chartRef();
     const shown = ref(true);
+    const title = ref("First");
     const sales = table({ k: ["x", "y"], v: [1, 2] });
     mount(
-      `<Chart v-if="shown" ref="view"><Bar :data="sales" x="k" y="v" /></Chart><div v-else />`,
-      () => ({ sales, view, shown }),
+      `<Chart v-if="shown" ref="view" :title="title"><Bar :data="sales" x="k" y="v" /></Chart><div v-else />`,
+      () => ({ sales, view, shown, title }),
     );
     const chart = view.value!.chart!;
+    expect(chart).toBe(toRaw(chart));
     expect(chart.toSVG()).toContain("<svg");
+    title.value = "Second";
+    await nextTick();
+    expect(view.value!.chart).toBe(chart);
+    expect(chart.root.getAttribute("aria-label")).toBe("Second");
     // Only the chart is exposed.
     expect(Object.keys(view.value!)).toEqual(["chart"]);
     shown.value = false;
