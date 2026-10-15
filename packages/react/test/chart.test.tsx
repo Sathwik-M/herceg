@@ -19,7 +19,9 @@ import {
 } from "herceg";
 import {
   act,
+  Component,
   createContext,
+  type ReactNode,
   StrictMode,
   Suspense,
   startTransition,
@@ -240,7 +242,7 @@ describe("<Chart>", () => {
     // A component of the application's: the chart cannot see what it renders.
     const LoadMarks = () => loadMarks();
     const quiet = createRoot(document.createElement("div"));
-    expect(() => act(() => quiet.render(<Chart>{<LoadMarks />}</Chart>))).toThrow(
+    expect(() => act(() => quiet.render(<Chart errorMode="throw">{<LoadMarks />}</Chart>))).toThrow(
       /not components wrapping them: call a function/,
     );
     act(() => quiet.unmount());
@@ -779,6 +781,8 @@ describe("<Chart>", () => {
   it("reports hiding that an update makes to the handler given with it", () => {
     const ref: { current: HercegChart | null } = { current: null };
     const seen: string[] = [];
+    // The second line reads a table of its own: going, it takes what it stands for along.
+    const others = table({ t: [0, 1, 2, 3], b: [4, 3, 2, 1] });
     function App({ name, both }: { name: string; both: boolean }) {
       return (
         <Chart
@@ -786,7 +790,7 @@ describe("<Chart>", () => {
           onVisibility={({ hiddenKeys }) => seen.push(`${name}:${hiddenKeys.length}`)}
         >
           <Line data={metrics} x="t" y="a" />
-          {both && <Line data={metrics} x="t" y="b" />}
+          {both && <Line data={others} x="t" y="b" />}
         </Chart>
       );
     }
@@ -1177,16 +1181,138 @@ describe("<Chart>", () => {
     expect([...box()!.children].map((row) => row.textContent)).toEqual(["3", "a4", "b1"]);
   });
 
-  it("rejects children that are not marks", () => {
+  it("rejects children that are not marks, in its place or thrown", () => {
+    act(() =>
+      root.render(
+        <Chart>
+          <span />
+        </Chart>,
+      ),
+    );
+    expect(host.querySelector('[role="alert"]')!.textContent).toMatch(/mark elements/);
     expect(() =>
       act(() =>
         root.render(
-          <Chart>
+          <Chart errorMode="throw">
             <span />
           </Chart>,
         ),
       ),
     ).toThrow(/mark elements/);
+  });
+});
+
+describe("<Chart> that cannot draw", () => {
+  const alert = () => host.querySelector<HTMLElement>('[role="alert"]');
+  const sites = table({ t: [0, 1, 2], v: [1, 2, 3], kind: ["a", "a", "a"], g: ["p", "p", "p"] });
+
+  it("shows marks it refuses in its place, then draws once they are fixed", () => {
+    const errors: string[] = [];
+    const draw = (y: string) =>
+      act(() =>
+        root.render(
+          <Chart height={200} onError={(error) => errors.push(error.code)}>
+            <Line data={sites} x="t" y={y as "v"} />
+          </Chart>,
+        ),
+      );
+    draw("w");
+    expect(alert()!.textContent).toMatch(/^Chart could not be rendered\n.*no field "w"/);
+    expect(errors).toEqual(["unknown-field"]);
+    draw("v");
+    expect(alert()).toBeNull();
+    expect(paths()).toHaveLength(1);
+    // Refused again, the last frame stays, under a banner.
+    draw("w");
+    expect(alert()!.textContent).toMatch(/^Chart update failed; showing previous data/);
+    expect(paths()).toHaveLength(1);
+    expect(errors).toEqual(["unknown-field", "unknown-field"]);
+  });
+
+  it("hands a chart made once its marks are fixed to its ref, parents, and handlers", () => {
+    const ref: { current: HercegChart | null } = { current: null };
+    let rendered = 0;
+    const seen: boolean[] = [];
+    const heard: string[][] = [];
+    function Parent({ y }: { y: string }) {
+      // A parent's layout effect sees the chart its child made in the same
+      // commit, and its handlers hear what it does with it.
+      // biome-ignore lint/correctness/useExhaustiveDependencies: once per change of y
+      useLayoutEffect(() => {
+        seen.push(ref.current !== null);
+        const [entry] = ref.current?.getLegend() ?? [];
+        if (entry) ref.current!.setVisibility(entry.key, false);
+      }, [y]);
+      return (
+        <Chart
+          ref={ref}
+          height={200}
+          legend
+          onError={() => {}}
+          onRender={() => rendered++}
+          onVisibility={({ hiddenKeys }) => heard.push([...hiddenKeys])}
+        >
+          <Line data={sites} x="t" y={y as "v"} />
+        </Chart>
+      );
+    }
+    act(() => root.render(<Parent y="w" />));
+    act(() => root.render(<Parent y="v" />));
+    expect(seen).toEqual([false, true]);
+    expect(heard).toHaveLength(1);
+    expect(rendered).toBeGreaterThan(0);
+  });
+
+  it("reports options and frames the chart refuses to onError, shown in its place", () => {
+    const errors: string[] = [];
+    const rows = table({ t: [0, 1], v: [1, 2], kind: ["a", "a"], g: ["p", "p"] });
+    act(() =>
+      root.render(
+        <Chart height={200} onError={(error) => errors.push(error.code)}>
+          <Line data={rows} x="t" y="v" series="g" color="kind" />
+        </Chart>,
+      ),
+    );
+    act(() => rows.append({ t: [2], v: [3], kind: ["b"], g: ["p"] }));
+    return expect
+      .poll(() => alert()?.textContent)
+      .toMatch(/^Chart could not be rendered\n.*changes within series "p"/)
+      .then(() => expect(errors).toEqual(["series-varies"]));
+  });
+
+  it("throws, with errorMode throw, for an error boundary, also what comes later", async () => {
+    const caught: string[] = [];
+    class Boundary extends Component<{ children: ReactNode }, { error: string | null }> {
+      override state = { error: null as string | null };
+      static getDerivedStateFromError(error: Error) {
+        return { error: error.message };
+      }
+      override componentDidCatch(error: Error) {
+        caught.push(error.message);
+      }
+      override render() {
+        return this.state.error ? <p>{this.state.error}</p> : this.props.children;
+      }
+    }
+    const rows = table({ t: [0, 1], v: [1, 2], kind: ["a", "a"], g: ["p", "p"] });
+    act(() =>
+      root.render(
+        <Boundary>
+          <Chart height={200} errorMode="throw">
+            <Line data={rows} x="t" y="v" series="g" color="kind" />
+          </Chart>
+        </Boundary>,
+      ),
+    );
+    await act(async () => {
+      rows.append({ t: [2], v: [3], kind: ["b"], g: ["p"] });
+      await frame();
+      await frame();
+    });
+    expect(caught).toHaveLength(1);
+    expect(caught[0]).toMatch(/changes within series "p"/);
+    expect(host.querySelector("p")!.textContent).toMatch(/changes within series/);
+    expect(alert()).toBeNull();
   });
 });
 

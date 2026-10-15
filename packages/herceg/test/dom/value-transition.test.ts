@@ -621,7 +621,7 @@ describe("points changing values", () => {
   it("move points colored by category, but not across a change of category", () => {
     const data = table({ x: [1, 2, 3], y: [10, 20, 30], kind: ["a", "b", "a"] });
     const model = chart({
-      marks: [point(data, { x: "x", y: "y", color: "kind" })],
+      marks: [point(data, { x: "x", y: "y", color: "kind", series: false })],
       x: { domain: [0, 4] },
       y: { domain: [0, 100] },
     });

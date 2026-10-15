@@ -212,11 +212,13 @@ describe("domains", () => {
   it("excludes hidden series from the domain and the scene", () => {
     const two = table({ x: [0, 1], a: [0, 1], b: [0, 1000] });
     const { model } = sceneOf({ marks: [line(two, { x: "x", y: ["a", "b"] })] });
-    model.hidden.add('[0,"b"]');
+    // The legend hides what the series stands for: the table's field "b".
+    const b = legendOf(model.scene(estimateText)).find((item) => item.label === "b")!.key;
+    model.hidden.add(b);
     const scene = model.scene(estimateText);
     expect(lines(scene).map((l) => l.key)).toEqual(['[0,"a"]']);
     expect(Math.max(...yAxis(scene).ticks.map((t) => Number(t.label)))).toBeLessThanOrEqual(1);
-    expect(legendOf(scene).find((item) => item.key === '[0,"b"]')?.hidden).toBe(true);
+    expect(legendOf(scene).find((item) => item.key === b)?.hidden).toBe(true);
   });
 
   it("includes rules that count toward it in the domain", () => {

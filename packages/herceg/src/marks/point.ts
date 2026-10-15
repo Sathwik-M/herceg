@@ -48,11 +48,13 @@ import {
   type MARK,
   type Mark,
   type MarkKey,
+  type MarkSources,
   NUMERIC,
   type Palette,
   requireField,
   SeriesSplitter,
   type SummaryContext,
+  seriesOf,
 } from "./mark.ts";
 import { placeAt, rowOf, type Series, valueAt, visibleRange, xExtent, yExtent } from "./series.ts";
 import { offsetOf, Swarms } from "./swarm.ts";
@@ -97,8 +99,12 @@ interface PointStyle<S extends Schema> {
   x: PositionField<S>;
   /** Like `x`: categories run top to bottom. */
   y: PositionField<S>;
-  /** Category field: one colored point series per value. */
-  series?: CategoryField<S>;
+  /**
+   * Category field: one colored point series per value; by default the
+   * category `color` field, and `false` for none (points colored each by
+   * their row's `color`).
+   */
+  series?: CategoryField<S> | false;
   /** A number, time, or category field matching points across data resets when the chart animates values. */
   animationKey?: PositionField<S>;
   fill?: string;
@@ -154,11 +160,6 @@ interface PointStyle<S extends Schema> {
    */
   swarm?: boolean;
   label?: string;
-  /**
-   * Marks naming the same group share series by name: series of the same
-   * name share a color, one legend entry, and visibility.
-   */
-  legendGroup?: string;
   /** `false` leaves the mark out of the chart's legends. */
   legend?: false;
   /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
@@ -197,6 +198,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
   readonly insetDomain = insetDomain;
   readonly spec: Frozen<PointSpec>;
   readonly table: Table<Schema>;
+  readonly identity: MarkSources;
   readonly view: RowView | undefined;
   readonly tooltip = "point";
   /** A category `color` colors points through the chart's color scale (see model/features.ts). */
@@ -225,6 +227,8 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
   readonly #ringWidth: number;
   /** How far each of SYMBOLS reaches per unit of radius. */
   readonly #reaches = SYMBOLS.map(symbolReach);
+  /** The field splitting series: `series`, or a category `color` field (see `seriesOf`). */
+  readonly #series: string | undefined;
   /** The banded axis points spread along (dodge, jitter, swarm), and their series' shares of its bands. */
   readonly #spread: { axis: "x" | "y"; shares: BandShares } | undefined;
   /** With `swarm`, the layout of each panel's swarms. */
@@ -241,7 +245,10 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     this.view = view;
     requireField(table, spec.x, POSITION, "point x");
     requireField(table, spec.y, POSITION, "point y");
-    if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "point series");
+    if (typeof spec.series === "string") requireField(table, spec.series, CATEGORY, "point series");
+    // A category color names the series, as on lines and bars.
+    const series = seriesOf(spec, table, "fill");
+    this.#series = series;
     if (spec.animationKey !== undefined)
       requireField(table, spec.animationKey, POSITION, "point animationKey");
     this.#banded = {
@@ -258,7 +265,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       const option = dodge ? "dodge" : jitter ? "jitter" : "swarm";
       if (this.#banded.x === this.#banded.y)
         throw new Error(`point ${option}: needs one category position, x or y`);
-      if (dodge && spec.series === undefined)
+      if (dodge && series === undefined)
         throw new Error("point dodge: places series side by side; give a series field");
       if (jitter && !(jitter.width >= 0 && jitter.width <= 1))
         throw new RangeError(
@@ -271,7 +278,8 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     }
     // Points in bands are in no x order.
     const xField = this.#banded.x ? undefined : spec.x;
-    this.#split = new SeriesSplitter(table, xField, [spec.y], spec.series, spec.label, view);
+    this.#split = new SeriesSplitter(table, xField, [spec.y], series, spec.label, view);
+    this.identity = { field: series, values: [spec.y] };
     if (spec.radius !== undefined && spec.size !== undefined)
       throw new Error("point radius: a constant radius or a size field, not both; drop one");
     if (spec.size !== undefined) requireField(table, spec.size, NUMERIC, "point size");
@@ -292,7 +300,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       // the chart's color scale gives them; other fields color each point.
       else {
         this.featured = true;
-        if (spec.color !== spec.series) this.#colorField = spec.color;
+        if (spec.color !== series) this.#colorField = spec.color;
       }
     }
     if (Array.isArray(spec.colors)) checkRamp(spec.colors, "point colors");
@@ -441,7 +449,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     const keyKind = keyField === undefined ? undefined : this.table.kind(keyField);
     const keyLabels = keyKind === "category" ? this.table.categories(keyField as never) : undefined;
     const keyNumbers = keyLabels ? undefined : read(keyField);
-    this.#spread?.shares.split(series, frame, this.spec.legendGroup, Boolean(this.spec.dodge));
+    this.#spread?.shares.split(series, frame, Boolean(this.spec.dodge));
     // Swarms are laid out for the panel's scales before any point is placed.
     if (this.#swarms) {
       const radiusOf = this.#radiusScale();
@@ -701,7 +709,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
   #legendSymbol(s: Series): SymbolName {
     const field = this.#symbolField;
     if (field === undefined) return this.#symbol;
-    if (field !== this.spec.series) return "circle";
+    if (field !== this.#series) return "circle";
     const shapes = this.#shapes!;
     shapes.places(this.table);
     return SYMBOLS[(shapes.of(s.label) ?? 0) % CYCLE]!;
@@ -738,7 +746,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       });
     }
     const field = this.#symbolField;
-    if (field !== undefined && field !== this.spec.series) {
+    if (field !== undefined && field !== this.#series) {
       const { dictionary } = this.table.categories(field as never);
       const shapeOf = this.#shapesByCode();
       out.push({
@@ -802,7 +810,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       if (field === undefined) continue;
       text += `, ${field} ${format.value(this.table.numbers(field as never)[row]!)}`;
     }
-    const symbols = this.#symbolField !== this.spec.series ? this.#symbolField : undefined;
+    const symbols = this.#symbolField !== this.#series ? this.#symbolField : undefined;
     for (const field of [this.#colorField, symbols]) {
       if (field === undefined) continue;
       const { codes, dictionary } = this.table.categories(field as never);
@@ -1125,7 +1133,6 @@ export function point<S extends Schema>(
       "dodge",
       "swarm",
       "label",
-      "legendGroup",
       "legend",
       "id",
       "axis",

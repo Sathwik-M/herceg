@@ -17,6 +17,7 @@ from dataclasses import dataclass, fields
 from typing import Any, Literal
 
 from ._data import _time_ms, listed, shown
+from ._errors import ChartError
 from ._style import (
     AXIS_ROLES,
     LEGEND_ROLES,
@@ -340,73 +341,29 @@ class TickLayer:
 
 @dataclass
 class Scale:
-    """A scale's settings in the chart's ``scales``.
+    """A position scale's settings in the chart's ``scales``: ``"x"``,
+    ``"y"``, and ``"y_right"``, over the short forms ``x=``, ``y=``,
+    ``y_right=``. Scales of categories are ``hg.OrdinalScale``."""
 
-    A position scale (``"x"``, ``"y"``, ``"y_right"``, over the short forms
-    ``x=``, ``y=``, ``y_right=``) takes ``type``, ``domain``, ``nice``,
-    ``zero``, ``scope``, and ``tooltip_format``.
-
-    Any other name is a scale of categories, ``type="ordinal"``, which marks
-    read by name (``hg.Channel(field=..., scale=...)``; colors read
-    ``"color"`` by default): every value takes one output (a color, shape,
-    dash, or number) in every mark and panel, and keeps it while the data
-    streams. ``map`` fixes outputs by value; others take the theme's palette
-    by their place in the ``domain``, which is the given values in that
-    order (others take ``unknown``), or else the columns' values, a
-    categorical's own order first."""
-
-    type: Literal["linear", "log", "time", "ordinal"] | None = None
+    type: Literal["linear", "log", "time"] | None = None
     domain: Sequence[Any] | None = None
     nice: bool | None = None
     zero: bool | None = None
     scope: Scope | None = None
     tooltip_format: Format | Mapping[str, Any] | None = None
-    map: Mapping[str, Any] | None = None
-    unknown: Any = None
 
     def __post_init__(self) -> None:
         if self.type is not None:
-            _choice(self.type, ("linear", "log", "time", "ordinal"), "Scale type")
+            _choice(self.type, ("linear", "log", "time"), "Scale type")
         if self.scope is not None:
             _choice(self.scope, ("chart", "panel", "row", "column"), "Scale scope")
-        if self.type == "ordinal":
-            for name in ("nice", "zero", "scope", "tooltip_format"):
-                if getattr(self, name) is not None:
-                    raise ValueError(f"Scale {name}: places values on an axis; drop it")
-            if self.domain is not None and (
-                isinstance(self.domain, str) or any(not isinstance(v, str) for v in self.domain)
-            ):
-                raise TypeError(
-                    "Scale domain: an ordinal scale's domain is its categories' values, "
-                    f'such as ["A", "B"]; received {shown(self.domain)}'
-                )
-            if self.map is not None and not isinstance(self.map, Mapping):
-                raise TypeError(
-                    'Scale map: expected a dict of outputs by value, such as {"A": "#00ab41"}; '
-                    f"received {shown(self.map)}"
-                )
-        else:
-            for name in ("map", "unknown"):
-                if getattr(self, name) is not None:
-                    raise ValueError(
-                        f'Scale {name}: maps categories; give type="ordinal", or drop {name}'
-                    )
-            if self.domain is not None and len(self.domain) != 2:
-                raise ValueError(
-                    f"Scale domain: a position scale's domain is (low, high); received "
-                    f"{shown(self.domain)}"
-                )
+        if self.domain is not None and len(self.domain) != 2:
+            raise ValueError(
+                f"Scale domain: a position scale's domain is (low, high); received "
+                f"{shown(self.domain)}"
+            )
 
     def _spec(self) -> dict[str, Any]:
-        if self.type == "ordinal":
-            out: dict[str, Any] = {"type": "ordinal"}
-            if self.domain is not None:
-                out["domain"] = list(self.domain)
-            if self.map is not None:
-                out["map"] = {str(key): _output(value) for key, value in self.map.items()}
-            if self.unknown is not None:
-                out["unknown"] = _output(self.unknown)
-            return out
         domain = self.domain
         spec = {
             "type": self.type,
@@ -419,6 +376,54 @@ class Scale:
         return {key: value for key, value in spec.items() if value is not None}
 
 
+@dataclass
+class OrdinalScale:
+    """A scale of categories in the chart's ``scales``, which gives every
+    value one output (a color, shape, dash, or number) in every mark and
+    panel reading it, from any data, and keeps it while the data streams.
+
+    Under the name ``"color"`` it colors every mark's series and color
+    columns. Under another, marks read it by name:
+    ``color=hg.Channel(field="region", scale="region")`` for a column's
+    values, ``hg.Channel(series=True, scale="fit")`` for the series' names
+    (which joins marks of different data, a line and the band around it,
+    in one legend entry). Without ``scales``, a value's color follows its
+    column of its data, in every mark and panel reading it.
+
+    ``map`` fixes outputs by value; others take the theme's palette by
+    their place in the ``domain``: the given values in that order (others
+    take ``unknown``), or else the columns' values, a categorical's own
+    order first."""
+
+    domain: Sequence[str] | None = None
+    map: Mapping[str, Any] | None = None
+    unknown: Any = None
+
+    def __post_init__(self) -> None:
+        if self.domain is not None and (
+            isinstance(self.domain, str) or any(not isinstance(v, str) for v in self.domain)
+        ):
+            raise TypeError(
+                "OrdinalScale domain: a scale of categories' domain is their values, "
+                f'such as ["A", "B"]; received {shown(self.domain)}'
+            )
+        if self.map is not None and not isinstance(self.map, Mapping):
+            raise TypeError(
+                'OrdinalScale map: expected a dict of outputs by value, such as {"A": "#00ab41"}; '
+                f"received {shown(self.map)}"
+            )
+
+    def _spec(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"type": "ordinal"}
+        if self.domain is not None:
+            out["domain"] = list(self.domain)
+        if self.map is not None:
+            out["map"] = {str(key): _output(value) for key, value in self.map.items()}
+        if self.unknown is not None:
+            out["unknown"] = _output(self.unknown)
+        return out
+
+
 def _output(value: Any) -> Any:
     """A scale's output: a color, a shape, a dash, or a number."""
     if isinstance(value, (list, tuple)):
@@ -427,7 +432,9 @@ def _output(value: Any) -> Any:
 
 
 def scales_spec(value: Any) -> Any:
-    """A chart's ``scales`` as the spec takes them: ``hg.Scale`` objects (or dicts) by name."""
+    """A chart's ``scales`` as the spec takes them: ``hg.Scale`` for the
+    positions ``"x"``, ``"y"``, and ``"y_right"``, ``hg.OrdinalScale`` (or
+    dicts of their options) for scales of categories, by name."""
     if value is None:
         return None
     if not isinstance(value, Mapping):
@@ -437,18 +444,21 @@ def scales_spec(value: Any) -> Any:
     names = {"x": "x", "y": "y", "y_right": "yRight"}
     out = {}
     for name, scale in value.items():
-        built = _built(scale, Scale, f"Chart scales {name}")
-        if name not in names and built.type != "ordinal":
-            raise ValueError(
-                f'Chart scales {name}: expected type="ordinal", a scale of categories; '
-                f"marks place values on {listed(tuple(names))}"
-            )
-        if name in names and built.type == "ordinal":
-            raise ValueError(
-                f"Chart scales {name}: places values on an axis; give a linear, log, or time "
-                "scale, or name the ordinal scale otherwise"
-            )
-        out[names.get(name, name)] = built._spec()
+        role = f"Chart scales {name}"
+        if name in names:
+            if isinstance(scale, OrdinalScale):
+                raise ChartError(
+                    f"{role}: places values on an axis; give an hg.Scale, or name the "
+                    "OrdinalScale otherwise"
+                )
+            out[names[name]] = _built(scale, Scale, role)._spec()
+        else:
+            if isinstance(scale, Scale):
+                raise ChartError(
+                    f"{role}: expected an hg.OrdinalScale, a scale of categories; "
+                    f"marks place values on {listed(tuple(names))}"
+                )
+            out[name] = _built(scale, OrdinalScale, role)._spec()
     return out
 
 
@@ -577,8 +587,6 @@ def legend_layout(builder: Any, role: str) -> dict[str, Any]:
             )
     if builder.order is not None:
         _choice(builder.order, ("row", "column"), f"{role} order")
-    if builder.merge is not None:
-        _choice(builder.merge, ("semantic",), f"{role} merge")
     if builder.swatches is not None:
         _choice(builder.swatches, ("mark",), f"{role} swatches")
     entries = builder.entries
@@ -591,7 +599,6 @@ def legend_layout(builder: Any, role: str) -> dict[str, Any]:
         "entries": [_built(entry, LegendEntry, f"{role} entries")._spec() for entry in entries]
         if entries is not None
         else None,
-        "merge": builder.merge,
         "swatches": builder.swatches,
         "style": style_spec(builder.style, f"{role} style", LEGEND_ROLES),
     }
@@ -676,9 +683,9 @@ class LegendOptions:
     """The chart's legend (``legend=``): where it goes (``place``, an
     ``hg.Place``; above the plots by default), its entries in ``columns`` or
     ``rows`` (filled by ``order``, ``"row"`` or ``"column"``) under a
-    ``title``, ``entries`` of your own in place of the series', one entry
-    per value across marks (``merge="semantic"``), swatches that look like
-    the marks (``swatches="mark"``), and how it looks (``style``, an
+    ``title``, ``entries`` of your own in place of the series', swatches
+    that look like the marks (``swatches="mark"``: of every mark showing an
+    entry's value), and how it looks (``style``, an
     ``hg.Style`` of its ``legend_label``, ``legend_title``, and
     ``tick_label`` roles). Giving one shows the legend, also for a single
     series."""
@@ -689,7 +696,6 @@ class LegendOptions:
     order: Literal["row", "column"] | None = None
     title: str | Mapping[str, Any] | None = None
     entries: Sequence[LegendEntry | Mapping[str, Any]] | None = None
-    merge: Literal["semantic"] | None = None
     swatches: Literal["mark"] | None = None
     style: Style | Mapping[str, Any] | None = None
 
@@ -716,7 +722,6 @@ class LegendGuide:
     order: Literal["row", "column"] | None = None
     title: str | Mapping[str, Any] | None = None
     entries: Sequence[LegendEntry | Mapping[str, Any]] | None = None
-    merge: Literal["semantic"] | None = None
     swatches: Literal["mark"] | None = None
     show: bool | None = None
     style: Style | Mapping[str, Any] | None = None
@@ -736,9 +741,9 @@ def legend(**options: Any) -> LegendGuide:
     """A legend for the chart's ``guides``: of the scales ``scales`` names
     (``hg.ScaleRef(mark=..., channel=...)``), or of all the chart's, in place
     of the automatic legend; laid out in ``columns`` or ``rows`` under a
-    ``title``, with ``entries`` of your own, ``merge="semantic"`` for one
-    entry per value across marks, and ``swatches="mark"`` for swatches that
-    look like the marks."""
+    ``title``, with ``entries`` of your own, and ``swatches="mark"`` for
+    swatches that look like the marks. Legends list one entry per value a
+    chart's series stand for, whichever marks and panels show it."""
     return LegendGuide(**options)
 
 

@@ -1,14 +1,13 @@
 // Legends the chart's settings and guides ask for beyond the automatic one:
 // legends of the scales they name, laid out in columns or rows under a
-// title, with entries of your own, swatches drawn as the marks look, and
-// one entry for the series several marks show of the same value. Each
-// legend claims the scales it shows; the automatic legend shows the rest.
+// title, with entries of your own and swatches drawn as the marks look.
+// Each legend claims the scales it shows; the automatic legend shows the
+// rest.
 
 import type { SeriesSwatch } from "../model/features.ts";
 import type { GuideKit, PlacedLegend } from "../model/guides.ts";
 import type { MarkSeries } from "../model/inspect.ts";
 import type {
-  HiddenKeys,
   LegendContent,
   LegendEntry,
   LegendFlow,
@@ -119,7 +118,7 @@ export function compiledLegends(
     theme: Theme,
     chart: { readonly width: number; readonly height: number },
   ): PlacedLegend[] => {
-    const owners = ownersOf(marks, content);
+    const owners = ownersOf(marks);
     const partsOf = partOwners(kit, marks, theme, text.locale);
     const named = (ref: ScaleRef, path: string) => {
       if (layouts.has(ref.mark))
@@ -178,11 +177,10 @@ export function compiledLegends(
           : measureLegend(
               kit,
               plan,
-              { entries, parts, hidden: content.hidden },
+              { entries, parts, hidden: content.hidden, also: content.also },
               text,
               flow(plan.place),
               marks,
-              owners,
               theme,
             );
         return { key: plan.key, place: plan.place, measured, notes: notesOf(plan, measured) };
@@ -225,16 +223,13 @@ function colorbarPart(
 }
 
 /** The marks (by id, or their index) each entry's series belong to. */
-function ownersOf(
-  marks: readonly MarkSeries[],
-  content: LegendContent,
-): Map<string, (string | number)[]> {
+function ownersOf(marks: readonly MarkSeries[]): Map<string, (string | number)[]> {
   const owners = new Map<string, (string | number)[]>();
   marks.forEach(({ mark, series }, index) => {
     const id = mark.spec.id ?? index;
     for (const s of series) {
-      // Series of a legend group are listed under their group's key.
-      const key = (content.hidden as Partial<HiddenKeys>).groups?.get(s.key) ?? s.key;
+      // Series are listed under their identity's entry.
+      const key = s.entry ?? s.key;
       const list = owners.get(key) ?? [];
       if (!list.includes(id)) list.push(id);
       owners.set(key, list);
@@ -277,6 +272,23 @@ function partOwners(
 /** A swatch's items about its left middle, and how wide and tall it is. */
 type Sample = { width: number; height: number; items: GuideItem[] };
 
+/** Pixels between looks of an entry drawn side by side. */
+const SAMPLE_GAP = 3;
+
+/** Whether a look fills an area (a box, a glyph), which another drawn over it would hide. */
+function filled(look: Sample): boolean {
+  return look.items.some(
+    (item) => item.type === "rect" || (item.type === "shape" && item.fill !== "none"),
+  );
+}
+
+/** Whether a look draws lines (a stroke, an outline), which another of them would cover. */
+function lined(look: Sample): boolean {
+  return look.items.some(
+    (item) => item.type === "segments" || (item.type === "shape" && item.fill === "none"),
+  );
+}
+
 /** Marks that annotate, with no series: rules, regions, and text. */
 const ANNOTATIONS: readonly string[] = ["rule", "region", "text"];
 
@@ -301,7 +313,6 @@ function measureLegend(
   shared: LegendText,
   flow: LegendFlow,
   marks: readonly MarkSeries[],
-  owners: Map<string, (string | number)[]>,
   theme: Theme,
 ): (MeasuredLegend & { explained: string[] }) | undefined {
   const { options, path } = plan;
@@ -309,7 +320,7 @@ function measureLegend(
   const { measure } = text;
   const rows = options.entries
     ? custom(kit, options.entries, marks, content, theme, path, text.read ?? ((given) => given))
-    : derived(kit, options, content, marks, owners, theme);
+    : derived(kit, options, content, marks, theme);
   // Every entry's swatch takes the widest one's room, and its row the tallest's.
   const swatch = Math.max(SWATCH, ...rows.map((row) => row.sample?.width ?? 0));
   const entryHeight = Math.max(
@@ -466,39 +477,78 @@ function paints(kit: GuideKit, text: LegendText, style: LegendStyles | undefined
 }
 
 /**
- * The legend's entries from the scales it shows: a series' each, or with
- * `merge: "semantic"` one for the series of every mark that show the same
- * value of the same field (or have the same name), toggling them together.
+ * The legend's entries from the scales it shows: one per identity (see
+ * model/identity.ts), which toggles every series standing for it. With
+ * `swatches: "mark"`, each draws as the marks showing it draw (several
+ * looks together, where they differ).
  */
 function derived(
   kit: GuideKit,
   options: LegendOptionsSpec,
   content: LegendContent,
   marks: readonly MarkSeries[],
-  owners: Map<string, (string | number)[]>,
   theme: Theme,
 ): Row[] {
-  const markOf = (key: string) => {
-    const owner = owners.get(key)?.[0];
-    return marks.find(({ mark }, index) => (mark.spec.id ?? index) === owner)?.mark;
-  };
-  const rows: Row[] = [];
-  const merged = new Map<string, Row>();
-  for (const entry of content.entries) {
-    const mark = markOf(entry.key);
-    // A series styled by the feature compiler says how it looks.
-    const own =
-      options.swatches === "mark" &&
-      marks
-        .flatMap(({ series }) => series)
-        .find((s) => s.key === entry.key)
-        ?.features?.swatch?.(theme);
-    const sample = own
-      ? swatchItems(kit, own)
-      : options.swatches === "mark"
-        ? sampleOf(kit, mark?.spec, entry, theme)
-        : undefined;
-    const row: Row = {
+  // The marks and series each entry stands for, for their looks.
+  const shown = new Map<
+    string,
+    { mark: MarkSeries["mark"]; series: MarkSeries["series"][number] }[]
+  >();
+  if (options.swatches === "mark")
+    for (const { mark, series } of marks)
+      for (const s of mark.spec.legend === false ? [] : series) {
+        const key = s.entry ?? s.key;
+        shown.set(key, [...(shown.get(key) ?? []), { mark, series: s }]);
+      }
+  // Layout marks' items standing for an entry, in their colors and glyphs.
+  const items = new Map<string, LegendEntry[]>();
+  if (options.swatches === "mark")
+    for (const entry of content.also ?? [])
+      items.set(entry.key, [...(items.get(entry.key) ?? []), entry]);
+  return content.entries.map((entry) => {
+    let sample: Sample | undefined;
+    const looks = [
+      ...(shown.get(entry.key) ?? []).map(({ mark, series }) => {
+        // A series styled by the feature compiler says how it looks; others
+        // as their mark lists them (a point's symbol, a line's stroke).
+        const own = series.features?.swatch?.(theme);
+        if (own) return swatchItems(kit, own);
+        const listed = mark.legendEntry ? mark.legendEntry(series, theme) : { color: series.color };
+        return listed
+          ? sampleOf(kit, mark.spec, { key: entry.key, label: entry.label, ...listed }, theme)
+          : undefined;
+      }),
+      ...(items.get(entry.key) ?? []).map((item) => sampleOf(kit, undefined, item, theme)),
+    ];
+    // Marks drawing it differently each show their look, once: a line over
+    // boxes, a box under lines, and looks that would hide one another (boxes
+    // and glyphs, lines and lines) side by side.
+    const seen = new Set<string>();
+    for (const look of looks) {
+      if (!look) continue;
+      const items = JSON.stringify(look.items);
+      if (seen.has(items)) continue;
+      seen.add(items);
+      if (!sample) {
+        sample = look;
+        continue;
+      }
+      const width = Math.max(sample.width, look.width);
+      const height = Math.max(sample.height, look.height);
+      if (!filled(look) && !lined(sample))
+        sample = { width, height, items: [...sample.items, ...look.items] };
+      else if (filled(look) && !filled(sample))
+        sample = { width, height, items: [...look.items, ...sample.items] };
+      else {
+        const dx = sample.width + SAMPLE_GAP;
+        sample = {
+          width: dx + look.width,
+          height,
+          items: [...sample.items, ...look.items.map((item) => moved(item, dx, 0, undefined))],
+        };
+      }
+    }
+    return {
       key: entry.key,
       label: entry.label,
       color: entry.color,
@@ -508,39 +558,7 @@ function derived(
       targets: [entry.key],
       hidden: content.hidden.has(entry.key),
     };
-    if (options.merge !== "semantic") {
-      rows.push(row);
-      continue;
-    }
-    // Series name the same thing when they show one value of one field, or share a name.
-    const field = (mark?.spec as { series?: string } | undefined)?.series ?? "";
-    const identity = JSON.stringify([field, entry.label]);
-    const same = merged.get(identity);
-    if (!same) {
-      const first = { ...row, key: JSON.stringify({ legend: [field, entry.label] }) };
-      merged.set(identity, first);
-      rows.push(first);
-      continue;
-    }
-    same.targets = [...same.targets, entry.key];
-    same.hidden = same.hidden && row.hidden;
-    // Marks drawing it differently each show their look.
-    if (
-      same.sample &&
-      sample &&
-      !same.sample.items.every(
-        (item, k) => JSON.stringify(item) === JSON.stringify(sample.items[k]),
-      )
-    )
-      same.sample = {
-        width: Math.max(same.sample.width, sample.width),
-        height: Math.max(same.sample.height, sample.height),
-        items: [...same.sample.items, ...sample.items],
-      };
-  }
-  // Merged entries hidden only when all their series are.
-  for (const row of rows) row.hidden = row.targets.every((key) => content.hidden.has(key));
-  return rows;
+  });
 }
 
 /** Entries of your own: explaining a swatch, or a mark's look, and toggling the marks they target. */

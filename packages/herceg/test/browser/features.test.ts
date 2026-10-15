@@ -68,7 +68,10 @@ describe("charts drawing marks' features", () => {
     await chart.loading;
     expect(strokes()).toContain("rebeccapurple");
     expect(() =>
-      chart.update({ marks: [line(sites, { x: "t", y: "v", color: "stie" as never })] }),
+      chart.update({
+        marks: [line(sites, { x: "t", y: "v", color: "stie" as never })],
+        errorMode: "throw",
+      }),
     ).toThrow(/"stie" is neither a field nor a color/);
     chart.destroy();
   });

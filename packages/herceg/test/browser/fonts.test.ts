@@ -111,6 +111,7 @@ describe("fonts", () => {
         theme,
         marks: [],
         fonts: prepareFonts([{ family: "Shared", data: bold }]),
+        errorMode: "throw",
       }),
     ).toThrow('chart fonts: the page already has a normal "Shared" face from another file');
     // Adapters comparing options as JSON see fonts by name, not their bytes.
@@ -145,7 +146,7 @@ describe("fonts", () => {
       { family: "Fresh", data: bold },
       { family: "Kept", data: bold },
     ]);
-    expect(() => chart.update({ fonts: refused })).toThrow(
+    expect(() => chart.update({ fonts: refused, errorMode: "throw" })).toThrow(
       'a normal "Kept" face from another file',
     );
     expect(chart.toSVG()).toBe(before);

@@ -22,12 +22,15 @@ import type {
 } from "../scene/scene.ts";
 import type { Frozen, RadarSpec } from "../spec/spec.ts";
 import type { Halo } from "../spec/style.ts";
+import { refuseColor } from "./colored.ts";
 import {
+  type ItemSources,
   type LayoutFrame,
   type LayoutItem,
   type LayoutMark,
   type LayoutResult,
   RowsCache,
+  secondOf,
 } from "./layout-mark.ts";
 import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
 
@@ -116,6 +119,7 @@ export class RadarMark implements LayoutMark {
   readonly spec: Frozen<RadarSpec>;
   readonly table: Table;
   readonly measure: string;
+  readonly identity: ItemSources | undefined;
   /** The series and spokes the table names, every facet panel's, and the table version. */
   #named: { version: number; series: Used | undefined; spokes: Used | undefined } | undefined;
   /** The values of all rows and of each facet panel's. */
@@ -152,6 +156,8 @@ export class RadarMark implements LayoutMark {
       throw new RangeError(`radar fillOpacity: expected a number from 0 to 1; received ${opacity}`);
     this.table = table;
     this.measure = spec.label ?? spec.value ?? "Value";
+    // Polygons of a series field stand for its values, as series of it do.
+    this.identity = spec.series === undefined ? undefined : { field: spec.series, read: secondOf };
     // The spokes of a long table are its data: with rows, too few or too many is a mistake now.
     if (long && table.length > 0) checkSpokes(this.#values().spokes.length, "category");
   }
@@ -681,6 +687,7 @@ export function radar<S extends Schema>(
   table: Table<S>,
   options: RadarOptions<S>,
 ): ChartMark<Frozen<RadarSpec>> {
+  refuseColor(options, "radar", true);
   const spec: RadarSpec = { type: "radar" };
   if (options.fields !== undefined) spec.fields = [...options.fields];
   else {

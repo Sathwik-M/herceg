@@ -42,12 +42,30 @@ export type CustomProps<T> = { data?: T } & (T extends Table<infer S extends Sch
   ? CustomDataOptions<S>
   : CustomOptions & NoData);
 
+/** What a mark component's props were refused for, which its <Chart> shows (or throws). */
+export interface Refused {
+  readonly refused: unknown;
+}
+
+/**
+ * A mark component's mark, or what refused its props (an unknown field):
+ * caught here, since Svelte reads the mark as it checks what changed, before
+ * its <Chart> could catch it.
+ */
+export function built(make: () => ChartMark): ChartMark | Refused {
+  try {
+    return make();
+  } catch (refused) {
+    return { refused };
+  }
+}
+
 /** A mounted mark component as <Chart> sees it. */
 export interface MarkEntry {
   /** The component's anchor element, in template order among the others. */
   readonly node: Element;
-  /** The component's current mark; reading it tracks the component's props. */
-  readonly mark: ChartMark;
+  /** The component's current mark, or what refused it; reading it tracks the component's props. */
+  readonly mark: ChartMark | Refused;
 }
 
 export interface MarkList {
@@ -67,7 +85,7 @@ export function provideMarks(list: MarkList): void {
  * attachment's element is mounted. That empty element orders the marks as
  * the template does, also when `{#if}` or `{#each}` adds one later.
  */
-export function markAnchor(name: string, mark: () => ChartMark): Attachment {
+export function markAnchor(name: string, mark: () => ChartMark | Refused): Attachment {
   const list = getContext<MarkList | undefined>(MARKS);
   if (!list) throw new Error(`<${name}> must be inside a <Chart>`);
   return (node) => {

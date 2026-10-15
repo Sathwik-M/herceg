@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import herceg as hg
+from herceg._errors import python_path
 
 DATA = {
     "t": np.array(["2026-01-01T00:00", "2026-01-01T00:01"], dtype="datetime64[ms]"),
@@ -80,7 +81,7 @@ def test_point_animation_keys_serialize_and_send_the_key_column(key):
     assert len(buffers) == 3
     direct, _ = hg.Chart(DATA).point("p50", "p99", animation_key=key).to_spec()
     assert direct == spec
-    with pytest.raises(KeyError, match="point animation_key.*missing"):
+    with pytest.raises(hg.ChartError, match="point animation_key.*missing"):
         hg.scatter(DATA, "p50", "p99", animation_key="missing")
 
 
@@ -99,11 +100,11 @@ def test_marks_with_their_own_data_get_their_own_table():
 
 
 def test_fields_are_checked_with_readable_errors():
-    with pytest.raises(KeyError, match="line y: no column 'p90'; the data has 't', 'p50'"):
+    with pytest.raises(hg.ChartError, match="line y: no column 'p90'; the data has 't', 'p50'"):
         hg.Chart(DATA).line(x="t", y="p90")
     # The correction names the column type that gives the kind expected.
     with pytest.raises(
-        TypeError,
+        hg.ChartError,
         match="line y: column 'host' holds category values; expected number or time; "
         "give numbers, not strings",
     ):
@@ -112,7 +113,7 @@ def test_fields_are_checked_with_readable_errors():
     with pytest.raises(ValueError, match='line orient: "x" makes y the values'):
         hg.Chart(DATA).line(x="t", y="host", orient="x")
     with pytest.raises(
-        TypeError,
+        hg.ChartError,
         match="line series: column 'p50' holds number values; expected category; "
         "give its values as strings",
     ):
@@ -228,7 +229,7 @@ def test_a_category_y_makes_bars_horizontal():
     }
     with pytest.raises(ValueError, match="bar x: several columns need a category y"):
         hg.bar(DATA, x=["p50", "p99"], y="p50")
-    with pytest.raises(TypeError, match="bar x: column 'host' holds category values"):
+    with pytest.raises(hg.ChartError, match="bar x: column 'host' holds category values"):
         hg.bar(DATA, x="host", y="host")
     svg = hg.bar(DATA, x="p50", y="host", width=300, height=150).to_svg()
     assert svg.count('Z" fill') == 1
@@ -276,9 +277,9 @@ def test_annotation_options_are_checked():
         hg.Chart(DATA).text(x=1, y=2, label=hg.Label())
     with pytest.raises(ValueError, match="region x2: needs both x1 and x2"):
         hg.Chart(DATA).region(x1=1)
-    with pytest.raises(TypeError, match="rule x: column 'host'"):
+    with pytest.raises(hg.ChartError, match="rule x: column 'host'"):
         hg.Chart(DATA).rule(x="host")
-    with pytest.raises(TypeError, match="text label field: column 't'"):
+    with pytest.raises(hg.ChartError, match="text label field: column 't'"):
         hg.Chart(DATA).text(x="t", y="p50", label=hg.Label(field="t"))
     with pytest.raises(
         ValueError, match='text overlap: expected "show", "hide", or "move"; received "dodge"'
@@ -367,7 +368,7 @@ def test_facets_split_marks_into_panels():
     assert spec["marks"][2]["facet"] == "repeat"
     svg = chart.to_svg()
     assert ">a</text>" in svg and ">b</text>" in svg
-    with pytest.raises(KeyError, match="Chart facet: no column 'region'"):
+    with pytest.raises(hg.ChartError, match="Chart facet: no column 'region'"):
         hg.Chart(DATA, facet="region").line(x="t", y="p50")
     # A rule over the table draws each row in its own row's panel.
     rules = hg.Chart(DATA, facet="host", width=400, height=200).line(x="t", y="p50").rule(x="t")
@@ -444,7 +445,7 @@ def test_facets_lay_panels_out_by_row_and_column():
         hg.Chart(data, facet="host", facet_row="zone")
     with pytest.raises(ValueError, match="Chart facet_column: 'host' is facet_row too"):
         hg.Chart(data, facet_row="host", facet_column="host")
-    with pytest.raises(KeyError, match="Chart facet_column: no column 'region'"):
+    with pytest.raises(hg.ChartError, match="Chart facet_column: no column 'region'"):
         hg.Chart(data, facet_row="host", facet_column="region").line(x="t", y="p50")
 
 
@@ -571,7 +572,7 @@ def test_heatmaps_and_points_have_categories_of_their_own():
     assert (spec["marks"][0]["x"], spec["marks"][0]["y"]) == ("hour", "cpu")
     assert ">d</text>" in strip.to_svg()
     assert ">q</text>" in hg.scatter(load, x="cpu", y="host").to_svg()
-    with pytest.raises(TypeError, match="point size: column 'host' holds category values"):
+    with pytest.raises(hg.ChartError, match="point size: column 'host' holds category values"):
         hg.scatter(load, x="hour", y="cpu", size="host")
 
 
@@ -640,7 +641,7 @@ def test_candlesticks_send_their_four_prices():
     colored, _ = hg.candlestick(prices, "day", "o", "h", "l", "c", rise="#000000").to_spec()
     assert colored["marks"][0]["rise"] == "#000000"
     assert "<path" in chart.to_svg()
-    with pytest.raises(TypeError, match="candlestick close"):
+    with pytest.raises(hg.ChartError, match="candlestick close"):
         hg.Chart(prices).candlestick("day", "o", "h", "l", "note")
 
 
@@ -658,7 +659,7 @@ def test_histograms_bin_a_column():
     }
     assert sorted(spec["data"]["data"]["columns"]) == ["ms", "region"]
     assert "<path" in hg.Chart(values, width=300, height=150).histogram("ms").to_svg()
-    with pytest.raises(TypeError, match="histogram x"):
+    with pytest.raises(hg.ChartError, match="histogram x"):
         hg.Chart(values).histogram("region")
 
 
@@ -715,7 +716,7 @@ def test_encodings_are_checked():
     assert "<path" in star.to_svg()
     with pytest.raises(ValueError, match='point symbol: expected a shape.s name or {"field"'):
         hg.Chart(values).point("x", "y", symbol={"column": "kind"})
-    with pytest.raises(TypeError, match="point symbol"):
+    with pytest.raises(hg.ChartError, match="point symbol"):
         hg.Chart(values).point("x", "y", symbol={"field": "x"})
     with pytest.raises(ValueError, match="point colors: 'kind' is a category column"):
         hg.Chart(values).point("x", "y", color="kind", colors="viridis")
@@ -892,12 +893,12 @@ def test_calendar_heatmaps_lay_out_days():
     with pytest.raises(ValueError, match="heatmap week_start: applies to calendars of weeks"):
         hg.heatmap(days, date="day", color="commits", calendar="months", week_start="sun")
     with pytest.raises(
-        TypeError,
+        hg.ChartError,
         match="heatmap date: column 'commits' holds number values; expected time; give datetimes$",
     ):
         hg.heatmap(days, date="commits", color="commits")
     with pytest.raises(
-        TypeError,
+        hg.ChartError,
         match="heatmap date: column 'day' holds category values; expected time; give datetimes",
     ):
         hg.heatmap({"day": ["2026-01-01"], "commits": [1]}, date="day", color="commits")
@@ -913,7 +914,7 @@ def test_calendar_heatmaps_lay_out_days():
         ).heatmap(date="day", color="commits")
 
 
-def test_points_color_by_category_with_a_key():
+def test_points_color_by_category_as_series_or_with_a_key():
     values = {
         "x": np.array([1.0, 2.0, 3.0]),
         "y": np.array([1.0, 2.0, 3.0]),
@@ -923,8 +924,12 @@ def test_points_color_by_category_with_a_key():
     spec, _ = chart.to_spec()
     assert spec["marks"][0]["color"] == "kind"
     assert "kind" in spec["data"]["data"]["columns"]
+    # A series per kind, as a line's.
     svg = chart.to_svg()
-    assert ">kind</text>" in svg and ">a</text>" in svg and ">b</text>" in svg
+    assert ">kind</text>" not in svg and ">a</text>" in svg and ">b</text>" in svg
+    # Points colored row by row list the kinds in a key under the column's name.
+    keyed = hg.scatter(values, "x", "y", color="kind", series=False, width=300, height=200)
+    assert ">kind</text>" in keyed.to_svg()
     geo = hg.Chart(values).geopoint("x", "y", color="kind").to_spec()[0]
     assert geo["marks"][0]["color"] == "kind"
     three = {**values, "z": np.array([0.0, 1.0, 2.0])}
@@ -1153,7 +1158,7 @@ def test_pies_send_their_fields_and_have_their_chart_to_themselves():
         match="pie inner_radius: expected a fraction of at least 0 and below 1; received 1",
     ):
         hg.Chart(sales).pie("region", inner_radius=1)
-    with pytest.raises(TypeError, match="pie value: column 'region' holds category"):
+    with pytest.raises(hg.ChartError, match="pie value: column 'region' holds category"):
         hg.Chart(sales).pie("region", "region")
     with pytest.raises(ValueError, match="Chart zoom: a pie has no x axis"):
         hg.Chart(sales, zoom=True).pie("region")
@@ -1266,7 +1271,7 @@ def test_gauges_send_their_dial_and_bands():
         hg.gauge(readings, "cpu", bands=[50, 40])
     with pytest.raises(ValueError, match=r"gauge bands: expected numbers or \(to, color\) pairs"):
         hg.gauge(readings, "cpu", bands=[(50, "red", "x")])
-    with pytest.raises(KeyError, match="gauge value: no column 'load'"):
+    with pytest.raises(hg.ChartError, match="gauge value: no column 'load'"):
         hg.gauge(readings, "load")
     with pytest.raises(
         ValueError, match="gauge: has its chart to itself; draw the line in another chart"
@@ -1297,7 +1302,7 @@ def test_funnels_send_their_stages():
         "category": "stage",
         "labels": False,
     }
-    with pytest.raises(TypeError, match="funnel category: column 'users' holds number"):
+    with pytest.raises(hg.ChartError, match="funnel category: column 'users' holds number"):
         hg.funnel(signups, "users")
     with pytest.raises(ValueError, match="funnel: has its chart to itself"):
         hg.Chart(signups).funnel("stage").pie("stage")
@@ -1317,7 +1322,7 @@ def test_boxplots_take_a_category_and_values_either_way():
     horizontal = hg.Chart(data, width=300, height=200).boxplot(x="ms", y="region")
     # The boxes' translucent fill.
     assert 'fill-opacity="0.25"' in horizontal.to_svg()
-    with pytest.raises(TypeError, match="boxplot y: column 'v' holds category"):
+    with pytest.raises(hg.ChartError, match="boxplot y: column 'v' holds category"):
         hg.Chart(data).boxplot(x="region", y="v")
     with pytest.raises(ValueError, match="boxplot axis: horizontal box plots have no right axis"):
         hg.Chart(data).boxplot(x="ms", y="region", axis="right")
@@ -1340,7 +1345,7 @@ def test_violins_take_a_bandwidth_and_the_box_plot_options():
             hg.Chart(data).violin(x="region", y="ms", bandwidth=bad)
     with pytest.raises(ValueError, match="violin axis: horizontal violins have no right axis"):
         hg.Chart(data).violin(x="ms", y="region", axis="right")
-    with pytest.raises(TypeError, match="violin y: column 'region' holds category"):
+    with pytest.raises(hg.ChartError, match="violin y: column 'region' holds category"):
         hg.Chart(data).violin(x="region", y="region")
 
 
@@ -1367,7 +1372,7 @@ def test_treemaps_and_sunbursts_send_their_tree():
         hg.Chart(sales).treemap(["region"], node="country", parent="region")
     with pytest.raises(ValueError, match="treemap: has its chart to itself"):
         hg.Chart(sales).treemap(["region"]).pie("region")
-    with pytest.raises(TypeError, match="treemap path: column 'revenue' holds number"):
+    with pytest.raises(hg.ChartError, match="treemap path: column 'revenue' holds number"):
         hg.Chart(sales).treemap(["revenue"])
 
 
@@ -1460,7 +1465,7 @@ def test_radars_send_long_or_wide_data():
         hg.Chart(spokes).radar("k", "v")
     with pytest.raises(ValueError, match="radar category: needs at least 3 spokes; 'skill' has 2"):
         hg.Chart({"skill": ["a", "b"], "v": [1.0, 2.0]}).radar("skill", "v")
-    with pytest.raises(TypeError, match="radar fields: column 'name' holds category"):
+    with pytest.raises(hg.ChartError, match="radar fields: column 'name' holds category"):
         hg.Chart(players).radar(fields=["speed", "power", "name"], series="name")
     with pytest.raises(ValueError, match="radar domain: expected two finite numbers"):
         hg.Chart(scores).radar("skill", "score", domain=(10, 0))
@@ -1505,7 +1510,7 @@ def test_sankey_diagrams_send_their_flows():
         "labels": False,
         "sort": "value",
     }
-    with pytest.raises(TypeError, match="sankey target: column 'twh' holds number"):
+    with pytest.raises(hg.ChartError, match="sankey target: column 'twh' holds number"):
         hg.Chart(energy).sankey("from", "twh")
     with pytest.raises(
         ValueError, match="sankey node_width: expected a positive number of pixels; received 0"
@@ -1549,8 +1554,15 @@ def test_panels_draw_the_marks_that_name_them():
         ValueError, match='line panel: expected the id of a panel, or "\\*" for every panel'
     ):
         hg.Chart(DATA, panels=["a"]).line(x="t", y="p50")
-    with pytest.raises(ValueError, match='line panel: no panel "b"; the chart has "a"'):
-        hg.Chart(DATA, panels=["a"]).line(x="t", y="p50", panel="b")
+    with pytest.raises(
+        hg.ChartError, match='line panel: no panel "b"; the chart has "a"'
+    ) as raised:
+        hg.Chart(DATA, panels=["a"]).line(x="t", y="p50", panel="a").line(x="t", y="p50", panel="b")
+    assert (raised.value.code, raised.value.path, raised.value.mark) == (
+        "unknown-reference",
+        "marks[1].panel",
+        1,
+    )
     with pytest.raises(ValueError, match="line panel: the chart has no panels"):
         hg.Chart(DATA).line(x="t", y="p50", panel="a")
     with pytest.raises(ValueError, match='Chart panels: "a" names two panels'):
@@ -1644,7 +1656,7 @@ def test_facets_of_layout_marks_refuse_what_the_browser_refuses():
         ValueError, match="Chart x seams: every panel draws a pie or another mark without axes"
     ):
         hg.Chart(SALES, panels=["a"], x=seams).pie("product", panel="a").to_spec()
-    with pytest.raises(KeyError, match="Chart facet: no column 'region'"):
+    with pytest.raises(hg.ChartError, match="Chart facet: no column 'region'"):
         hg.Chart(SALES, facet="region").pie("product", data={"product": ["a"]})
     # Maps and networks draw in facet panels too; 3D charts have charts to themselves.
     network, _ = hg.Chart(SALES, facet="region").graph("region", "product").to_spec()
@@ -1790,11 +1802,11 @@ def test_graphs_send_links_and_nodes_with_only_the_columns_they_read():
 def test_graphs_check_their_columns_and_size():
     talks = {"from": ["a", "b"], "to": ["b", "c"], "n": [1.0, 2.0]}
     people = {"name": ["a", "b"], "team": ["x", "y"], "age": [1.0, 2.0]}
-    with pytest.raises(TypeError, match="graph target: column 'n' holds number"):
+    with pytest.raises(hg.ChartError, match="graph target: column 'n' holds number"):
         hg.Chart(talks).graph("from", "n")
-    with pytest.raises(TypeError, match="graph size: column 'team' holds category"):
+    with pytest.raises(hg.ChartError, match="graph size: column 'team' holds category"):
         hg.Chart(talks).graph("from", "to", nodes=people, node="name", size="team")
-    with pytest.raises(KeyError, match="graph color: no column 'kind'"):
+    with pytest.raises(hg.ChartError, match="graph color: no column 'kind'"):
         hg.Chart(talks).graph("from", "to", nodes=people, node="name", color="kind")
     with pytest.raises(ValueError, match="graph node: a nodes table needs node"):
         hg.Chart(talks).graph("from", "to", nodes=people)
@@ -1902,7 +1914,7 @@ def test_tooltip_fields_are_refused_where_they_do_not_belong():
         hg.Chart(data, tooltip=hg.Tooltip(fields=["host"])).line("t", "p99").to_spec()
     with pytest.raises(ValueError, match=r"^line tooltip mode: is the chart's"):
         hg.Chart(data).line("t", "p99", tooltip=hg.Tooltip(mode="nearest"))
-    with pytest.raises(KeyError, match=r"^\"line tooltip fields\[0\]: no column 'hots'"):
+    with pytest.raises(hg.ChartError, match=r"^line tooltip fields\[0\]: no column 'hots'"):
         hg.Chart(data).line("t", "p99", tooltip=hg.Tooltip(fields=["hots"]))
     with pytest.raises(TypeError, match=r"^line tooltip fields\[0\]: expected a column name"):
         hg.Chart(data).line("t", "p99", tooltip=hg.Tooltip(fields=[3]))  # type: ignore[list-item]
@@ -2092,9 +2104,9 @@ def test_boxplot_precomputed_statistics_and_notches():
         hg.boxplot(data, **fields)
     with pytest.raises(ValueError, match="boxplot axis: horizontal box plots have no right axis"):
         hg.boxplot(data, y="group", **fields, axis="right")
-    with pytest.raises(TypeError, match="boxplot low.*category"):
+    with pytest.raises(hg.ChartError, match="boxplot low.*category"):
         hg.boxplot(data, x="group", **{**fields, "low": "group"})
-    with pytest.raises(TypeError, match="boxplot count.*category"):
+    with pytest.raises(hg.ChartError, match="boxplot count.*category"):
         hg.boxplot(data, x="group", **fields, count="group")
 
 
@@ -2158,7 +2170,7 @@ def test_boxplot_numpy_whisker_multiples_serialize(whiskers):
     assert json.loads(json.dumps(spec))["marks"][0]["whiskers"] == float(whiskers)
 
 
-def test_legend_groups_share_series_by_name():
+def test_marks_of_one_column_share_its_values_colors_and_legend_entries():
     summary = {
         "day": ["thu", "thu", "fri", "fri"],
         "sex": ["f", "m", "f", "m"],
@@ -2168,19 +2180,173 @@ def test_legend_groups_share_series_by_name():
     }
     chart = (
         hg.Chart(summary, width=400, height=240)
-        .bar(x="day", y="mean", series="sex", legend_group="sex")
-        .error_bar(x="day", y1="low", y2="high", series="sex", dodge=True, legend_group="sex")
+        .bar(x="day", y="mean", series="sex")
+        .error_bar(x="day", y1="low", y2="high", series="sex", dodge=True)
     )
     spec, _ = chart.to_spec()
-    assert [mark.get("legendGroup") for mark in spec["marks"]] == ["sex", "sex"]
     assert spec["marks"][1]["dodge"] is True
     svg = chart.to_svg()
     # One legend entry per sex.
     assert svg.count(">f</text>") == 1 and svg.count(">m</text>") == 1
-    for method in ("line", "area", "point", "histogram", "candlestick", "boxplot", "violin"):
-        assert "legend_group" in inspect.signature(getattr(hg.Chart, method)).parameters
-    with pytest.raises(ValueError, match='bar legend_group: expected a name; received ""'):
-        hg.Chart(summary).bar(x="day", y="mean", legend_group="")
+
+
+def test_a_category_color_splits_lines_areas_and_bars_into_series():
+    rows = {
+        "t": [0.0, 1.0, 0.0, 1.0],
+        "v": [1.0, 2.0, 3.0, 4.0],
+        "region": ["eu", "eu", "us", "us"],
+    }
+    for method in ("line", "area", "bar"):
+        chart = getattr(hg.Chart(rows, width=400, height=240), method)(x="t", y="v", color="region")
+        assert chart.to_spec()[0]["marks"][0]["color"] == "region"
+        svg = chart.to_svg()
+        assert svg.count(">eu</text>") == 1 and svg.count(">us</text>") == 1, method
+    # A color that is no column, or series=False, splits nothing; one line
+    # takes one color along it.
+    hg.Chart(rows).line(x="t", y="v", color="#c00000").to_svg()
+    with pytest.raises(hg.ChartError, match="line color: column 'region' changes within the line"):
+        hg.Chart(rows).line(x="t", y="v", color="region", series=False)
+    each = hg.Chart(rows).bar(x="t", y="v", color="region", series=False).to_spec()
+    assert each[0]["marks"][0]["series"] is False
+
+
+def test_helpers_take_the_series_and_color_their_methods_take():
+    for name in dir(hg):
+        helper = getattr(hg, name)
+        method = getattr(hg.Chart, name, None)
+        if not inspect.isfunction(helper) or not callable(method):
+            continue
+        given = set(inspect.signature(helper).parameters)
+        for option in ("series", "color"):
+            if option in inspect.signature(method).parameters:
+                assert option in given, f"hg.{name} lacks {option}="
+    rows = {"day": ["a", "a", "b"], "v": [1.0, 2.0, 3.0], "region": ["eu", "us", "eu"]}
+    svg = hg.boxen(rows, x="day", y="v", color="region", width=400, height=240).to_svg()
+    assert svg.count(">eu</text>") == 1
+
+
+def test_error_paths_keep_the_keys_brackets_name():
+    assert python_path("marks[1].strokeWidth") == "marks[1].stroke_width"
+    assert python_path('scales.color.map["a.b"].fillOpacity') == (
+        'scales.color.map["a.b"].fill_opacity'
+    )
+    rows = {"t": [0, 1], "v": [1.0, 2.0], "region": ["usEast", "eu"]}
+    for key in ("usEast", "a:b", "x (read by y"):
+        chart = hg.Chart(rows, scales={"color": hg.OrdinalScale(map={key: "nope"})})
+        with pytest.raises(hg.ChartError) as raised:
+            chart.line(x="t", y="v", color="region").to_svg()
+        assert raised.value.path == f"scales.color.map[{json.dumps(key)}]"
+    for name in ("regions:v1", "a.b"):
+        chart = hg.Chart(rows, scales={name: hg.OrdinalScale(map={"eu": "nope"})})
+        with pytest.raises(hg.ChartError) as raised:
+            chart.line(
+                x="t",
+                y="v",
+                series="region",
+                encode={"color": hg.Channel(field="region", scale=name)},
+            ).to_svg()
+        assert raised.value.path == f'scales[{json.dumps(name)}].map["eu"]'
+
+
+def test_panels_that_do_not_fit_fail_as_a_layout():
+    rows = {"t": [0, 1], "v": [1.0, 2.0]}
+    chart = hg.Chart(rows, width=50, height=50, panels=["a", "b"])
+    chart.line(x="t", y="v", panel="a").line(x="t", y="v", panel="b")
+    with pytest.raises(hg.ChartError, match="do not fit a 50×50 chart") as raised:
+        chart.to_svg()
+    assert (raised.value.code, raised.value.phase) == ("layout-failed", "layout")
+
+
+def test_a_column_of_an_empty_name_splits_series():
+    rows = {"t": [0, 1, 0, 1], "v": [1.0, 2.0, 3.0, 4.0], "": ["a", "a", "b", "b"]}
+    for method in ("line", "area", "bar", "point"):
+        chart = getattr(hg.Chart(rows, width=400, height=240), method)(x="t", y="v", series="")
+        svg = chart.to_svg()
+        assert svg.count(">a</text>") == 1 and svg.count(">b</text>") == 1, method
+
+
+def test_every_family_takes_a_category_color_as_its_series():
+    rows = {
+        "day": ["a", "a", "b", "b"],
+        "v": [1.0, 2.0, 3.0, 4.0],
+        "lo": [0.0, 1.0, 2.0, 3.0],
+        "region": ["eu", "us", "eu", "us"],
+        "n": [1.0, 2.0, 3.0, 4.0],
+    }
+    made = [
+        lambda c: c.point(x="v", y="n", color="region"),
+        lambda c: c.histogram("v", color="region"),
+        lambda c: c.boxplot(x="day", y="v", color="region"),
+        lambda c: c.boxen(x="day", y="v", color="region"),
+        lambda c: c.violin(x="day", y="v", color="region"),
+        lambda c: c.error_bar(x="day", y1="lo", y2="v", color="region"),
+        lambda c: c.rug("v", color="region"),
+    ]
+    for make in made:
+        svg = make(hg.Chart(rows, width=400, height=240)).to_svg()
+        assert svg.count(">eu</text>") == 1 and svg.count(">us</text>") == 1
+    # A color that is a color paints the mark; a column of numbers, or another
+    # series column, is refused.
+    assert 'fill="#c00000"' in hg.Chart(rows).histogram("v", color="#c00000").to_svg()
+    with pytest.raises(hg.ChartError, match="histogram color: column 'n' holds number values"):
+        hg.Chart(rows).histogram("v", color="n")
+    with pytest.raises(hg.ChartError, match="boxplot color: colors the series, so it names"):
+        hg.Chart(rows).boxplot(x="day", y="v", color="region", series="day")
+    # Points colored row by row keep one series with series=False; map and 3D
+    # points color by their series alone, and lines by categories alone.
+    each = hg.Chart(rows).point(x="v", y="n", color="region", series=False).to_spec()
+    assert each[0]["marks"][0]["series"] is False
+    with pytest.raises(hg.ChartError, match="geopoint color: 'region' holds categories"):
+        hg.Chart(rows).geopoint("v", "n", color="region", series=False)
+    with pytest.raises(hg.ChartError, match="line color: column 'n' holds number values"):
+        hg.Chart(rows).line(x="v", y="n", color="n")
+    # What paints a line is what must hold within a series.
+    with pytest.raises(hg.ChartError, match="line encode stroke: column 'region' changes within"):
+        hg.Chart({**rows, "s": ["p"] * 4}).line(
+            x="v", y="n", series="s", encode=hg.Encodings(stroke=hg.Channel(field="region"))
+        )
+    with pytest.raises(TypeError, match="radar: no option 'color'; it colors by series"):
+        hg.Chart(rows).radar(category="day", value="v", color="region")
+
+
+def test_chart_errors_say_what_and_where_as_the_engine_does():
+    with pytest.raises(hg.ChartError) as raised:
+        hg.Chart(DATA).point(x="t", y="p50").line(x="t", y="p90")
+    assert isinstance(raised.value, ValueError)
+    assert raised.value.info() == {
+        "code": "unknown-field",
+        "message": "line y: no column 'p90'; the data has 't', 'p50', 'p99', 'host', 'unused'",
+        "phase": "validate",
+        "path": "marks[1].y",
+    }
+    # The engine's errors take Python's spelling of options, not of names.
+    engine = hg.ChartError.from_info(
+        {
+            "code": "invalid-option",
+            "message": "m",
+            "phase": "render",
+            "path": "marks[0].strokeWidth",
+        }
+    )
+    assert (engine.code, engine.path, engine.phase) == (
+        "invalid-option",
+        "marks[0].stroke_width",
+        "render",
+    )
+    named = hg.ChartError.from_info(
+        {
+            "code": "invalid-option",
+            "message": "m",
+            "phase": "validate",
+            "path": "scales.myScale.domain",
+        }
+    )
+    assert named.path == "scales.myScale.domain"
+    # What only the engine can check (rows made in it) is raised as it draws.
+    made = hg.derive({"t": [0.0, 1.0], "v": [1.0, 2.0], "kind": ["a", "b"]}).sort("t")
+    with pytest.raises(hg.ChartError, match="changes within the line") as drawn:
+        hg.Chart(made).line(x="t", y="v", color="kind", series=False).to_svg()
+    assert (drawn.value.code, drawn.value.path) == ("series-varies", "marks[0].color")
 
 
 def test_points_dodge_and_jitter_in_category_bands():

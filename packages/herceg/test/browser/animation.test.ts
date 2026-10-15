@@ -256,7 +256,7 @@ describe("view transitions", () => {
     chart.setViewport([20_000, 40_000]);
     tick(16);
     expect(x(chart)).not.toEqual([20_000, 40_000]);
-    expect(() => chart.update({ animation: { duration: Number.NaN } })).toThrow(
+    expect(() => chart.update({ animation: { duration: Number.NaN }, errorMode: "throw" })).toThrow(
       "chart animation.duration: expected 0 or more ms",
     );
   });

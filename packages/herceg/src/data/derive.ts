@@ -25,6 +25,7 @@ import { type Expr, expressionOf, type KindOf } from "./expr.ts";
 import { compileExpression, type Expression, type Fields } from "./expression.ts";
 import { type GeometrySet, geometryOf } from "./geometry.ts";
 import { rowComparator } from "./order.ts";
+import { setOrigin } from "./origin.ts";
 import { quantile } from "./quantile.ts";
 import {
   type CategoryField,
@@ -664,12 +665,29 @@ function run(source: Table, transforms: readonly TransformSpec[], from = 0): Row
 }
 
 /**
+ * Which fields of a derivation's rows are the source's own, unchanged by
+ * `transforms`: not calculated, binned, or aggregated (a grouping field an
+ * operation writes over included), nor dropped by an aggregate's grouping.
+ */
+function passesThrough(transforms: readonly TransformSpec[]): (field: string) => boolean {
+  return (field) =>
+    transforms.every((step) => {
+      if ("calculate" in step) return step.as !== field;
+      if ("bin" in step) return (step.as ?? step.bin) !== field && step.end !== field;
+      if ("aggregate" in step)
+        return (
+          (step.by?.includes(field) ?? false) && step.aggregate.every(({ as }) => as !== field)
+        );
+      if ("rolling" in step) return step.rolling.every(({ as }) => as !== field);
+      return true;
+    });
+}
+
+/**
  * A table of rows derived from `source` by `transforms`, kept current as the
  * source changes. The derived table keeps its source alive; the source holds
  * the derived table only weakly, so one no longer referenced stops following.
  */
-/** Each derived table's source, kept alive as long as the derived table is. */
-const sources = new WeakMap<Table, Table>();
 /** Stops a collected derived table's subscription to its source. */
 const followers = new FinalizationRegistry<() => void>((stop) => stop());
 
@@ -690,7 +708,7 @@ export function deriveTable(
   // The derived table keeps its source alive, so chains of derived tables
   // hold together; the source's subscription holds the derived table weakly
   // and ends when it is collected.
-  sources.set(derived, source);
+  setOrigin(derived, source, passesThrough(transforms));
   const ref = new WeakRef(derived);
   const stop = source.subscribe((change: TableChange) => {
     const target = ref.deref();

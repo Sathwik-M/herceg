@@ -1183,7 +1183,7 @@ describe("a navigator under panels", () => {
 
   it("refuse panels x scales of their own as the chart updates", async () => {
     const chart = await subplots();
-    expect(() => chart.update({ x: { scope: "panel" } })).toThrow(
+    expect(() => chart.update({ x: { scope: "panel" }, errorMode: "throw" })).toThrow(
       'navigator: needs one x scale shared by every panel, and x.scope is "panel"',
     );
   });

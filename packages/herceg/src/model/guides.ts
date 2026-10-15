@@ -27,6 +27,7 @@ import { mapValue } from "../lod/m4.ts";
 import { chooseInterval, timeTicks } from "../scale/time.ts";
 import { strokeKey } from "../scene/grid.ts";
 import { type AxisGuide, type Rect, tickLabelGap } from "../scene/scene.ts";
+import { ChartError } from "../spec/errors.ts";
 import type { Place } from "../spec/place.ts";
 import { cssFont, dashPattern, insets } from "../style/style.ts";
 import type { Theme } from "../theme.ts";
@@ -75,6 +76,7 @@ export const GUIDE_KIT = {
   n,
   markupOf,
   mapValue,
+  ChartError,
 };
 
 export type GuideKit = typeof GUIDE_KIT;

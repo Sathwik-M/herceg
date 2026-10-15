@@ -387,13 +387,22 @@ describe.skipIf(!hasWebGL2())("3D charts on the GPU", () => {
 
   it("refuse, clearly, surfaces too large for the CPU when the GPU cannot draw the chart", async () => {
     // Points far larger than sprites can be keep the chart off the GPU.
+    const errors: string[] = [];
     const chart = createChart(host, {
       marks: [
         surface(field(520, hills), { x: "x", y: "y", z: "z" }),
         point3d(table({ x: [0], y: [0], z: [0] }), { x: "x", y: "y", z: "z", radius: 5000 }),
       ],
+      onError: (error) => errors.push(error.message),
     });
-    await expect(chart.loading).rejects.toThrow(/surface: .* grid points draw only on the GPU/);
+    await chart.loading?.catch(() => {});
+    await expect
+      .poll(() => errors)
+      .toEqual([expect.stringMatching(/surface: .* grid points draw only on the GPU/)]);
+    // Where the chart goes, it says so.
+    expect(chart.root.querySelector('[role="alert"]')?.textContent).toMatch(
+      /Chart could not be rendered\n.*grid points draw only on the GPU/,
+    );
     chart.destroy();
   });
 

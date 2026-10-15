@@ -28,6 +28,7 @@ import type {
 import type { Frozen, SankeySpec } from "../spec/spec.ts";
 import type { Halo } from "../spec/style.ts";
 import { surface } from "../theme.ts";
+import { refuseColor } from "./colored.ts";
 import {
   heldText,
   type LayoutFrame,
@@ -718,6 +719,7 @@ export function sankey<S extends Schema>(
   table: Table<S>,
   options: SankeyOptions<S>,
 ): ChartMark<Frozen<SankeySpec>> {
+  refuseColor(options, "sankey");
   const spec: SankeySpec = { type: "sankey", source: options.source, target: options.target };
   if (options.value !== undefined) spec.value = options.value;
   if (options.labels !== undefined) spec.labels = options.labels;

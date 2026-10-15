@@ -45,10 +45,10 @@ type StatisticsOptions<S extends Schema> = {
 type BoxPlotStyleOptions<S extends Schema> = Pick<
   DistributionOptions<S>,
   | "series"
+  | "color"
   | "fill"
   | "fillOpacity"
   | "label"
-  | "legendGroup"
   | "legend"
   | "facet"
   | "panel"
@@ -471,10 +471,10 @@ export function boxplot<S extends Schema>(
       "notch",
       "outliers",
       "series",
+      "color",
       "fill",
       "fillOpacity",
       "label",
-      "legendGroup",
       "legend",
       "axis",
       "facet",

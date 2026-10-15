@@ -2,6 +2,7 @@
 import { table, time, viridis } from "herceg";
 import { useEffect, useMemo } from "react";
 import {
+  Bar,
   Boxen,
   BoxPlot,
   Chart,
@@ -154,7 +155,10 @@ export function Tips() {
   return (
     <Chart>
       <Point data={tips} x="day" y="tip" series="sex" dodge jitter={{ width: 0.4 }} />
-      <ErrorBar data={tips} x="day" y1="low" y2="high" series="sex" dodge legendGroup="sex" />
+      <ErrorBar data={tips} x="day" y1="low" y2="high" series="sex" dodge />
+      {/* A color column splits bars into series; series={false} colors each bar. */}
+      <Bar data={tips} x="day" y="tip" color="sex" />
+      <Bar data={tips} x="day" y="tip" color="sex" series={false} />
       {/* @ts-expect-error jitter takes a width */}
       <Point data={tips} x="day" y="tip" jitter={{ seed: 2 }} />
     </Chart>

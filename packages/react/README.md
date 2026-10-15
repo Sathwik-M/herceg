@@ -53,8 +53,8 @@ it shows, a highlighted row selection included). Chart events are props: `onView
 `onRowSelection` (a channel of the chart's `rowSelection` changed),
 `onCamera`, `onDrill` (a treemap or sunburst drilled into a node), `onItemMove` (a
 network's node moved; with subplots, these and `onViewport` and `onSelect` events of a
-subplot's tree, map, or network name it in `panels`), `onVisibility` (series hidden or shown), and `onRender` (a frame
-of the data drawn, for overlays, the first one once the ref is set); the latest handler
+subplot's tree, map, or network name it in `panels`), `onVisibility` (series hidden or shown), `onRender` (a frame
+of the data drawn, for overlays, the first one once the ref is set), and `onError` (see When a chart cannot draw); the latest handler
 is called, so inline functions do not resubscribe. A `rowSelection` prop
 (`rowSelection({ store, channel })`) made again each render is the same binding while it
 binds the same stores and channels, so it neither updates nor resubscribes the chart.
@@ -84,6 +84,25 @@ again with a new mark over the same or new tables: `<Graph data={reports} source
 as pixel arrays. String patterns scale with `strokeWidth` (the theme's
 line width when omitted on `Line`); arrays stay in CSS pixels. `Custom`
 shape styles accept the same values. See the engine's [dash patterns](../herceg/README.md#marks).
+
+## When a chart cannot draw
+
+A mark element or prop the engine refuses (a field its table lacks, a line
+whose color changes within a series), code that fails to load, and a frame
+that fails on new data show in the chart's place, as the engine shows them
+(see [When a chart cannot draw](../herceg/README.md#when-a-chart-cannot-draw)):
+a box of the chart's size, or over the last frame still right, a banner;
+`onError` hears of each, a `ChartError` with its `code` and `path`. With
+`errorMode="throw"`, the chart shows nothing and throws the error in
+render, whenever it came, for an error boundary:
+
+```tsx
+<ErrorBoundary fallback={<p>Latency is unavailable</p>}>
+  <Chart errorMode="throw" onError={(error) => report(error.code, error.path)}>
+    <Line data={metrics} x="time" y="p99" color="region" />
+  </Chart>
+</ErrorBoundary>
+```
 
 ## Server rendering
 

@@ -1,10 +1,10 @@
 <!-- Filled areas: to zero, stacked, or a band between two fields. -->
 <script lang="ts" generics="S extends Schema">
   import { type AreaOptions, area, type Schema } from "herceg";
-  import { markAnchor, plain, type WithData } from "./marks.js";
+  import { built, markAnchor, plain, type WithData } from "./marks.js";
 
   let { data, ...options }: WithData<AreaOptions<S>, S> = $props();
-  const mark = $derived(area(data, plain(options) as AreaOptions<S>));
+  const mark = $derived(built(() => area(data, plain(options) as AreaOptions<S>)));
   const anchor = markAnchor("Area", () => mark);
 </script>
 

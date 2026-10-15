@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal, ParamSpec, Protocol, TypedDict, 
 import numpy as np
 
 from . import _geo, _render
+from ._colors import is_color
 from ._data import Column, Matrix, Table, listed, shown
 from ._derive import BinSpec, Derived, Expr, _fields_of, bin_spec
 from ._encoding import (
@@ -39,6 +40,7 @@ from ._encoding import (
     mark_style_spec,
     tagged_spec,
 )
+from ._errors import ChartError, python_path
 from ._guides import (
     Format,
     Guide,
@@ -61,6 +63,7 @@ from ._interaction import (
 )
 from ._rows import RowSelection, SelectionBinding
 from ._rows import bindings as bindings_of
+from ._series import series_of
 from ._style import (
     AXIS_ROLES,
     PANEL_ROLES,
@@ -1029,6 +1032,11 @@ class Chart:
         self._tables: list[tuple[Any, _Columns]] = []
         # Derived tables by index, with the index of the table they derive from.
         self._derived: dict[int, int] = {}
+        # Tables made from another (statistics express computes), by index,
+        # with the index of that table: their columns stand for its (the spec's `origin`).
+        self._origins: dict[int, int] = {}
+        # Whether tables marks add are made from the chart's data (express charts).
+        self._made_from_data = False
         self._default = self._table(data) if data is not None else None
         self._marks: list[tuple[dict[str, Any], int | None]] = []
         # The nodes table of each network, by the network's place in `_marks`.
@@ -1087,7 +1095,7 @@ class Chart:
         y: str | Sequence[str],
         *,
         orient: Orient | None = None,
-        series: str | None = None,
+        series: str | Literal[False] | None = None,
         dodge: bool = False,
         data: Any = None,
         color: str | None = None,
@@ -1103,7 +1111,6 @@ class Chart:
         where: Expr | None = None,
         curve: Curve | None = None,
         label: str | None = None,
-        legend_group: str | None = None,
         legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
@@ -1123,10 +1130,13 @@ class Chart:
         the series of a ``series`` column side by side in each band, as
         grouped bars and dodged points are.
 
-        ``color`` is a CSS color, or a column whose values color the series
-        through the chart's ``"color"`` scale (``scales={"color":
-        hg.Scale(type="ordinal", map={...})}`` fixes them); ``stroke`` wins
-        over it. ``encode`` gives channels by column, scale, or condition
+        ``color`` is a CSS color, or a category column: a line per value
+        (``series`` defaults to it; ``series=False`` keeps one line per value
+        column, and another ``series`` splits the rows by that, each line
+        then of one color). A value has one color in every mark and panel
+        drawing that column of the data (``scales={"color":
+        hg.OrdinalScale(map={...})}`` fixes them); ``stroke`` wins over it.
+        ``encode`` gives channels by column, scale, or condition
         (``hg.Encodings``); ``style=hg.MarkStyle(by=hg.StyleMap(...))``
         styles series by value, such as an ``"Average"`` series dashed.
         ``markers=True`` (or a shape name) draws a point at each observation.
@@ -1137,9 +1147,14 @@ class Chart:
         table = self._mark_table(data)
         along, x_spec, y_spec = self._oriented(table, "line", x, y, orient)
         _left_along_y("line", along, axis)
-        self._require(table, series, ("category",), "line series")
-        self._single_or_series(y_spec if along == "x" else x_spec, series, "line")
-        self._check_dodge(table, "line", dodge, along, x_spec if along == "x" else y_spec, series)
+        channels = encodings_spec(encode, _LINE_CHANNELS, "line")
+        self._check_colors(table, color, channels, "line")
+        split = self._series_of(table, series, color, channels, stroke, "stroke", "line")
+        values = y_spec if along == "x" else x_spec
+        self._single_or_series(values, split, "line", inferred=series is None)
+        self._check_dodge(table, "line", dodge, along, x_spec if along == "x" else y_spec, split)
+        positions = x_spec if along == "x" else y_spec
+        self._check_series_color(table, split, color, channels, stroke, "line", positions)
         return self._add(
             {
                 "type": "line",
@@ -1154,14 +1169,13 @@ class Chart:
                 "dash": _dash(dash, "line"),
                 "opacity": fraction_option(opacity, "line opacity"),
                 "strokeOpacity": fraction_option(stroke_opacity, "line stroke_opacity"),
-                "encode": encodings_spec(encode, _LINE_CHANNELS, "line"),
+                "encode": channels,
                 "style": mark_style_spec(style, ("marker",), "line"),
                 "markers": _markers(markers),
                 "continuity": _continuity(continuity, "line"),
                 "where": condition_spec(where, "line where"),
                 "curve": curve,
                 "label": label,
-                "legendGroup": _legend_group(legend_group, "line"),
                 "legend": _mark_legend(legend, "line"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "line"),
@@ -1184,7 +1198,7 @@ class Chart:
         x1: str | None = None,
         x2: str | None = None,
         orient: Orient | None = None,
-        series: str | None = None,
+        series: str | Literal[False] | None = None,
         stack: AreaStack = False,
         dodge: bool = False,
         data: Any = None,
@@ -1202,7 +1216,6 @@ class Chart:
         where: Expr | None = None,
         curve: Curve | None = None,
         label: str | None = None,
-        legend_group: str | None = None,
         legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
@@ -1231,8 +1244,9 @@ class Chart:
         A single area has an outline along its top in its own color; stacked
         and band areas have none unless ``line=True``. ``stroke`` and
         ``stroke_width`` set the outline's color and width, and turn it on.
-        ``color`` is a CSS color or a column coloring the series through the
-        chart's ``"color"`` scale (``fill`` wins over it); ``encode``,
+        ``color`` is a CSS color or a category column: an area (or band) per
+        value, as for lines (``series`` defaults to it; ``fill`` wins over
+        it); a ``series`` column splits bands too. ``encode``,
         ``style``, ``continuity``, and ``where`` work as for lines, with
         ``where`` shading only where its condition holds (a conditional
         band).
@@ -1250,6 +1264,9 @@ class Chart:
                 f"area stroke_width: expected 0 or more pixels; received {shown(stroke_width)}"
             )
         table = self._mark_table(data)
+        channels = encodings_spec(encode, _AREA_CHANNELS, "area")
+        self._check_colors(table, color, channels, "area")
+        split = self._series_of(table, series, color, channels, fill, "fill", "area")
         along_x = y1 is not None or y2 is not None
         along_y = x1 is not None or x2 is not None
         if along_x and along_y:
@@ -1267,11 +1284,9 @@ class Chart:
             if values is not None:
                 other = "y" if along_x else "x"
                 raise ValueError(f"area {other}: {other}, or {low} and {high}, not both; drop one")
-            if series is not None or spread:
-                option = "series" if series is not None else "stack"
-                raise ValueError(
-                    f"area {option}: a band ({low} and {high}) has no series or stack; "
-                    f"drop {option}"
+            if spread:
+                raise ChartError(
+                    f"area stack: a band ({low} and {high}) does not stack; drop stack"
                 )
             if orient is not None and orient != runs:
                 raise ValueError(
@@ -1282,7 +1297,8 @@ class Chart:
             self._require(table, position, (*_NUMERIC, "category"), f"area {runs}")
             self._require(table, ends[0], _NUMERIC, f"area {low}")
             self._require(table, ends[1], _NUMERIC, f"area {high}")
-            self._check_dodge(table, "area", dodge, runs, position, None)
+            if dodge:
+                raise ChartError("area dodge: bands do not stand side by side; drop dodge")
             x_spec, y_spec = (position, None) if along_x else (None, position)
             _left_along_y("area", runs, axis)
         else:
@@ -1293,8 +1309,8 @@ class Chart:
             runs, x_values, y_values = self._oriented(table, "area", x, y, orient)
             x_spec, y_spec = x_values, y_values
             _left_along_y("area", runs, axis)
-            self._require(table, series, ("category",), "area series")
-            self._single_or_series(y_values if runs == "x" else x_values, series, "area")
+            values = y_values if runs == "x" else x_values
+            self._single_or_series(values, split, "area", inferred=series is None)
             if isinstance(spread, str):
                 _check_stack_values(
                     self._tables[table][1], y_values if runs == "x" else x_values, "area"
@@ -1303,8 +1319,10 @@ class Chart:
                 raise ValueError(
                     "area dodge: a stack's layers stand on each other; drop dodge or stack"
                 )
-            self._check_dodge(table, "area", dodge, runs, x_spec if runs == "x" else y_spec, series)
-        if gaps is not None and series is None:
+            self._check_dodge(table, "area", dodge, runs, x_spec if runs == "x" else y_spec, split)
+        positions = x_spec if runs == "x" else y_spec
+        self._check_series_color(table, split, color, channels, fill, "area", positions)
+        if gaps is not None and split is None:
             raise ValueError(
                 "area stack gaps: for stacks by a series column; give series, or drop gaps"
             )
@@ -1334,13 +1352,12 @@ class Chart:
                 "strokeWidth": stroke_width,
                 "opacity": fraction_option(opacity, "area opacity"),
                 "strokeOpacity": fraction_option(stroke_opacity, "area stroke_opacity"),
-                "encode": encodings_spec(encode, _AREA_CHANNELS, "area"),
+                "encode": channels,
                 "style": mark_style_spec(style, (), "area"),
                 "continuity": _continuity(continuity, "area"),
                 "where": condition_spec(where, "area where"),
                 "curve": curve,
                 "label": label,
-                "legendGroup": _legend_group(legend_group, "area"),
                 "legend": _mark_legend(legend, "area"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "area"),
@@ -1358,7 +1375,7 @@ class Chart:
         x: str | Sequence[str],
         y: str | Sequence[str],
         *,
-        series: str | None = None,
+        series: str | Literal[False] | None = None,
         stack: BarStack = False,
         dodge: bool | None = None,
         data: Any = None,
@@ -1373,7 +1390,6 @@ class Chart:
         encode: Encodings | Mapping[str, Any] | None = None,
         style: MarkStyle | Mapping[str, Any] | None = None,
         label: str | None = None,
-        legend_group: str | None = None,
         legend: Literal[False] | None = None,
         labels: bool | BarLabels | Mapping[str, Any] = False,
         axis: Literal["left", "right"] | None = None,
@@ -1389,10 +1405,11 @@ class Chart:
         A category ``y`` makes the bars horizontal, with lengths in ``x``.
         Several series (a ``series`` column's values, or several ``y``
         columns) stand side by side at each position, as grouped bars, unless
-        ``dodge=False`` overlaps them or ``stack`` piles them; coloring bars by
-        a column (``color="site"``, through the chart's ``"color"`` scale)
-        makes no series, so never places them apart. ``stroke`` and
-        ``stroke_width`` outline each bar.
+        ``dodge=False`` overlaps them or ``stack`` piles them. A category
+        column as ``color`` is the series column unless ``series`` says
+        otherwise (``color="region"`` groups bars by region); with
+        ``series=False`` it colors each bar and places nothing apart.
+        ``stroke`` and ``stroke_width`` outline each bar.
         ``labels=True`` writes each value at its bar's end (inside each segment
         when stacked); ``hg.BarLabels`` formats, styles, and filters them
         (white or black text by contrast with the bar unless its style sets a
@@ -1416,11 +1433,14 @@ class Chart:
                 f"bar stroke_width: expected 0 or more pixels; received {shown(stroke_width)}"
             )
         table = self._mark_table(data)
+        channels = encodings_spec(encode, _BAR_CHANNELS, "bar")
+        self._check_colors(table, color, channels, "bar")
+        split = self._series_of(table, series, color, channels, fill, "fill", "bar")
         if isinstance(y, str) and self._kind(table, y) == "category":
             if axis == "right":
                 raise ValueError('bar axis: horizontal bars have no right axis; drop axis="right"')
             xs = self._require_many(table, x, _NUMERIC, "bar x")
-            self._single_or_series(xs, series, "bar")
+            self._single_or_series(xs, split, "bar", inferred=series is None)
             ys: str | list[str] = y
         else:
             if not isinstance(x, str):
@@ -1431,8 +1451,7 @@ class Chart:
             self._require(table, x, ("number", "time", "category"), "bar x")
             xs = x
             ys = self._require_many(table, y, _NUMERIC, "bar y")
-            self._single_or_series(ys, series, "bar")
-        self._require(table, series, ("category",), "bar series")
+            self._single_or_series(ys, split, "bar", inferred=series is None)
         if stack == "fill":
             _check_stack_values(
                 self._tables[table][1],
@@ -1456,10 +1475,9 @@ class Chart:
                 "strokeOpacity": stroke_opacity,
                 "dash": _dash(dash, "bar"),
                 "opacity": opacity,
-                "encode": encodings_spec(encode, _BAR_CHANNELS, "bar"),
+                "encode": channels,
                 "style": mark_style_spec(style, (), "bar"),
                 "label": label,
-                "legendGroup": _legend_group(legend_group, "bar"),
                 "legend": _mark_legend(legend, "bar"),
                 "labels": value_labels._spec() if value_labels else labels or None,
                 "axis": axis,
@@ -1479,13 +1497,13 @@ class Chart:
         *,
         y: str | None = None,
         series: str | None = None,
+        color: str | None = None,
         data: Any = None,
         length: float | None = None,
         side: Literal["bottom", "top", "left", "right"] | None = None,
         stroke: str | None = None,
         stroke_width: float | None = None,
         label: str | None = None,
-        legend_group: str | None = None,
         legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
@@ -1525,18 +1543,19 @@ class Chart:
         self._require(table, x, _NUMERIC, "rug x")
         self._require(table, y, _NUMERIC, "rug y")
         self._require(table, series, ("category",), "rug series")
+        self._color_series(table, series, color, "rug")
         return self._add(
             {
                 "type": "rug",
                 "x": x,
                 "y": y,
                 "series": series,
+                "color": color,
                 "length": float(length) if length is not None else None,
                 "side": side,
                 "stroke": stroke,
                 "strokeWidth": float(stroke_width) if stroke_width is not None else None,
                 "label": label,
-                "legendGroup": _legend_group(legend_group, "rug"),
                 "legend": _mark_legend(legend, "rug"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "rug"),
@@ -1561,13 +1580,13 @@ class Chart:
         x_error: str | None = None,
         y_error: str | None = None,
         series: str | None = None,
+        color: str | None = None,
         dodge: bool = False,
         data: Any = None,
         stroke: str | None = None,
         stroke_width: float | None = None,
         cap: float | None = None,
         label: str | None = None,
-        legend_group: str | None = None,
         legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
@@ -1582,8 +1601,8 @@ class Chart:
         ``cap`` is the width of the end caps in pixels (0 for none). Add points or bars
         to show the center. ``dodge=True`` places the series of a ``series``
         column side by side in each category, as grouped bars are, so each
-        interval stands on its bar. Marks with the same ``legend_group`` share
-        series by name: one color, legend entry, and visibility each.
+        interval stands on its bar. Error bars of the series column of the bars
+        they stand on share the bars' colors, legend entries, and places.
         """
         vertical = y_error is not None or (y1 is not None and y2 is not None)
         horizontal = x_error is not None or (x1 is not None and x2 is not None)
@@ -1630,8 +1649,9 @@ class Chart:
                 f"error_bar {extra}: bars from {', '.join(used)} take no {extra}; drop {extra}"
             )
         self._require(table, series, ("category",), "error_bar series")
+        split = self._color_series(table, series, color, "error_bar")
         if dodge:
-            if series is None:
+            if split is None:
                 raise ValueError("error_bar dodge: places series side by side; give series")
             if self._kind(table, position) != "category":
                 raise ValueError(
@@ -1650,12 +1670,12 @@ class Chart:
                 "xError": x_error,
                 "yError": y_error,
                 "series": series,
+                "color": color,
                 "dodge": dodge or None,
                 "stroke": stroke,
                 "strokeWidth": stroke_width,
                 "cap": cap,
                 "label": label,
-                "legendGroup": _legend_group(legend_group, "error_bar"),
                 "legend": _mark_legend(legend, "error_bar"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "error_bar"),
@@ -1673,7 +1693,7 @@ class Chart:
         x: str,
         y: str,
         *,
-        series: str | None = None,
+        series: str | Literal[False] | None = None,
         animation_key: str | None = None,
         data: Any = None,
         radius: float | None = None,
@@ -1693,7 +1713,6 @@ class Chart:
         jitter: float | Jitter | None = None,
         swarm: bool = False,
         label: str | None = None,
-        legend_group: str | None = None,
         legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
@@ -1713,10 +1732,12 @@ class Chart:
         background color by default. ``color`` colors points by a numeric
         column on ``colors``, a scheme name such as ``"viridis"`` or a list of
         hex colors, centered on ``color_midpoint`` for diverging schemes; or
-        by a category column, whose values take the chart's ``"color"`` scale
-        (``scales={"color": hg.Scale(type="ordinal", map=...)}`` fixes them;
-        otherwise the theme's palette in the column's order), with a key in
-        the legend (naming the ``series`` column colors the series so). ``symbol`` is a shape
+        by a category column, a value of which has one color in every mark
+        and panel drawing that column of the data (``scales={"color":
+        hg.OrdinalScale(map={...})}`` fixes them), with a key in the legend;
+        a category ``color`` names the series too (as ``series`` does),
+        unless ``series`` names another column or is ``False``, which colors
+        each point by its row. ``symbol`` is a shape
         (``"circle"``, ``"square"``, ``"triangle"``, ...) or a category column
         with a shape per value: its name, or ``{"field": name}``, which a
         column named like a shape needs. ``sampling="pixel"`` draws opaque
@@ -1731,14 +1752,13 @@ class Chart:
         spreads points across their band, by row and seed; ``swarm=True``
         instead packs them across it without overlap, in order of their
         values (a beeswarm), laid out again as the chart resizes and zooms,
-        with points that do not fit at the band's edges. Marks with the same
-        ``legend_group`` share series by name: one color, legend entry, and
-        visibility each.
+        with points that do not fit at the band's edges.
         """
         table = self._mark_table(data)
         self._require(table, x, (*_NUMERIC, "category"), "point x")
         self._require(table, y, (*_NUMERIC, "category"), "point y")
-        self._require(table, series, ("category",), "point series")
+        # A category color names the series, as on lines and bars; series=False keeps one.
+        split = self._series_of(table, series, color, None, fill, "fill", "point")
         self._require(table, animation_key, (*_NUMERIC, "category"), "point animation_key")
         _check_size(radius, size, "point")
         self._require(table, size, _NUMERIC, "point size")
@@ -1776,7 +1796,7 @@ class Chart:
             option = "dodge" if dodge else "jitter" if spread is not None else "swarm"
             if (self._kind(table, x) == "category") == (self._kind(table, y) == "category"):
                 raise ValueError(f"point {option}: needs exactly one category column, x or y")
-            if dodge and series is None:
+            if dodge and split is None:
                 raise ValueError("point dodge: places series side by side; give series")
         return self._add(
             {
@@ -1802,7 +1822,6 @@ class Chart:
                 "jitter": spread._spec() if spread is not None else None,
                 "swarm": swarm or None,
                 "label": label,
-                "legendGroup": _legend_group(legend_group, "point"),
                 "legend": _mark_legend(legend, "point"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "point"),
@@ -1822,6 +1841,7 @@ class Chart:
         y: str | None = None,
         bins: BinSpec | Mapping[str, BinSpec] | None = None,
         series: str | None = None,
+        color: str | None = None,
         weight: str | None = None,
         normalize: HistogramNormalize | None = None,
         common_norm: bool = False,
@@ -1836,7 +1856,6 @@ class Chart:
         color_domain: tuple[float, float] | None = None,
         color_midpoint: float | None = None,
         label: str | None = None,
-        legend_group: str | None = None,
         legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
@@ -1880,6 +1899,7 @@ class Chart:
         if x is not None and y is not None:
             bars = {
                 "series": series,
+                "color": color,
                 "common_norm": common_norm or None,
                 "cumulative": cumulative or None,
                 "dodge": dodge or None,
@@ -1887,7 +1907,6 @@ class Chart:
                 "element": element,
                 "fill": fill,
                 "fill_opacity": fill_opacity,
-                "legend_group": legend_group,
             }
             given = next((name for name, value in bars.items() if value is not None), None)
             if given == "series":
@@ -1984,6 +2003,7 @@ class Chart:
             "histogram y" if y is not None else "histogram x",
         )
         self._require(table, series, ("category",), "histogram series")
+        self._color_series(table, series, color, "histogram")
         return self._add(
             {
                 "type": "histogram",
@@ -1991,6 +2011,7 @@ class Chart:
                 "y": y,
                 "bins": spec_bins,
                 "series": series,
+                "color": color,
                 "weight": weight,
                 "normalize": normalize,
                 "commonNorm": common_norm or None,
@@ -2001,7 +2022,6 @@ class Chart:
                 "fill": fill,
                 "fillOpacity": fill_opacity,
                 "label": label,
-                "legendGroup": _legend_group(legend_group, "histogram"),
                 "legend": _mark_legend(legend, "histogram"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "histogram"),
@@ -2026,7 +2046,6 @@ class Chart:
         rise: str | None = None,
         fall: str | None = None,
         label: str | None = None,
-        legend_group: str | None = None,
         legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
@@ -2062,7 +2081,6 @@ class Chart:
                 "rise": rise,
                 "fall": fall,
                 "label": label,
-                "legendGroup": _legend_group(legend_group, "candlestick"),
                 "legend": _mark_legend(legend, "candlestick"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "candlestick"),
@@ -2233,10 +2251,10 @@ class Chart:
         notch: bool | None = None,
         outliers: bool | None = None,
         series: str | None = None,
+        color: str | None = None,
         fill: str | None = None,
         fill_opacity: float | None = None,
         label: str | None = None,
-        legend_group: str | None = None,
         legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
@@ -2250,8 +2268,9 @@ class Chart:
         a category ``y`` lays the boxes along the y axis. Boxes span the
         quartiles with a line at the median; whiskers reach the most extreme
         values within 1.5 interquartile ranges, and values beyond are dots.
-        ``series`` puts a box per value of a category column side by side.
-        ``fill`` gives every box one color instead of the palette's.
+        ``series`` puts a box per value of a category column side by side;
+        ``color`` names that column too, or gives every box one color, as
+        ``fill`` does.
         Instead of raw values, name ``low``, ``q1``, ``median``, ``q3``, and
         ``high`` columns with just a category ``x`` or ``y``: one box per row,
         no outliers. ``count`` is optional unless ``notch=True``. Notches
@@ -2313,13 +2332,13 @@ class Chart:
         return self._distribution(
             {
                 "type": "boxplot",
+                "color": color,
                 "fill": fill,
                 **statistics,
                 "count": count,
                 "whiskers": whiskers,
                 "notch": notch,
                 "outliers": outliers,
-                "legendGroup": _legend_group(legend_group, "boxplot"),
                 "legend": _mark_legend(legend, "boxplot"),
                 "clip": _clip(clip, "boxplot"),
             },
@@ -2343,6 +2362,7 @@ class Chart:
         *,
         data: Any = None,
         series: str | None = None,
+        color: str | None = None,
         depth: Literal["tukey", "proportion", "trustworthy", "full"] | int | None = None,
         outlier_proportion: float | None = None,
         trust_alpha: float | None = None,
@@ -2351,7 +2371,6 @@ class Chart:
         fill: str | None = None,
         fill_opacity: float | None = None,
         label: str | None = None,
-        legend_group: str | None = None,
         legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
@@ -2375,7 +2394,8 @@ class Chart:
         ``width_method`` narrows each level by half ("exponential", the
         default), by equal steps ("linear"), or to its share of the values
         over its height ("area"). ``series`` puts a group per value of a
-        category column side by side; ``fill`` gives every box one color.
+        category column side by side (``color`` names it too); ``fill`` gives
+        every box one color.
         """
         if depth is not None and depth not in ("tukey", "proportion", "trustworthy", "full"):
             if not (
@@ -2406,13 +2426,13 @@ class Chart:
         return self._distribution(
             {
                 "type": "boxen",
+                "color": color,
                 "fill": fill,
                 "depth": depth,
                 "outlierProportion": outlier_proportion,
                 "trustAlpha": trust_alpha,
                 "widthMethod": width_method,
                 "outliers": outliers,
-                "legendGroup": _legend_group(legend_group, "boxen"),
                 "legend": _mark_legend(legend, "boxen"),
                 "clip": _clip(clip, "boxen"),
             },
@@ -2436,13 +2456,13 @@ class Chart:
         *,
         data: Any = None,
         series: str | None = None,
+        color: str | None = None,
         bandwidth: float | None = None,
         split: bool | None = None,
         inner: Literal["box", "quartiles", "none"] | None = None,
         fill: str | None = None,
         fill_opacity: float | None = None,
         label: str | None = None,
-        legend_group: str | None = None,
         legend: Literal[False] | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
@@ -2460,7 +2480,7 @@ class Chart:
         wide at its densest. ``bandwidth`` sets the kernel's standard
         deviation in data units for every violin; by default each has its
         own by Silverman's rule of thumb. ``series`` puts a violin per value
-        of a category column side by side. ``fill`` gives every violin one
+        of a category column side by side (``color`` names it too). ``fill`` gives every violin one
         color instead of the palette's. ``split=True`` shares the category
         center between two series (first left, or below horizontally); a
         missing partner leaves its half empty. ``inner`` selects the default
@@ -2477,8 +2497,6 @@ class Chart:
             )
         if split is not None and not isinstance(split, bool):
             raise TypeError(f"violin split: expected True or False; received {shown(split)}")
-        if split and series is None:
-            raise ValueError("violin split: halves each category between two series; give series")
         if inner is not None and inner not in ("box", "quartiles", "none"):
             raise ValueError(
                 f'violin inner: expected "box", "quartiles", or "none"; received {shown(inner)}'
@@ -2486,11 +2504,11 @@ class Chart:
         return self._distribution(
             {
                 "type": "violin",
+                "color": color,
                 "bandwidth": bandwidth,
                 "fill": fill,
                 "split": split,
                 "inner": inner,
-                "legendGroup": _legend_group(legend_group, "violin"),
                 "legend": _mark_legend(legend, "violin"),
                 "clip": _clip(clip, "violin"),
             },
@@ -2539,6 +2557,9 @@ class Chart:
         else:
             self._require(table, values, _NUMERIC, f"{kind} {'x' if horizontal else 'y'}")
         self._require(table, series, ("category",), f"{kind} series")
+        split = self._color_series(table, series, spec.get("color"), kind)
+        if spec.get("split") and split is None:
+            raise ValueError("violin split: halves each category between two series; give series")
         if horizontal and axis == "right":
             noun = {"boxplot": "box plots", "boxen": "boxen plots", "violin": "violins"}[kind]
             raise ValueError(
@@ -3088,7 +3109,7 @@ class Chart:
         *,
         data: Any = None,
         label_field: str | None = None,
-        series: str | None = None,
+        series: str | Literal[False] | None = None,
         radius: float | None = None,
         size: str | None = None,
         radius_range: tuple[float, float] | None = None,
@@ -3111,9 +3132,10 @@ class Chart:
         numeric ``size`` column within ``radius_range``.
 
         ``series`` gives a color and legend entry per category, ``color`` colors
-        points by a numeric column (or a category column, a palette color per
-        value, as ``Chart.point``'s). Points are drawn largest first, each ringed
-        in the background color (``stroke``, ``stroke_width``). For a
+        points by a numeric column (or a category column, which names the
+        series too unless ``series`` is given or ``False``, as
+        ``Chart.point``'s). Points are drawn largest first, each ringed in the
+        background color (``stroke``, ``stroke_width``). For a
         GeoDataFrame of points, add the columns first:
         ``gdf.assign(lon=gdf.geometry.x, lat=gdf.geometry.y)``. Layers share a
         map as ``Chart.geoshape`` says, also in facets and panels.
@@ -3123,7 +3145,20 @@ class Chart:
         self._require(table, longitude, ("number",), "geopoint longitude")
         self._require(table, latitude, ("number",), "geopoint latitude")
         self._require(table, label_field, ("category",), "geopoint label_field")
-        self._require(table, series, ("category",), "geopoint series")
+        # A category color names the series, as on points along axes; series=False keeps one.
+        split = self._series_of(table, series, color, None, fill, "fill", "geopoint")
+        if (
+            color is not None
+            and fill is None
+            and self._kind(table, color) == "category"
+            and split != color
+        ):
+            raise ChartError(
+                f"geopoint color: {color!r} holds categories, which color "
+                "map points by series; leave series out "
+                f"(or give series={color!r}), or color by a numeric column",
+                path=self._path("geopoint", "color"),
+            )
         _check_size(radius, size, "geopoint")
         self._require(table, size, ("number",), "geopoint size")
         self._require(table, color, ("number", "category"), "geopoint color")
@@ -3179,7 +3214,7 @@ class Chart:
         z: str,
         *,
         data: Any = None,
-        series: str | None = None,
+        series: str | Literal[False] | None = None,
         label_field: str | None = None,
         radius: float | None = None,
         color: str | None = None,
@@ -3197,8 +3232,9 @@ class Chart:
         and ``z`` (z is vertical).
 
         ``series`` gives a color and legend entry per category, ``color``
-        colors points by a numeric column (or a category column, a palette
-        color per value, as ``Chart.point``'s), and ``label_field`` names a
+        colors points by a numeric column (or a category column, which names
+        the series too unless ``series`` is given or ``False``, as
+        ``Chart.point``'s), and ``label_field`` names a
         category column labeling each point in tooltips. ``radius`` is the
         radius in pixels (3.5 by default). 3D marks share their chart or subplot, its
         box, and its ``camera``.
@@ -3207,7 +3243,20 @@ class Chart:
         table = self._mark_table(data)
         for axis, field in (("x", x), ("y", y), ("z", z)):
             self._require(table, field, _NUMERIC, f"point_3d {axis}")
-        self._require(table, series, ("category",), "point_3d series")
+        # A category color names the series, as on points along axes; series=False keeps one.
+        split = self._series_of(table, series, color, None, fill, "fill", "point_3d")
+        if (
+            color is not None
+            and fill is None
+            and self._kind(table, color) == "category"
+            and split != color
+        ):
+            raise ChartError(
+                f"point_3d color: {color!r} holds categories, which color "
+                "3D points by series; leave series out "
+                f"(or give series={color!r}), or color by a numeric column",
+                path=self._path("point_3d", "color"),
+            )
         self._require(table, label_field, ("category",), "point_3d label_field")
         self._require(table, color, ("number", "category"), "point_3d color")
         self._check_category_color(table, color, colors, color_domain, color_midpoint, "point_3d")
@@ -4048,13 +4097,19 @@ class Chart:
     def to_spec(self) -> tuple[dict[str, Any], list[bytes]]:
         """The portable chart spec and the binary buffers its columns reference."""
         self._check_spec()
+        columns = self._used_columns()
         return assemble_spec(
             self._spec_options(),
             self._layout_spec(),
-            self._used_columns(),
+            columns,
             self._mark_specs(),
             self._derived_specs(),
             self._matrices(),
+            {
+                table_name(table): table_name(origin)
+                for table, origin in self._origins.items()
+                if table_name(table) in columns and table_name(origin) in columns
+            },
         )
 
     def _layouts(self) -> list[dict[str, Any]]:
@@ -4064,6 +4119,7 @@ class Chart:
     def _check_spec(self) -> None:
         """What the browser checks of the whole chart once every mark is added,
         before a spec of it is made or a live chart shows it."""
+        self._check_scale_references()
         layouts = self._layouts()
         check_layout_options(self._settings, layouts, len(self._panels))
         maps = [mark for mark in layouts if mark["type"] in _MAP_MARKS]
@@ -4094,6 +4150,27 @@ class Chart:
                 raise ValueError(
                     f"Chart {name}: an option of 3D charts, and the chart has no point_3d, "
                     f"line_3d, or surface marks; drop {name}"
+                )
+
+    def _check_scale_references(self) -> None:
+        """Refuses a channel naming a scale the chart's ``scales`` does not
+        have (the default ``"color"``, ``"symbol"``, and ``"dash"`` it makes)."""
+        declared = scales_spec(self._settings.get("scales")) or {}
+        for index, (mark, _) in enumerate(self._marks):
+            for name, channel in (mark.get("encode") or {}).items():
+                scale = channel.get("scale") if isinstance(channel, dict) else None
+                if scale is None or scale in declared or scale in ("color", "symbol", "dash"):
+                    continue
+                named = [n for n in declared if n not in ("x", "y", "yRight")]
+                choices = f", or name one of {listed(named)}" if named else ""
+                method = _method(mark["type"])
+                option = python_path(name)
+                raise ChartError(
+                    f"{method} encode {option} scale: the chart has no scale {scale!r}; add it to "
+                    f"scales{choices}",
+                    code="unknown-reference",
+                    path=f"marks[{index}].encode.{option}.scale",
+                    mark=index if mark.get("id") is None else mark["id"],
                 )
 
     def widget(self) -> ChartWidget:
@@ -4549,6 +4626,8 @@ class Chart:
             self._tables.append((data, data))
         else:
             self._tables.append((data, converted or Table(data)))
+            if self._made_from_data and self._default is not None:
+                self._origins[len(self._tables) - 1] = self._default
         return len(self._tables) - 1
 
     def _mark_table(self, data: Any) -> int:
@@ -4562,9 +4641,14 @@ class Chart:
         if field is None:
             return
         source = self._tables[table][1]
+        path = self._path(role)
         if field not in source.names:
             available = ", ".join(repr(name) for name in source.names)
-            raise KeyError(f"{role}: no column {field!r}; the data has {available}")
+            raise ChartError(
+                f"{role}: no column {field!r}; the data has {available}",
+                code="unknown-field",
+                path=path,
+            )
         kind = source.column(field).kind
         if kind not in kinds:
             # Categories come from strings, and times (only a heatmap's date takes
@@ -4577,8 +4661,10 @@ class Chart:
                 fix = "; give numbers, not strings"
             else:
                 fix = ""
-            raise TypeError(
-                f"{role}: column {field!r} holds {kind} values; expected {' or '.join(kinds)}{fix}"
+            raise ChartError(
+                f"{role}: column {field!r} holds {kind} values; expected {' or '.join(kinds)}{fix}",
+                code="field-type",
+                path=path,
             )
 
     def _mark_tooltip(
@@ -4603,11 +4689,190 @@ class Chart:
         source = self._tables[table][1]
         return source.column(field).kind if field in source.names else None
 
-    def _single_or_series(self, fields: str | list[str], series: str | None, role: str) -> None:
+    def _path(self, role: str, option: str | None = None) -> str:
+        """Where an option of the mark being added is (``marks[3].color``), from
+        its role (``"line color"``), or a chart option's (``"Chart facet"``)."""
+        mark, _, rest = role.partition(" ")
+        name = option or rest.replace(" ", "_")
+        return name if mark == "Chart" else f"marks[{len(self._marks)}].{name}"
+
+    def _single_or_series(
+        self, fields: str | list[str], series: str | None, role: str, inferred: bool = False
+    ) -> None:
         if series is not None and not isinstance(fields, str):
-            raise ValueError(
-                f"{role} series: several value columns or a series column, not both; drop one"
+            raise ChartError(
+                f"{role} color: several value columns, and series by {series!r} from color; give "
+                "one value column per mark, or series=False"
+                if inferred
+                else f"{role} series: several value columns or a series column, not both; drop one",
+                code="series-with-values",
+                path=self._path(role, "color" if inferred else "series"),
             )
+
+    def _series_of(
+        self,
+        table: int,
+        series: str | Literal[False] | None,
+        color: str | None,
+        encode: dict[str, Any] | None,
+        paint: str | None,
+        paint_name: str,
+        mark: str,
+    ) -> str | None:
+        """The column splitting a line's, area's, or bar's rows into series, as
+        the engine finds it (see ``series_of``): ``series``, or without it the
+        category column ``color`` (or ``encode``'s color channel) names, so
+        that ``color="region"`` draws a series per region; none with
+        ``series=False`` or where the mark's own paint (a line's ``stroke``,
+        an area's or bar's ``fill``) overrides the color."""
+        if series is False:
+            return None
+        if series is not None:
+            if not isinstance(series, str):
+                raise TypeError(
+                    f"{mark} series: expected a column name, or False; received {shown(series)}"
+                )
+            self._require(table, series, ("category",), f"{mark} series")
+            return series
+        return series_of(color, encode, paint, paint_name, lambda field: self._kind(table, field))
+
+    def _color_series(
+        self, table: int, series: str | None, color: str | None, mark: str
+    ) -> str | None:
+        """The series column of a mark of summaries or observations (a
+        histogram, box plot, violin, boxen plot, error bar, or rug) given its
+        ``color``: a category column names the series, as ``series`` does (which
+        must then name it too); a color is the mark's paint."""
+        if color is None:
+            return series
+        if not isinstance(color, str):
+            raise TypeError(
+                f"{mark} color: expected a column name or a color; received {shown(color)}"
+            )
+        names = self._tables[table][1].names
+        if color not in names:
+            if not is_color(color):
+                raise ChartError(
+                    f"{mark} color: {color!r} is neither a column nor a color; the data has "
+                    f"{', '.join(repr(name) for name in names)}, and colors are hex, rgb(), "
+                    "hsl(), var(), or CSS names",
+                    path=self._path(mark, "color"),
+                )
+            return series
+        if is_color(color):
+            raise ChartError(
+                f"{mark} color: {color!r} names both a column and a color; give "
+                f"series={color!r}, or the color as fill or stroke",
+                path=self._path(mark, "color"),
+            )
+        self._require(table, color, ("category",), f"{mark} color")
+        if series is not None and series != color:
+            raise ChartError(
+                f"{mark} color: colors the series, so it names their column; give series or "
+                "color, or the same column for both",
+                path=self._path(mark, "color"),
+            )
+        return color
+
+    def _check_colors(
+        self, table: int, color: str | None, channels: dict[str, Any] | None, mark: str
+    ) -> None:
+        """Refuses a ``color`` that is neither a column nor a color, or names
+        both, and channels reading columns the data does not have or that hold
+        no categories, as the engine would as it draws."""
+        names = self._tables[table][1].names
+        if color is not None and isinstance(color, str):
+            column, css = color in names, is_color(color)
+            if column and css:
+                raise ChartError(
+                    f"{mark} color: {color!r} names both a column and a color; give "
+                    f"encode=hg.Encodings(color=hg.Channel(field={color!r})) or "
+                    f"hg.Channel(value={color!r})",
+                    path=self._path(mark, "color"),
+                )
+            if not column and not css:
+                raise ChartError(
+                    f"{mark} color: {color!r} is neither a column nor a color; the data has "
+                    f"{', '.join(repr(name) for name in names)}, and colors are hex, rgb(), "
+                    "hsl(), var(), or CSS names",
+                    path=self._path(mark, "color"),
+                )
+            # Lines, areas, and bars color by categories, through a scale.
+            if column:
+                self._require(table, color, ("category",), f"{mark} color")
+        for name, channel in (channels or {}).items():
+            field = channel.get("field") if isinstance(channel, dict) else None
+            if field is not None:
+                option = python_path(f"encode.{name}.field")
+                self._require(table, field, ("category",), f"{mark} {option}")
+
+    def _check_series_color(
+        self,
+        table: int,
+        series: str | None,
+        color: str | None,
+        encode: dict[str, Any] | None,
+        paint: str | None,
+        mark: str,
+        position: Any = None,
+    ) -> None:
+        """Refuses a line or area whose color column changes within one of its
+        series, where the data is here to check: lines and areas take one color
+        per series (the engine checks again as the data changes). What paints
+        it is checked: a paint of the mark's own (``paint``, a line's stroke or
+        an area's fill) wins, then its channel, then the color. Rows without a
+        category ``position`` are drawn in no series, as the engine leaves
+        them out."""
+        primary = "stroke" if mark == "line" else "fill"
+        if paint is not None:
+            return
+        own = (encode or {}).get(primary)
+        channel = own if own is not None else (encode or {}).get("color")
+        field = (
+            channel.get("field")
+            if isinstance(channel, dict)
+            else color
+            if own is None and channel is None
+            else None
+        )
+        if field is None or field == series or self._kind(table, field) != "category":
+            return
+        source = self._tables[table][1]
+        try:
+            colors = source.column(field).values
+            groups = (
+                source.column(series).values
+                if series is not None
+                else np.zeros(len(colors), np.int32)
+            )
+        except (KeyError, TypeError, ValueError, AttributeError):
+            # A derived table's rows are made in the browser, which checks them.
+            return
+        known = (colors >= 0) & (groups >= 0)
+        if isinstance(position, str) and self._kind(table, position) == "category":
+            known &= source.column(position).values >= 0
+        pairs = np.unique(np.stack([groups[known], colors[known]]), axis=1)
+        repeated = np.flatnonzero(pairs[0][1:] == pairs[0][:-1])
+        if repeated.size == 0:
+            return
+        option = (
+            ("encode stroke" if primary == "stroke" else "encode fill")
+            if own is not None
+            else "encode color"
+            if isinstance(channel, dict)
+            else "color"
+        )
+        if series is None:
+            within, fix = "the line" if mark == "line" else "the area", "a series column"
+        else:
+            name = source.column(series).dictionary[int(pairs[0][repeated[0]])]
+            within, fix = f"series {name!r} (by {series!r})", "another column"
+        raise ChartError(
+            f"{mark} {option}: column {field!r} changes within {within}; {mark}s take one color "
+            f"per series, so split them by {fix} or give a constant color",
+            code="series-varies",
+            path=self._path(mark, option.replace(" ", ".")),
+        )
 
     def _oriented(
         self,
@@ -4787,9 +5052,12 @@ class Chart:
                     "received None"
                 )
             if panel != "*" and panel not in ids:
-                raise ValueError(
+                raise ChartError(
                     f"{method} panel: no panel {shown(panel)}; "
-                    f"the chart has {', '.join(map(shown, ids))}"
+                    f"the chart has {', '.join(map(shown, ids))}",
+                    code="unknown-reference",
+                    path=f"marks[{len(self._marks)}].panel",
+                    mark=len(self._marks) if spec.get("id") is None else spec["id"],
                 )
         elif spec.get("panel") is not None:
             raise ValueError(f"{method} panel: the chart has no panels; drop panel")
@@ -5356,9 +5624,11 @@ def assemble_spec(
     marks: list[dict[str, Any]],
     derived: dict[str, dict[str, Any]] | None = None,
     matrices: dict[str, dict[str, str]] | None = None,
+    origins: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], list[bytes]]:
     """A spec and its buffers from chart options, columns by table name, mark
-    specs, derived tables by name, and the coordinates of matrix tables."""
+    specs, derived tables by name, the coordinates of matrix tables, and the
+    tables others are made from (`origin`), by name."""
     buffers: list[bytes] = []
     spec: dict[str, Any] = {"version": _SPEC_VERSION, **options}
     for key, value in layout.items():
@@ -5370,6 +5640,7 @@ def assemble_spec(
             name: {
                 "columns": columns_spec(columns, buffers),
                 **({"matrix": matrices[name]} if matrices and name in matrices else {}),
+                **({"origin": origins[name]} if origins and name in origins else {}),
             }
             for name, columns in tables.items()
         }
@@ -5914,13 +6185,6 @@ def _mark_legend(legend: Any, mark: str) -> Literal[False] | None:
     return legend
 
 
-def _legend_group(group: str | None, mark: str) -> str | None:
-    """A mark's legend group: a name, which marks sharing it share series by."""
-    if group is not None and not (isinstance(group, str) and group):
-        raise ValueError(f"{mark} legend_group: expected a name; received {shown(group)}")
-    return group
-
-
 def _finite(value: Any) -> bool:
     """A real, finite number; booleans are not numbers here."""
     return isinstance(value, numbers.Real) and not isinstance(value, bool) and math.isfinite(value)
@@ -6083,6 +6347,13 @@ def _unknown_option(function: Callable[..., Any], name: str, known: set[str]) ->
     )
     if name == "zorder":
         hint = "marks draw in the order given; add the mark later to draw it on top"
+    elif name == "color" and method and not constructor:
+        # Marks without color choose theirs: by series, by category, or one of their own.
+        hint = (
+            "it colors by series; give series=, the column naming them"
+            if "series" in known
+            else "it chooses its colors itself (fill or stroke, where it takes them, set one)"
+        )
     elif name == "density" and "normalize" in known:
         hint = 'did you mean normalize="density"?'
     elif name in ("xlim", "ylim"):
@@ -6126,7 +6397,7 @@ def line(
     y: str | Sequence[str],
     *,
     orient: Orient | None = None,
-    series: str | None = None,
+    series: str | Literal[False] | None = None,
     dodge: bool = False,
     color: str | None = None,
     stroke: str | None = None,
@@ -6141,7 +6412,6 @@ def line(
     where: Expr | None = None,
     curve: Curve | None = None,
     label: str | None = None,
-    legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
     clip: Clip | None = None,
@@ -6170,7 +6440,6 @@ def line(
         where=where,
         curve=curve,
         label=label,
-        legend_group=legend_group,
         axis=axis,
         panel=panel,
         clip=clip,
@@ -6190,7 +6459,7 @@ def area(
     x1: str | None = None,
     x2: str | None = None,
     orient: Orient | None = None,
-    series: str | None = None,
+    series: str | Literal[False] | None = None,
     stack: AreaStack = False,
     dodge: bool = False,
     color: str | None = None,
@@ -6207,7 +6476,6 @@ def area(
     where: Expr | None = None,
     curve: Curve | None = None,
     label: str | None = None,
-    legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
     clip: Clip | None = None,
@@ -6248,7 +6516,6 @@ def area(
         where=where,
         curve=curve,
         label=label,
-        legend_group=legend_group,
         axis=axis,
         panel=panel,
         clip=clip,
@@ -6263,7 +6530,7 @@ def bar(
     x: str | Sequence[str],
     y: str | Sequence[str],
     *,
-    series: str | None = None,
+    series: str | Literal[False] | None = None,
     stack: BarStack = False,
     dodge: bool | None = None,
     color: str | None = None,
@@ -6277,7 +6544,6 @@ def bar(
     encode: Encodings | Mapping[str, Any] | None = None,
     style: MarkStyle | Mapping[str, Any] | None = None,
     label: str | None = None,
-    legend_group: str | None = None,
     labels: bool | BarLabels | Mapping[str, Any] = False,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
@@ -6306,7 +6572,6 @@ def bar(
         encode=encode,
         style=style,
         label=label,
-        legend_group=legend_group,
         labels=labels,
         axis=axis,
         panel=panel,
@@ -6323,7 +6588,7 @@ def scatter(
     x: str,
     y: str,
     *,
-    series: str | None = None,
+    series: str | Literal[False] | None = None,
     animation_key: str | None = None,
     radius: float | None = None,
     size: str | None = None,
@@ -6342,7 +6607,6 @@ def scatter(
     jitter: float | Jitter | None = None,
     swarm: bool = False,
     label: str | None = None,
-    legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
     clip: Clip | None = None,
@@ -6374,7 +6638,6 @@ def scatter(
         jitter=jitter,
         swarm=swarm,
         label=label,
-        legend_group=legend_group,
         axis=axis,
         panel=panel,
         clip=clip,
@@ -6390,7 +6653,7 @@ def scatter_3d(
     y: str,
     z: str,
     *,
-    series: str | None = None,
+    series: str | Literal[False] | None = None,
     label_field: str | None = None,
     radius: float | None = None,
     color: str | None = None,
@@ -6694,6 +6957,7 @@ def histogram(
     y: str | None = None,
     bins: BinSpec | Mapping[str, BinSpec] | None = None,
     series: str | None = None,
+    color: str | None = None,
     weight: str | None = None,
     normalize: HistogramNormalize | None = None,
     common_norm: bool = False,
@@ -6707,7 +6971,6 @@ def histogram(
     color_domain: tuple[float, float] | None = None,
     color_midpoint: float | None = None,
     label: str | None = None,
-    legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
     clip: Clip | None = None,
@@ -6721,6 +6984,7 @@ def histogram(
         y=y,
         bins=bins,
         series=series,
+        color=color,
         weight=weight,
         normalize=normalize,
         common_norm=common_norm,
@@ -6734,7 +6998,6 @@ def histogram(
         color_domain=color_domain,
         color_midpoint=color_midpoint,
         label=label,
-        legend_group=legend_group,
         axis=axis,
         panel=panel,
         clip=clip,
@@ -6835,10 +7098,10 @@ def boxplot(
     notch: bool | None = None,
     outliers: bool | None = None,
     series: str | None = None,
+    color: str | None = None,
     fill: str | None = None,
     fill_opacity: float | None = None,
     label: str | None = None,
-    legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
     clip: Clip | None = None,
@@ -6859,10 +7122,10 @@ def boxplot(
         notch=notch,
         outliers=outliers,
         series=series,
+        color=color,
         fill=fill,
         fill_opacity=fill_opacity,
         label=label,
-        legend_group=legend_group,
         axis=axis,
         panel=panel,
         clip=clip,
@@ -6877,6 +7140,7 @@ def boxen(
     y: str,
     *,
     series: str | None = None,
+    color: str | None = None,
     depth: Literal["tukey", "proportion", "trustworthy", "full"] | int | None = None,
     outlier_proportion: float | None = None,
     trust_alpha: float | None = None,
@@ -6885,7 +7149,6 @@ def boxen(
     fill: str | None = None,
     fill_opacity: float | None = None,
     label: str | None = None,
-    legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
     clip: Clip | None = None,
@@ -6897,6 +7160,7 @@ def boxen(
         x,
         y,
         series=series,
+        color=color,
         depth=depth,
         outlier_proportion=outlier_proportion,
         trust_alpha=trust_alpha,
@@ -6905,7 +7169,6 @@ def boxen(
         fill=fill,
         fill_opacity=fill_opacity,
         label=label,
-        legend_group=legend_group,
         axis=axis,
         panel=panel,
         clip=clip,
@@ -6920,13 +7183,13 @@ def violin(
     y: str,
     *,
     series: str | None = None,
+    color: str | None = None,
     bandwidth: float | None = None,
     split: bool | None = None,
     inner: Literal["box", "quartiles", "none"] | None = None,
     fill: str | None = None,
     fill_opacity: float | None = None,
     label: str | None = None,
-    legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
     clip: Clip | None = None,
@@ -6938,13 +7201,13 @@ def violin(
         x,
         y,
         series=series,
+        color=color,
         bandwidth=bandwidth,
         split=split,
         inner=inner,
         fill=fill,
         fill_opacity=fill_opacity,
         label=label,
-        legend_group=legend_group,
         axis=axis,
         panel=panel,
         clip=clip,
@@ -7161,7 +7424,7 @@ def scatter_geo(
     latitude: str,
     *,
     label_field: str | None = None,
-    series: str | None = None,
+    series: str | Literal[False] | None = None,
     radius: float | None = None,
     size: str | None = None,
     radius_range: tuple[float, float] | None = None,
@@ -7216,7 +7479,6 @@ def candlestick(
     rise: str | None = None,
     fall: str | None = None,
     label: str | None = None,
-    legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
     clip: Clip | None = None,
@@ -7236,7 +7498,6 @@ def candlestick(
         rise=rise,
         fall=fall,
         label=label,
-        legend_group=legend_group,
         axis=axis,
         panel=panel,
         clip=clip,

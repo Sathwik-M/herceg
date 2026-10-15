@@ -18,6 +18,7 @@ import {
   RowSet,
   type SelectionStore,
   selectRows,
+  showFailure,
   type ThemeName,
   type ThemeSpec,
   type Viewport,
@@ -110,15 +111,36 @@ interface Instance {
 const DEFAULT_HEIGHT = 320;
 const instances = new WeakMap<object, Instance>();
 
+/** What says a chart could not be shown, by the component's element, until a run shows one. */
+const failures = new WeakMap<object, HTMLElement>();
+
 export default function herceg(component: Component): () => void {
   const { parentElement, data } = component;
   if (!data) throw new Error("herceg: the component received no chart");
+  failures.get(parentElement)?.remove();
   let instance = instances.get(parentElement);
   if (instance && sameBytes(instance.bytes, data)) {
     instance.component = component;
     followApp(instance);
   } else {
-    instance = mount(component, data, instance);
+    try {
+      instance = mount(component, data, instance);
+    } catch (error) {
+      // A spec the engine refuses shows where the chart goes; the stack stays in the console.
+      console.error(error);
+      instance?.chart.destroy();
+      instance?.element.remove();
+      instances.delete(parentElement);
+      const box = (
+        "host" in parentElement ? parentElement.host : parentElement
+      ).getBoundingClientRect();
+      const failure = showFailure(parentElement, error, false, {
+        width: box.width || 640,
+        height: DEFAULT_HEIGHT,
+      });
+      failures.set(parentElement, failure);
+      return () => failure.remove();
+    }
     instances.set(parentElement, instance);
   }
   // Streamlit runs the cleanup it got last, when the component leaves the page.

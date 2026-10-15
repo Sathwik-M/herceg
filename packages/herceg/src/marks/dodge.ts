@@ -3,6 +3,7 @@
 // jittered, each point moved across its share by a hash of its row's
 // identity, so redrawing, resizing, and streaming leave it where it was.
 
+import { keyPrefix } from "../model/identity.ts";
 import type { MarkSeries } from "../model/inspect.ts";
 import type { Frame } from "./mark.ts";
 import type { Series } from "./series.ts";
@@ -19,21 +20,21 @@ const WHOLE: Slot = { index: 0, count: 1 };
 export const STILL: readonly [number, number] = [0, 0];
 
 /**
- * The slots of a mark's visible series, in order: each its own, or, for a
- * mark in a legend group, its name's place among the group's visible series
- * (`Frame.groups`), so marks of one group dodge alike whatever series each
- * has. Undefined for a hidden series.
+ * The slots of a mark's visible series, in order: each its own, or for a
+ * series standing for a value of a partition (`Series.partition`), the
+ * value's place among the visible values of the chart's series of that
+ * partition, so marks splitting rows by one field (bars and their error
+ * bars) dodge alike whatever series each has. Undefined for a hidden series.
  */
 export function slotsOf(
   series: readonly Series[],
-  frame: Pick<Frame, "hidden" | "groups" | "groupSeries">,
-  group: string | undefined,
+  frame: Pick<Frame, "hidden" | "groupSeries">,
 ): Map<Series, Slot> {
   const visible = series.filter((s) => !frame.hidden.has(s.key));
-  const roster = group === undefined ? undefined : namesOf(frame)?.get(group);
   const out = new Map<Series, Slot>();
   visible.forEach((s, i) => {
-    const at = roster?.indexOf(s.label) ?? -1;
+    const roster = s.partition && rostersOf(frame)?.get(keyPrefix(s.partition)!);
+    const at = roster ? roster.indexOf(s.partition!) : -1;
     out.set(
       s,
       at >= 0 ? { index: at, count: roster!.length } : { index: i, count: visible.length },
@@ -56,11 +57,10 @@ export class BandShares {
    */
   split(
     series: readonly Series[],
-    frame: Pick<Frame, "hidden" | "groups" | "groupSeries">,
-    group: string | undefined,
+    frame: Pick<Frame, "hidden" | "groupSeries">,
     dodge: boolean,
   ): Map<Series, Slot> {
-    const slots = slotsOf(series, frame, group);
+    const slots = slotsOf(series, frame);
     // Parts of a series (highlighted rows) place it, as inspection reads it.
     for (const [s, slot] of slots) this.#slots.set(s.whole ?? s, dodge ? slot : WHOLE);
     return slots;
@@ -98,31 +98,32 @@ export function jitterOf(identity: number, seed: number): number {
 }
 
 /**
- * Each legend group's visible series names, in the order of the marks and
- * their series, which the group's marks dodge by; undefined without groups.
+ * Each partition's visible values (by the scope prefix of their keys), in
+ * the order of the marks and their series, which marks dodge by.
  */
-function groupNames(
-  base: readonly MarkSeries[],
-  hidden: ReadonlySet<string>,
-): Map<string, string[]> | undefined {
-  let out: Map<string, string[]> | undefined;
-  for (const { mark, series } of base) {
-    const group = mark.spec.legendGroup;
-    if (group === undefined) continue;
-    out ??= new Map();
-    const names = out.get(group) ?? [];
-    out.set(group, names);
-    for (const s of series) if (!hidden.has(s.key) && !names.includes(s.label)) names.push(s.label);
-  }
+function rosters(base: readonly MarkSeries[], hidden: ReadonlySet<string>): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const { series } of base)
+    for (const s of series) {
+      if (!s.partition || hidden.has(s.key)) continue;
+      const prefix = keyPrefix(s.partition)!;
+      const values = out.get(prefix) ?? [];
+      out.set(prefix, values);
+      if (!values.includes(s.partition)) values.push(s.partition);
+    }
   return out;
 }
 
-const ROSTERS = new WeakMap<NonNullable<Frame["groupSeries"]>, Map<string, string[]> | undefined>();
+const ROSTERS = new WeakMap<NonNullable<Frame["groupSeries"]>, Map<string, string[]>>();
 
-/** Only marks using group slots need a roster; scenes share one immutable visibility snapshot. */
-function namesOf(frame: Pick<Frame, "hidden" | "groups" | "groupSeries">) {
-  if (frame.groups || !frame.groupSeries) return frame.groups;
+/** Rosters are made when a mark first dodges in a scene; its frames share one visibility snapshot. */
+function rostersOf(frame: Pick<Frame, "groupSeries">): Map<string, string[]> | undefined {
   const source = frame.groupSeries;
-  if (!ROSTERS.has(source)) ROSTERS.set(source, groupNames(...source));
-  return ROSTERS.get(source);
+  if (!source) return undefined;
+  let made = ROSTERS.get(source);
+  if (!made) {
+    made = rosters(...source);
+    ROSTERS.set(source, made);
+  }
+  return made;
 }

@@ -23,6 +23,7 @@ import {
   type MARK,
   type Mark,
   type MarkKey,
+  type MarkSources,
   NUMERIC,
   type Palette,
   requireField,
@@ -228,6 +229,7 @@ export class CustomMark implements Mark<Frozen<CustomSpec>> {
   readonly tooltip = "x";
   readonly zero: "x" | "y" | undefined;
   readonly seriesless: boolean;
+  readonly identity: MarkSources | undefined;
   readonly #x: readonly string[];
   readonly #y: readonly string[];
   /** Splits the table into series, when the mark shows any. */
@@ -283,6 +285,8 @@ export class CustomMark implements Mark<Frozen<CustomSpec>> {
     }
     this.spec = frozen(spec);
     this.seriesless = !this.#split;
+    // Series stand for their field's values, or for their y fields' names, as a line's do.
+    this.identity = this.#split ? { field, values: this.#y } : undefined;
     checkTooltip(table, this.spec.tooltip, "custom");
     this.#draw = options.draw;
     this.#pointText = options.pointText;

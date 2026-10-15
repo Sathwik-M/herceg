@@ -403,8 +403,8 @@ describe("notebook widget", () => {
     expect(vertices(host!)).toBe(4);
   });
 
-  it("keeps legend groups' hidden series and the focus when the whole chart is sent again", async () => {
-    // An express chart whose marks changed: a mark more, of the same legend group.
+  it("keeps the values its legend hid and the focus when the whole chart is sent again", async () => {
+    // An express chart whose marks changed: a mark more, of the same series column.
     const grouped = (revision: number, bands: number): Snapshot => ({
       ...snapshot(),
       revision,
@@ -412,14 +412,13 @@ describe("notebook widget", () => {
         ...snapshot().spec,
         legend: true,
         marks: [
-          { type: "line", x: "t", y: "v", series: "host", data: "data", legendGroup: "series" },
+          { type: "line", x: "t", y: "v", series: "host", data: "data" },
           ...Array.from({ length: bands }, () => ({
             type: "point" as const,
             x: "t",
             y: "v",
             data: "data",
-            label: "a",
-            legendGroup: "series",
+            series: "host",
           })),
         ],
       },
@@ -726,12 +725,36 @@ describe("notebook widget", () => {
     expect(regions()).toHaveLength(3);
   });
 
+  it("shows a chart that cannot draw in its place, as charts do", async () => {
+    const varies = snapshot();
+    // Two hosts in one line: a line takes one color per series.
+    varies.buffers[2] = new DataView(new Int32Array([0, 1, 0]).buffer);
+    const columns = (varies.spec.data as Record<string, { columns: Record<string, unknown> }>).data!
+      .columns;
+    columns.host = { type: "category", codes: 2, dictionary: ["a", "b"] };
+    varies.spec.marks = [
+      { type: "line", x: "t", y: "v", data: "data", color: "host", series: false },
+    ];
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const model = new MockModel({ _chart: varies, _listening: [] });
+    const [host] = mount(model);
+    await expect
+      .poll(() => host!.querySelector('[role="alert"]')?.textContent)
+      .toMatch(/^Chart could not be rendered\n.*field "host" changes within the line/);
+    error.mockRestore();
+  });
+
   it("shows invalid options as an error and keeps the chart", () => {
     const model = new MockModel({ _chart: snapshot(), _listening: [] });
     const [host] = mount(model);
     model.receive({ type: "options", revision: 1, options: { renderer: "paper" } });
-    expect(host!.querySelector('[role="alert"]')!.textContent).toContain("renderer");
+    expect(host!.querySelector('[role="alert"]')!.textContent).toMatch(
+      /^Chart update failed; showing previous data\.\n.*renderer/,
+    );
     expect(figure(host!)).not.toBeNull();
+    // The next update that applies takes the banner away.
+    model.receive({ type: "options", revision: 2, options: { renderer: "svg" } });
+    expect(host!.querySelector('[role="alert"]')).toBeNull();
   });
 
   it("asks for the whole chart after missing an update, and redraws from it", async () => {

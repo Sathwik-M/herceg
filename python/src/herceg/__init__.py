@@ -86,6 +86,7 @@ from ._encoding import (
     Stack,
     StyleMap,
 )
+from ._errors import ChartError
 from ._events import (
     DrillRoot,
     InspectedField,
@@ -103,6 +104,7 @@ from ._guides import (
     LegendEntry,
     LegendGuide,
     LegendOptions,
+    OrdinalScale,
     Scale,
     ScaleRef,
     Swatch,
@@ -153,6 +155,7 @@ from ._style import (
 )
 
 __all__ = [
+    "ChartError",
     "save",
     "to_pdf",
     "BarLabels",
@@ -197,6 +200,7 @@ __all__ = [
     "Place",
     "PlotStyle",
     "Projection",
+    "OrdinalScale",
     "Scale",
     "ScaleRef",
     "RowSelection",

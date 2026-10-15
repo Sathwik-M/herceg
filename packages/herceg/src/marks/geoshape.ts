@@ -19,11 +19,13 @@ import type { Frozen, GeoShapeSpec } from "../spec/spec.ts";
 import { surface, type Theme } from "../theme.ts";
 import { type GeoLayer, joinLayers, type MapFrame } from "./geo.ts";
 import {
+  type ItemSources,
   insidePolygon,
   type LayoutFrame,
   type LayoutItem,
   type LayoutMark,
   type LayoutResult,
+  memberOf,
 } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
 import {
@@ -107,6 +109,7 @@ export class GeoShapeMark implements GeoLayer {
   readonly spec: Frozen<GeoShapeSpec>;
   readonly table: Table;
   readonly measure: string;
+  readonly identity: ItemSources | undefined;
   readonly reach: number;
   /** The geometry field. */
   readonly field: string;
@@ -149,6 +152,11 @@ export class GeoShapeMark implements GeoLayer {
     this.table = table;
     this.field = field;
     this.measure = spec.color ?? spec.label ?? "Region";
+    // Regions of a category color stand for its values, as series of it do.
+    this.identity =
+      this.#colorKind === "category"
+        ? { field: spec.color!, read: memberOf("category") }
+        : undefined;
     this.reach = width / 2;
   }
 

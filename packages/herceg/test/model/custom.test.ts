@@ -250,7 +250,8 @@ describe("custom marks with series", () => {
     const seen: (readonly CustomSeries[])[] = [];
     const { model } = build({ marks: [lollipops(seen)] });
     const [, b] = model.series();
-    model.hidden.add(b!.key);
+    // As the legend hides it: by what the series stands for.
+    model.hidden.add(model.legendEntries()[1]!.key);
     const scene = model.scene(estimateText);
     expect(seen.at(-1)!.map((s) => s.label)).toEqual(["a"]);
     expect(legendOf(scene).map(({ label, hidden }) => [label, hidden])).toEqual([
@@ -425,7 +426,7 @@ describe("custom marks with series", () => {
     ).toThrow(/y fields, and no series: false/);
     expect(() =>
       custom(load, { x: "time", y: ["cpu", "time"], series: "host", draw() {} }),
-    ).toThrow(/y: several fields or a series field, not both/);
+    ).toThrow(/series: several y fields or a series field, not both/);
     expect(() => custom(load, { x: "time", y: "cpu", series: "cpu" as never, draw() {} })).toThrow(
       /custom series: field "cpu" holds number values; expected category/,
     );

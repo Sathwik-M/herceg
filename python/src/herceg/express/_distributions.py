@@ -16,7 +16,6 @@ from .._chart import AxisOptions, Chart, HelperOptions
 from .._data import Column
 from . import _numerics as numerics
 from ._common import (
-    SERIES_GROUP,
     Levels,
     Source,
     Statistics,
@@ -83,6 +82,7 @@ def histplot(
     x: str | None = None,
     y: str | None = None,
     series: str | None = None,
+    color: str | None = None,
     series_order: Sequence[Any] | None = None,
     weight: str | None = None,
     normalize: Normalize = "count",
@@ -331,7 +331,6 @@ def histplot(
         # Densities over one series' bars show through them, as in Seaborn.
         fill_opacity=0.5 if kde and not grouped and element == "bars" else None,
         label=None if series else name,
-        legend_group=SERIES_GROUP,
     )
     if kde_table is not None:
         # Along the binned axis: along y over horizontal bins.
@@ -342,7 +341,6 @@ def histplot(
             orient="x" if is_x else "y",
             series=series,
             label=None if series else name,
-            legend_group=SERIES_GROUP,
         )
     return record(chart, Statistics("histplot", sentence, tables, None, dropped))
 
@@ -354,6 +352,7 @@ def kdeplot(
     x: str | None = None,
     y: str | None = None,
     series: str | None = None,
+    color: str | None = None,
     series_order: Sequence[Any] | None = None,
     weight: str | None = None,
     bw_method: BandwidthMethod = "scott",
@@ -488,10 +487,9 @@ def kdeplot(
             series=series,
             fill_opacity=0.25,
             label=label,
-            legend_group=SERIES_GROUP,
         )
     else:
-        chart.line(*xy, orient=orient, series=series, label=label, legend_group=SERIES_GROUP)
+        chart.line(*xy, orient=orient, series=series, label=label)
     return record(
         chart, Statistics("kdeplot", sentence, {"density": readable(table)}, None, dropped)
     )
@@ -508,6 +506,7 @@ def ecdfplot(
     x: str | None = None,
     y: str | None = None,
     series: str | None = None,
+    color: str | None = None,
     series_order: Sequence[Any] | None = None,
     weight: str | None = None,
     normalize: Literal["probability", "percent", "count"] = "probability",
@@ -597,7 +596,6 @@ def ecdfplot(
             series=series,
             curve="step-after",
             label=label,
-            legend_group=SERIES_GROUP,
         )
     else:
         # Steps and points series by series, so that series keep their order
@@ -614,10 +612,9 @@ def ecdfplot(
                     data=steps_of(stepped),
                     curve="step-after",
                     label=label,
-                    legend_group=SERIES_GROUP,
                 )
             if any(points):
-                chart.point(*xy, data=steps_of(points), label=label, legend_group=SERIES_GROUP)
+                chart.point(*xy, data=steps_of(points), label=label)
     return record(chart, Statistics("ecdfplot", sentence, {"ecdf": readable(table)}, None, dropped))
 
 
@@ -628,6 +625,7 @@ def rugplot(
     x: str | None = None,
     y: str | None = None,
     series: str | None = None,
+    color: str | None = None,
     series_order: Sequence[Any] | None = None,
     length: float = 8,
     palette: Sequence[str] | None = None,
@@ -667,7 +665,6 @@ def rugplot(
         series=series,
         length=length,
         label=None if series else name,
-        legend_group=SERIES_GROUP,
     )
     return record(
         chart, Statistics("rugplot", sentence, {"values": readable(table)}, None, dropped)

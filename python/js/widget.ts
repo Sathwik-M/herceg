@@ -16,6 +16,7 @@ import {
   type SelectionStore,
   selectRows,
   selectWhere,
+  showFailure,
   type Table,
   type Viewport,
 } from "herceg";
@@ -397,12 +398,14 @@ class Widget {
 
   /**
    * Draws the chart in a view. A chart drawn again (`again`, from a whole
-   * chart Python sent) keeps what was hidden through its legend groups,
-   * whose keys name series by label, and the keyboard focus.
+   * chart Python sent) keeps what its legend hid, whose keys name the values
+   * series stand for (`{"table":…,"value":…}`), and the keyboard focus.
    */
   #mount(view: View, again = false) {
     const hidden = again
-      ? (view.chart?.getHiddenKeys() ?? []).filter((key) => key.startsWith('{"legendGroup":'))
+      ? (view.chart?.getHiddenKeys() ?? []).filter(
+          (key) => key.startsWith('{"') && key.includes(',"value":'),
+        )
       : [];
     const focused = again && view.element.contains(view.element.ownerDocument.activeElement);
     view.chart?.destroy();
@@ -728,7 +731,14 @@ class Widget {
     } catch (error) {
       console.error("herceg: could not apply an update from Python", error);
       for (const view of this.#views) showError(view, error);
+      return;
     }
+    // An update applied: the banner over a chart of one that was not goes.
+    for (const view of this.#views)
+      if (view.chart && view.error) {
+        view.error.remove();
+        view.error = undefined;
+      }
   }
 
   #apply(message: Update, buffers: readonly DataView[]) {
@@ -1050,14 +1060,20 @@ function valuesOf(event: ViewEvent, state: ViewState): string {
   return JSON.stringify([x, y, yRight, lasso, panels]);
 }
 
+/**
+ * Shows what kept a view from drawing, as charts show it: over the chart
+ * where one still draws (an update from Python it could not apply), else
+ * in its place, at its size.
+ */
 function showError(view: View, error: unknown) {
   view.error?.remove();
-  const message = view.host.ownerDocument.createElement("pre");
-  message.setAttribute("role", "alert");
-  message.style.cssText = "color:#b3261e;white-space:pre-wrap;margin:4px 0";
-  message.textContent = `herceg: ${error instanceof Error ? error.message : String(error)}`;
-  view.host.prepend(message);
-  view.error = message;
+  const { element, chart } = view;
+  view.error = chart
+    ? showFailure(chart.root, error, true)
+    : showFailure(element, error, false, {
+        width: element.getBoundingClientRect().width || 640,
+        height: element.getBoundingClientRect().height || DEFAULT_HEIGHT,
+      });
 }
 
 /** Sends each kind of message at most every THROTTLE_MS, always ending with the latest. */

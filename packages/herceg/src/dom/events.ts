@@ -3,6 +3,7 @@
 import type { ItemChanges } from "../model/item-views.ts";
 import type { Inspection, Viewport } from "../model/model.ts";
 import type { RowSelectionChange } from "../model/row-selection.ts";
+import type { ChartError } from "../spec/errors.ts";
 import type { Selection } from "./brushed.ts";
 import { report } from "./scheduler.ts";
 
@@ -109,6 +110,12 @@ export interface ChartEvents {
    * now describe it, for overlays drawn over the chart.
    */
   render: Record<string, never>;
+  /**
+   * Something kept the chart from drawing: options it refused, code it
+   * could not load, a frame that failed (see `ChartOptions.errorMode`).
+   * Once per change of options or data; the next change tries again.
+   */
+  error: { error: ChartError };
 }
 
 export type ChartListener<K extends keyof ChartEvents> = (event: ChartEvents[K]) => void;

@@ -226,6 +226,14 @@ describe("loadSpec", () => {
         marks: [{ type: "line", x: "v", y: "v", strokeWidth: -1 }],
       }),
     ).toThrow(/marks\[0\]\.strokeWidth/);
+    expect(
+      check({
+        data: { t: { columns: { v: [1], g: ["a"] } } },
+        marks: [{ type: "line", x: "v", y: "v", encode: { color: { series: true } } }],
+      }),
+    ).toThrow(
+      /marks\[0\]\.encode\.color\.scale: required, as the channel names series through a scale/,
+    );
     expect(check({ marks: [{ type: "chord" }] })).toThrow(/marks\[0\]\.type/);
     expect(check({ marks: [{ type: "constructor" }] })).toThrow(/marks\[0\]\.type/);
     expect(check({ y: { format: { maximumFractionDigits: -1 } }, marks: [] })).toThrow(
@@ -432,7 +440,8 @@ describe("loadSpec", () => {
         marks: [mark],
       } as ChartSpec);
     expect(check({ type: "area", x: "x", y1: "a", y2: "b", stack: true })).toThrow(/not both/);
-    expect(check({ type: "area", x: "x", y1: "a", y2: "b", series: "g" })).toThrow(/not both/);
+    // Bands split by a series field are a form of their own.
+    expect(check({ type: "area", x: "x", y1: "a", y2: "b", series: "g" })).not.toThrow();
     expect(check({ type: "errorbar", x: "x", y1: "a", y2: "b", x1: "a" })).toThrow(
       /errorbar x1: not with x, y1, y2/,
     );

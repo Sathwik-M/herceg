@@ -26,14 +26,16 @@ import type {
 import type { Frozen, GraphLayout, GraphSpec } from "../spec/spec.ts";
 import type { Halo } from "../spec/style.ts";
 import { surface } from "../theme.ts";
-import type {
-  LayoutControls,
-  LayoutFrame,
-  LayoutItem,
-  LayoutMark,
-  LayoutResult,
+import {
+  type ItemSources,
+  insidePolygon,
+  type LayoutControls,
+  type LayoutFrame,
+  type LayoutItem,
+  type LayoutMark,
+  type LayoutResult,
+  memberOf,
 } from "./layout-mark.ts";
-import { insidePolygon } from "./layout-mark.ts";
 import { CATEGORY, type ChartMark, DIM, frozen, type MARK, requireField } from "./mark.ts";
 import {
   type LayoutNetwork,
@@ -261,6 +263,7 @@ export class GraphMark implements LayoutMark {
   readonly nodes: Table | undefined;
   readonly otherTables: readonly Table[];
   readonly measure: string;
+  readonly identity: ItemSources | undefined;
   /** Dragging moves nodes with `interaction.drag`, and charts select rows of either table. */
   readonly interactions = ["plane", "lasso", "drag"] as const;
   readonly selects = true;
@@ -309,6 +312,11 @@ export class GraphMark implements LayoutMark {
     this.nodes = nodes;
     this.otherTables = nodes ? [nodes] : [];
     this.measure = spec.value ?? "Links";
+    // Nodes colored by a field of the nodes table stand for its values.
+    this.identity =
+      nodes && spec.color !== undefined
+        ? { field: spec.color, table: nodes, read: memberOf("group") }
+        : undefined;
   }
 
   controls(config: ChartConfig): LayoutControls {

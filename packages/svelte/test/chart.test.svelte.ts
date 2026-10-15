@@ -36,6 +36,7 @@ import Prices from "./Prices.svelte";
 import Solids from "./Solids.svelte";
 import Stacks from "./Stacks.svelte";
 import Stray from "./Stray.svelte";
+import Thrown from "./Thrown.svelte";
 import Tips from "./Tips.svelte";
 
 // Read the chart's applied configuration through the export seam, without
@@ -586,17 +587,53 @@ describe("<Chart>", () => {
     expect(String(errors[0])).toMatch(/no field "missing"/);
   });
 
-  it("recovers once invalid marks are fixed", async () => {
-    const props = $state({ data: metrics, field: "a" });
+  it("shows invalid marks over the chart, and recovers once they are fixed", async () => {
+    const codes: string[] = [];
+    const props = $state({
+      data: metrics,
+      field: "a",
+      heard: (error: { code: string }) => codes.push(error.code),
+    });
     render(Faulty, props);
     const before = paths()[0]!.getAttribute("d");
     props.field = "missing";
-    expect(() => flushSync()).toThrow(/no field "missing"/);
+    flushSync();
+    expect(host.querySelector('[role="alert"]')!.textContent).toMatch(
+      /^Chart update failed; showing previous data\.\n.*no field "missing"/,
+    );
+    expect(codes).toEqual(["unknown-field"]);
+    expect(paths()[0]!.getAttribute("d")).toBe(before);
     props.field = "b";
     flushSync();
     await frame();
+    expect(host.querySelector('[role="alert"]')).toBeNull();
     expect(paths()).toHaveLength(1);
     expect(paths()[0]!.getAttribute("d")).not.toBe(before);
+  });
+
+  it("throws, made to, what fails later to the nearest boundary", async () => {
+    const rows = table({ t: [0, 1], v: [1, 2], kind: ["a", "a"], g: ["p", "p"] });
+    const errors: unknown[] = [];
+    render(Thrown, { data: rows, onerror: (error: unknown) => errors.push(error) });
+    rows.append({ t: [2], v: [3], kind: ["b"], g: ["p"] });
+    await expect
+      .poll(() => errors.map(String))
+      .toEqual([expect.stringMatching(/changes within series "p"/)]);
+    flushSync();
+    expect(host.querySelector("p")!.textContent).toMatch(/changes within series/);
+  });
+
+  it("shows marks invalid from the start in its place, and draws once they are fixed", () => {
+    const props = $state({ data: metrics, field: "missing" });
+    render(Faulty, props);
+    flushSync();
+    expect(host.querySelector('[role="alert"]')!.textContent).toMatch(
+      /^Chart could not be rendered\n.*no field "missing"/,
+    );
+    props.field = "a";
+    flushSync();
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(paths()).toHaveLength(1);
   });
 
   it("rejects mark components outside a chart", () => {

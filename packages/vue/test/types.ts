@@ -112,7 +112,8 @@ BoxPlot({ data: boxData, x: "group", ...boxFields, low: "group" });
 const tips = table({ day: ["thu"], sex: ["f"], tip: [1], low: [0], high: [2] });
 Point({ data: tips, x: "day", y: "tip", series: "sex", dodge: true, jitter: { width: 0.4 } });
 ErrorBar({ data: tips, x: "day", y1: "low", y2: "high", series: "sex", dodge: true });
-Line({ data: tips, x: "tip", y: "tip", legendGroup: "sex" });
+Line({ data: tips, x: "day", y: "tip", color: "sex" });
+Line({ data: tips, x: "day", y: "tip", color: "sex", series: false });
 // @ts-expect-error jitter takes a width
 Point({ data: tips, x: "day", y: "tip", jitter: { seed: 2 } });
 

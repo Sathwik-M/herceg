@@ -17,6 +17,7 @@ import numpy as np
 
 from ._data import listed, shown
 from ._derive import Expr
+from ._errors import ChartError
 from ._guides import Format, format_spec
 from ._style import (
     StrokeStyle,
@@ -74,22 +75,40 @@ def _constant(value: Any, role: str) -> Any:
 class Channel:
     """A value per row: a column's value read through a scale (``field``,
     with ``scale`` naming one of the chart's ``scales``; colors read
-    ``"color"`` by default, symbols ``"symbol"``, dashes ``"dash"``), or a
-    constant ``value``. For a condition on each row, give
+    ``"color"`` by default, symbols ``"symbol"``, dashes ``"dash"``), the
+    series' names through a scale (``series=True`` with ``scale``: marks
+    naming one scale share colors, legend entries, and dodged places by
+    their series' names, as a line and the band around it do, whatever data
+    each reads), or a constant ``value``. For a condition on each row, give
     ``hg.when(condition, then, otherwise)`` instead."""
 
     field: str | None = None
     scale: str | None = None
     value: Any = None
+    series: bool | None = None
 
     def __post_init__(self) -> None:
-        if (self.field is None) == (self.value is None):
-            raise ValueError("Channel: give field or value, one of them")
+        given = [name for name in ("field", "value", "series") if getattr(self, name) is not None]
+        if len(given) != 1:
+            raise ChartError("Channel: give field, value, or series=True, one of them")
         if self.field is not None and (not isinstance(self.field, str) or not self.field):
             raise TypeError(f"Channel field: expected a column name; received {shown(self.field)}")
+        if self.series is not None and self.series is not True:
+            raise TypeError(
+                "Channel series: expected True, the series' names through a scale; "
+                f"received {shown(self.series)}"
+            )
+        if self.series and self.scale is None:
+            raise ChartError(
+                "Channel series: names series through a scale; give scale, the name of one "
+                "of the chart's scales"
+            )
         if self.scale is not None:
-            if self.field is None:
-                raise ValueError("Channel scale: maps a column's values; give field, or drop scale")
+            if self.value is not None:
+                raise ChartError(
+                    "Channel scale: maps a column's values or the series' names; give field "
+                    "or series=True, or drop scale"
+                )
             if not isinstance(self.scale, str) or not self.scale:
                 raise TypeError(
                     f"Channel scale: expected the name of one of the chart's scales; "
@@ -97,6 +116,8 @@ class Channel:
                 )
 
     def _spec(self) -> dict[str, Any]:
+        if self.series:
+            return {"series": True, "scale": self.scale}
         if self.field is not None:
             return {"field": self.field, **({"scale": self.scale} if self.scale else {})}
         return {"value": _constant(self.value, "Channel value")}

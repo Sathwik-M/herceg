@@ -1,4 +1,5 @@
 import {
+  type ChartError,
   type ChartListener,
   type ChartMark,
   type ChartUpdate,
@@ -12,7 +13,7 @@ import type { Snippet } from "svelte";
 import type { ClassValue } from "svelte/elements";
 
 /** Chart options as props: one left out, or `undefined`, takes its default. */
-export interface ChartProps extends Omit<ChartUpdate, "marks" | "renderTooltip"> {
+export interface ChartProps extends Omit<ChartUpdate, "marks" | "renderTooltip" | "onError"> {
   /**
    * The tooltip's content (`{#snippet renderTooltip(inspection)}`), in the
    * chart's own box, which keeps its placement, the crosshair, and the
@@ -59,6 +60,13 @@ export interface ChartProps extends Omit<ChartUpdate, "marks" | "renderTooltip">
   onvisibility?: ChartListener<"visibility"> | undefined;
   /** The chart drew a frame of its data: its panels and pixel mapping describe it, for overlays. */
   onrender?: ChartListener<"render"> | undefined;
+  /**
+   * Something kept the chart from drawing: options or mark components it
+   * refused, code it could not load, a frame that failed. With
+   * `errorMode="inline"` (the default) the chart also shows it in its
+   * place; with "throw", it is thrown, for the nearest `<svelte:boundary>`.
+   */
+  onerror?: ((error: ChartError) => void) | undefined;
 }
 
 /**

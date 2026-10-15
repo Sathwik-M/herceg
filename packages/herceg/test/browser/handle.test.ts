@@ -328,7 +328,7 @@ describe("visibility", () => {
     expect(events).toEqual([[a], [], [a, b], []]);
   });
 
-  it("hides a legend group's marks together, by its entry, across updates", () => {
+  it("hides the marks standing for a value together, by its entry, across updates", () => {
     const stats = table({
       day: ["thu", "thu", "fri", "fri"],
       sex: ["f", "m", "f", "m"],
@@ -337,15 +337,8 @@ describe("visibility", () => {
       high: [3, 4, 5, 6],
     });
     const marks = [
-      bar(stats, { x: "day", y: "mean", series: "sex", legendGroup: "sex" }),
-      errorBar(stats, {
-        x: "day",
-        y1: "low",
-        y2: "high",
-        series: "sex",
-        dodge: true,
-        legendGroup: "sex",
-      }),
+      bar(stats, { x: "day", y: "mean", series: "sex" }),
+      errorBar(stats, { x: "day", y1: "low", y2: "high", series: "sex", dodge: true }),
     ];
     const chart = mount({ renderer: "svg", marks });
     expect(chart.getLegend().map(({ label }) => label)).toEqual(["f", "m"]);
@@ -358,7 +351,8 @@ describe("visibility", () => {
     // Only the other sex's bar and interval are left.
     expect(chart.inspect(...at)!.points.map(({ label }) => label)).toEqual(["m", "m"]);
     const [f] = chart.getHiddenKeys();
-    // A member's own key acts on its group's entry.
+    expect(JSON.parse(f!)).toMatchObject({ field: "sex", value: "f" });
+    // A series' own key acts on its value's entry.
     chart.setVisibility(f!, true);
     chart.setVisibility(JSON.stringify([1, "f"]), false);
     expect(chart.getHiddenKeys()).toEqual([f]);
@@ -370,7 +364,10 @@ describe("visibility", () => {
     chart.setVisibility(JSON.stringify([1, "f"]), false);
     chart.update({ marks: [...marks] });
     expect(chart.getHiddenKeys()).toEqual([f]);
+    // The entry stays hidden while a mark's series stand for the field's values.
     chart.update({ marks: [bar(stats, { x: "day", y: "mean", series: "sex" })] });
+    expect(chart.getHiddenKeys()).toEqual([f]);
+    chart.update({ marks: [bar(stats, { x: "day", y: "mean" })] });
     expect(chart.getHiddenKeys()).toEqual([]);
   });
 

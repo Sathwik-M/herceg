@@ -1,12 +1,15 @@
 import {
+  type ChartError,
   type ChartEvents,
   type ChartMark,
   type ChartOptions,
+  chartError,
   createChart,
   type Chart as HercegChart,
   type Hydration,
   type Inspection,
   type RenderTooltip,
+  showFailure,
   tablesOf,
   viewOf,
 } from "herceg";
@@ -30,8 +33,11 @@ import {
 } from "vue";
 import { markBuilder, plain } from "./marks.ts";
 
-/** Options as props: the tooltip's content of your own is the `renderTooltip` slot. */
-type Options = Omit<ChartOptions, "marks" | "renderTooltip">;
+/**
+ * Options as props: the tooltip's content of your own is the `renderTooltip`
+ * slot, and what keeps the chart from drawing the `error` event.
+ */
+type Options = Omit<ChartOptions, "marks" | "renderTooltip" | "onError">;
 type Option<K extends keyof Options> = PropType<NonNullable<Options[K]>>;
 
 /**
@@ -66,6 +72,7 @@ const optionProps = {
   camera: Object as Option<"camera">,
   boxAspect: Array as unknown as Option<"boxAspect">,
   fonts: Object as Option<"fonts">,
+  errorMode: String as Option<"errorMode">,
 } satisfies { [K in keyof Options]-?: unknown };
 
 const OPTION_KEYS = Object.keys(optionProps) as (keyof Options)[];
@@ -101,6 +108,13 @@ const emits = {
   visibility: (_: ChartEvents["visibility"]) => true,
   /** The chart drew a frame of its data: its panels and pixel mapping describe it, for overlays. */
   render: (_: ChartEvents["render"]) => true,
+  /**
+   * Something kept the chart from drawing: options or mark components it
+   * refused, code it could not load, a frame that failed. With
+   * `error-mode="inline"` (the default) the chart also shows it in its
+   * place; with "throw", it is thrown in render, for `onErrorCaptured`.
+   */
+  error: (_: ChartError) => true,
 };
 
 function collectMarks(children: unknown, out: ChartMark[]): ChartMark[] {
@@ -261,6 +275,14 @@ export const Chart = defineComponent({
     let applied: View | undefined;
     /** An error the last render met building marks or options. */
     let failure: { error: unknown } | undefined;
+    /** What says why the last marks were refused, and of which error. */
+    let refusal: { element: HTMLElement; message: string } | undefined;
+    /** With errorMode "throw", what kept the chart from drawing, thrown in render. */
+    const thrown = shallowRef<ChartError | null>(null);
+    const onError = (error: ChartError) => {
+      emit("error", error);
+      if (props.errorMode === "throw") thrown.value = error;
+    };
     /** What the tooltip is at, for `TooltipContent`. */
     const shown = shallowRef<Shown | null>(null);
     let host: HTMLElement | undefined;
@@ -288,13 +310,39 @@ export const Chart = defineComponent({
       };
     }
 
+    /**
+     * Says why mark components were refused (with errorMode "inline"): over
+     * the chart, or in its place before there is one; nothing once they are
+     * built again.
+     */
+    function refuse(error: ChartError | undefined) {
+      if (refusal && refusal.message === error?.message) return;
+      refusal?.element.remove();
+      refusal = undefined;
+      if (!error) return;
+      const box = container.value!.getBoundingClientRect();
+      const element = chart.value
+        ? showFailure(chart.value.root, error, true)
+        : showFailure(container.value!, error, false, {
+            width: props.width ?? (box.width || 640),
+            height: props.height ?? (box.height || 320),
+          });
+      refusal = { element, message: error.message };
+      emit("error", error);
+    }
+
     // Creates the chart, or brings it up to date with the last render.
     function sync() {
-      if (failure) throw failure.error;
+      if (failure) {
+        if (props.errorMode === "throw") throw failure.error;
+        refuse(chartError(failure.error, "validate"));
+        return;
+      }
+      refuse(undefined);
       const next = rendered!;
       const last = applied;
       if (!chart.value || !last) {
-        const config = { ...next.options, marks: next.marks };
+        const config = { ...next.options, marks: next.marks, onError };
         const created = snapshot
           ? snapshot.hydrate(snapshotHost.value!, config)
           : createChart(container.value!, config);
@@ -325,7 +373,7 @@ export const Chart = defineComponent({
       if (sameMarks && next.key === last.key) return;
       // Props are the whole configuration: options no longer passed go back
       // to their defaults rather than keeping their previous values.
-      chart.value.update({ ...UNSET, renderTooltip: undefined, ...next.options, marks });
+      chart.value.update({ ...UNSET, renderTooltip: undefined, ...next.options, marks, onError });
       applied = { ...next, marks };
     }
 
@@ -340,6 +388,7 @@ export const Chart = defineComponent({
       chart,
       /** The render function; kept in setup so only `chart` is exposed to template refs. */
       renderChart: () => {
+        if (thrown.value) throw thrown.value;
         // Building marks throws on invalid props, such as an unknown field.
         // Thrown here, Vue would replace the container with a placeholder
         // and strand the chart in the old one, so the error is thrown again

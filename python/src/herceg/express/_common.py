@@ -23,6 +23,7 @@ import numpy as np
 
 from .._chart import AxisOptions, Chart, _chart_of, helper
 from .._data import Column, Table, listed, shown
+from .._errors import ChartError
 from .._rows import SelectionBinding
 from .._style import Theme, Tokens
 from ._numerics import ErrorFunction, Estimator
@@ -32,9 +33,6 @@ ErrorBar = tuple[ErrorMethod, float] | ErrorMethod | ErrorFunction | None
 
 #: The level each error method takes when only its name is given, as in Seaborn.
 _LEVELS: dict[str, float] = {"ci": 95, "pi": 95, "se": 1, "sd": 1}
-
-#: Legend groups of the marks one express chart draws per series.
-SERIES_GROUP = "series"
 
 
 @dataclass(frozen=True)
@@ -127,6 +125,13 @@ def express(function: _F) -> _F:
     @functools.wraps(function)
     def make(*args: Any, **kwargs: Any) -> Chart:
         bound = signature.bind(*args, **kwargs)
+        # A color column is the series' column, as for the chart's marks.
+        color = bound.arguments.pop("color", None)
+        if color is not None:
+            bound.arguments["series"] = series_of_color(
+                bound.arguments.get("series"), color, function.__name__
+            )
+            args, kwargs = bound.args, bound.kwargs
         making = _Making(_PREVIOUS.get() or {})
         token = _MAKING.set(making)
         try:
@@ -148,6 +153,18 @@ def express(function: _F) -> _F:
         return chart
 
     return make  # type: ignore[return-value]
+
+
+def series_of_color(series: str | None, color: str, function: str) -> str:
+    """The series column of an express function given ``color``: the column
+    its series take colors by, which is their column."""
+    if series is not None and series != color:
+        raise ChartError(
+            f"{function} color: colors the series, so it names their column; give series "
+            "or color, or the same column for both",
+            path="color",
+        )
+    return color
 
 
 def _copied(value: Any) -> Any:
@@ -861,4 +878,8 @@ def make_chart(
             settings[axis] = AxisOptions(title=label)
     given = settings.get("description")
     settings["description"] = f"{given} {sentence}".strip() if given else sentence.strip()
-    return _chart_of(data, settings)  # type: ignore[arg-type]
+    chart = _chart_of(data, settings)  # type: ignore[arg-type]
+    # The tables its marks read beside its data (subsets, fits, steps) are
+    # made from it: their series take its values' colors and legend entries.
+    chart._made_from_data = True
+    return chart

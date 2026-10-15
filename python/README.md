@@ -32,7 +32,7 @@ matplotlib names in unknown-option errors suggest the options that callable take
 | `plt.subplots(...)` | `hg.Chart(data, panels=["a", "b"], panel_columns=2)`; marks name `panel="a"` or `"b"` |
 | `ax.twinx()` | `hg.Chart(data, y_right=hg.AxisOptions(...))`; supported marks use `axis="right"` |
 | `ax.legend()` | `legend=True` on the chart (automatic for multiple series); `label` names a single series |
-| `fig.legend(ncol=3, loc="lower center")` | `legend=hg.LegendOptions(columns=3, place=hg.Place(side="bottom", align="center"), merge="semantic")` |
+| `fig.legend(ncol=3, loc="lower center")` | `legend=hg.LegendOptions(columns=3, place=hg.Place(side="bottom", align="center"))` |
 | `fig.colorbar(mappable, label="°C")` | `guides=[hg.colorbar(title="°C")]` |
 | `HourLocator(interval=6)`, `MultipleLocator(10)`, `FixedLocator([15, 95])` | `hg.AxisOptions(ticks=hg.Ticks(every="6 hours"))`, `hg.Ticks(every=10)`, `hg.Ticks(values=[15, 95])` |
 | `DateFormatter("%H:%M")`, `StrMethodFormatter("{x:,.2f}")` | `hg.AxisOptions(format=hg.Format(time="%H:%M"))`, `hg.Format(number=",.2f")` |
@@ -136,12 +136,21 @@ the starting camera.
 3D layers also draw beside other charts in subplots:
 
 ```python
-chart = (hg.Chart(data, panels=["trend", hg.Panel("cloud", title="Cloud", camera={"azimuth": 30}),
-                               hg.Panel("path", title="Path", camera={"azimuth": 90})],
-                  panel_columns=3, zoom=True)
-         .line("time", "value", panel="trend")
-         .point_3d("x", "y", "z", panel="cloud")
-         .line_3d("x", "y", "z", panel="path"))
+chart = (
+    hg.Chart(
+        data,
+        panels=[
+            "trend",
+            hg.Panel("cloud", title="Cloud", camera={"azimuth": 30}),
+            hg.Panel("path", title="Path", camera={"azimuth": 90}),
+        ],
+        panel_columns=3,
+        zoom=True,
+    )
+    .line("time", "value", panel="trend")
+    .point_3d("x", "y", "z", panel="cloud")
+    .line_3d("x", "y", "z", panel="path")
+)
 ```
 
 `.surface(..., panel="fit")` works the same way, and multiple 3D layers
@@ -190,7 +199,9 @@ links; large layouts are worked out over animation frames, so the page
 stays responsive (about 12 s for a force layout at the limit).
 
 ```python
-hg.Chart(countries, zoom=True, brush="lasso", row_selection=hg.SelectionBinding("picked")).geoshape(color="gdp")
+hg.Chart(countries, zoom=True, brush="lasso", row_selection=hg.SelectionBinding("picked")).geoshape(
+    color="gdp"
+)
 hg.Chart(sales, zoom=True).treemap(path=["region", "country"], value="revenue")
 hg.Chart(talks, zoom=True, drag=True).graph("from", "to", directed=True, link_label_field="kind")
 hg.graph(reports, "manager", "employee", layout={"type": "layered", "direction": "right"})
@@ -209,8 +220,8 @@ network has its own.
 ```python
 (
     hg.Chart(stores, facet="year", zoom=True)
-    .geoshape(data=countries, facet="repeat")      # the same base map in every panel
-    .geopoint("lon", "lat", size="sales")          # each year's stores
+    .geoshape(data=countries, facet="repeat")  # the same base map in every panel
+    .geopoint("lon", "lat", size="sales")  # each year's stores
 )
 (
     hg.Chart(budget, panels=["cost", "staff"], panel_columns=2, zoom=True)
@@ -462,16 +473,20 @@ Without a modifier, the vertical wheel scrolls the page, so a notebook or
 an article scrolls past charts without being caught by them.
 
 ```python
-hg.Chart(df, zoom="x")            # drag to pan, Ctrl/⌘ with the wheel or a pinch to zoom
-hg.Chart(df, pan="x")             # pan only: the wheel never zooms
+hg.Chart(df, zoom="x")  # drag to pan, Ctrl/⌘ with the wheel or a pinch to zoom
+hg.Chart(df, pan="x")  # pan only: the wheel never zooms
 hg.Chart(df, pan="x", brush="x")  # drag to select, Shift-drag to pan
 
 # Bindings of your own: the plain wheel zooms while the chart has the focus,
 # and a touch scrubs the cursor along the line instead of panning.
-hg.Chart(df, zoom="x", bindings=[
-    hg.Binding(hg.WheelGesture(axis="y", focused=True), hg.ZoomAction(axes="x")),
-    hg.Binding(hg.DragGesture(pointer="touch"), hg.CursorAction()),
-])
+hg.Chart(
+    df,
+    zoom="x",
+    bindings=[
+        hg.Binding(hg.WheelGesture(axis="y", focused=True), hg.ZoomAction(axes="x")),
+        hg.Binding(hg.DragGesture(pointer="touch"), hg.CursorAction()),
+    ],
+)
 ```
 
 | Gesture | Options | Actions |
@@ -569,11 +584,17 @@ chart = hg.Chart(
 | `hg.axis(scale, ...)` | `scale` (`"x"`, `"y"`, `"y_right"`), `place` (`hg.Place(side=...)`: x on the `"bottom"` or `"top"`, y on the `"left"` or `"right"`, y_right on the `"right"`), `id`, `title`, `ticks`, `format`, `grid`, `show`, `style`, `tick` (`hg.Tick(direction="out" \| "in" \| "cross", length=...)` or `False`), `labels` (`hg.TickLabels` or `False`), `line` (draw its line), `layers` (`hg.TickLayer`s). |
 | `hg.TickLayer` | `id` (not `"major"`), `ticks`, `format`, `tick`, `labels`, `style` (its `tick` and `tick_label`): minor ticks, a row of day boundaries. |
 | `hg.TickLabels` | `rotation` (degrees clockwise, or a list tried in turn), `collision` (`"show"`, `"hide"`, and on x axes `"stagger"` and `"wrap"`), `row` (0 by the line, 1 beyond, on x axes), `priority` (the higher stays where labels of a row meet), `duplicates` (`"hide"` leaves out a label repeating the one before it). |
-| `hg.LegendOptions` (`legend=`), `hg.legend(...)` (`guides`) | `place`, `columns` or `rows`, `order` (`"row"` or `"column"`), `title`, `entries` (`hg.LegendEntry`s of your own), `merge="semantic"` (one entry per value of a field across marks and panels), `swatches="mark"` (swatches that look like the marks), `style`; `hg.legend` also `scales` (`hg.ScaleRef(mark=..., channel="series" \| "color" \| "size" \| "symbol")`), `id`, `show`. |
+| `hg.LegendOptions` (`legend=`), `hg.legend(...)` (`guides`) | `place`, `columns` or `rows`, `order` (`"row"` or `"column"`), `title`, `entries` (`hg.LegendEntry`s of your own), `swatches="mark"` (swatches that look like the marks), `style`; `hg.legend` also `scales` (`hg.ScaleRef(mark=..., channel="series" \| "color" \| "size" \| "symbol")`), `id`, `show`. |
 | `hg.LegendEntry` | `key`, `label`, a `swatch` (`hg.Swatch(type="line" \| "rect" \| "circle" \| "composite", ...)`) or `sample` (a mark's id, drawn as it looks), and `targets` (the ids of marks clicking it hides and shows). |
 | `hg.colorbar(...)` | `scale` (`hg.ScaleRef(mark=..., channel="color")`; the chart's only color scale by default), `place` (the right by default; beside the plots it stands, above or below it lies), `title`, `ticks`, `format`, `tick`, `labels`, `layers` (as an axis' along the bar), `length`, `thickness`, `style`, `id`, `show`. Ticks are rounded inside the color domain; a diverging scale's middle color sits at its midpoint; a contour's bands are steps. |
 
-A mark's `legend=False` leaves it out of the legends.
+An entry stands for a value: the series of every mark and panel showing
+the same value of the same column of one data (or data made from it, as
+`hg.derive` and express summaries are), and pie slices of it, listed once
+and hidden and shown together. Entries never merge by label alone; an
+`hg.OrdinalScale` the marks share joins different data by value. With
+`swatches="mark"`, an entry that marks draw differently shows each one's
+look. A mark's `legend=False` leaves it out of the legends.
 
 ```python
 # One legend under a grid of subplots, each site listed once.
@@ -582,8 +603,9 @@ grid = hg.Chart(
     panels=["north", "south", "east"],
     panel_columns=3,
     legend=hg.LegendOptions(
-        place=hg.Place(side="bottom", align="center"), columns=3,
-        merge="semantic", swatches="mark",
+        place=hg.Place(side="bottom", align="center"),
+        columns=3,
+        swatches="mark",
     ),
 )
 for panel in ("north", "south", "east"):
@@ -613,11 +635,12 @@ sessions = hg.AxisOptions(
         hg.Break(weekdays=("sat", "sun")),
         hg.Break(hours=("16:00", "09:30")),
         hg.Break(dates=[datetime.date(2025, 12, 25)]),
-    ]
+    ],
 )
 (
-    hg.Chart(prices, x=sessions, time_zone="America/New_York", tooltip=hg.Tooltip(axis_labels=True))
-    .candlestick("time", "open", "high", "low", "close")
+    hg.Chart(
+        prices, x=sessions, time_zone="America/New_York", tooltip=hg.Tooltip(axis_labels=True)
+    ).candlestick("time", "open", "high", "low", "close")
 )
 ```
 
@@ -677,13 +700,12 @@ areas, and `fill` gives every box plot or violin one color.
 Column names are checked when the mark is added, with the available columns
 in the error message.
 
-Marks naming the same `legend_group` share series by name: series of the
-same name (a `series` value, or a single mark's `label`) take one color, one
-legend entry, and one visibility, so a bar and its error bars hide together.
-Side-by-side marks of a group (grouped bars, box plots, violins, dodged
-histograms, points, and error bars) take the group's slots, so an error bar
-stands on its bar even when one mark lacks some of the group's series.
-On a category axis, `dodge=True` places a point, error bar, line, or area
+Marks whose series stand for the same values (the same column of the same
+data) share them: one color, one legend entry, and one visibility, so a bar
+and its error bars hide together. Side-by-side marks of one column (grouped
+bars, box plots, violins, dodged histograms, points, and error bars) take
+their slots from its values, so an error bar stands on its bar even when one
+mark lacks some of them. On a category axis, `dodge=True` places a point, error bar, line, or area
 mark's series side by side in each category, as grouped bars are, and
 `jitter` (a width from 0 to 1 of the category's band, or
 `hg.Jitter(width, seed=...)`) spreads points across it by a hash of each
@@ -695,9 +717,9 @@ points that do not fit at the band's edges):
 ```python
 (
     hg.Chart(stats)
-    .bar(x="day", y="mean", series="sex", legend_group="sex")
-    .error_bar(x="day", y1="low", y2="high", series="sex", dodge=True, legend_group="sex")
-    .line(x="day", y="mean", series="sex", dodge=True, legend_group="sex")
+    .bar(x="day", y="mean", series="sex")
+    .error_bar(x="day", y1="low", y2="high", series="sex", dodge=True)
+    .line(x="day", y="mean", series="sex", dodge=True)
 )
 hg.scatter(tips, x="day", y="tip", series="sex", dodge=True, jitter=0.5)
 ```
@@ -717,8 +739,14 @@ Histograms take a number or time column, `x` (vertical) or `y`
 
 ```python
 hg.histogram(requests, y="latency", bins=[0, 10, 25, 100])
-hg.Chart(requests).histogram("latency", series="region", normalize="probability",
-                            common_norm=True, cumulative=True, dodge=True)
+hg.Chart(requests).histogram(
+    "latency",
+    series="region",
+    normalize="probability",
+    common_norm=True,
+    cumulative=True,
+    dodge=True,
+)
 ```
 
 `bins` is an approximate integer count, a `{"step": width, "start": edge}`
@@ -761,8 +789,13 @@ stacks, dodges, `cumulative`, or `element`. Counts match NumPy's
 `histogram2d`, the last bin along each axis holding its right edge.
 
 ```python
-hg.Chart(penguins).histogram("flipper", y="mass", bins={"x": 30, "y": [2500, 3500, 6500]},
-                             normalize="density", colors="viridis")
+hg.Chart(penguins).histogram(
+    "flipper",
+    y="mass",
+    bins={"x": 30, "y": [2500, 3500, 6500]},
+    normalize="density",
+    colors="viridis",
+)
 ```
 
 Contours draw a field sampled on a grid: `Chart.contour(x, y, color)` with
@@ -805,10 +838,20 @@ Box plots accept raw category/value columns or precomputed statistic columns:
 ```python
 hg.boxplot(requests, x="region", y="latency", whiskers="range")
 hg.boxplot(requests, x="region", y="latency", whiskers=2, notch=True)
-hg.boxplot(stats, x="region", low="min", q1="p25", median="p50", q3="p75",
-           high="max", count="n", notch=True)
-hg.Chart(stats).boxplot(y="region", low="min", q1="p25", median="p50",
-                       q3="p75", high="max")  # horizontal, one box per row
+hg.boxplot(
+    stats,
+    x="region",
+    low="min",
+    q1="p25",
+    median="p50",
+    q3="p75",
+    high="max",
+    count="n",
+    notch=True,
+)
+hg.Chart(stats).boxplot(
+    y="region", low="min", q1="p25", median="p50", q3="p75", high="max"
+)  # horizontal, one box per row
 ```
 
 Precomputed boxes take exactly one category `x` or `y` and all five numeric
@@ -865,8 +908,12 @@ rows+1 distinct labels; an empty linkage with one leaf is valid.
 ```python
 linkage = {"first": [0, 2, 5], "second": [1, 3, 4], "height": [1, 2, 4]}
 chart = hg.Chart(linkage, y=hg.AxisOptions(show=False)).dendrogram(
-    "first", "second", "height",
-    leaves=["a", "b", "c", "d"], side="bottom", label="Column clustering",
+    "first",
+    "second",
+    "height",
+    leaves=["a", "b", "c", "d"],
+    side="bottom",
+    label="Column clustering",
 )
 ```
 
@@ -918,12 +965,34 @@ counts and ranges. Facets split rows, `facet="repeat"` repeats them, and
 ## Colors, encodings, and styles by series
 
 `color` names a column, whose values color the marks through the chart's
-`"color"` scale, or gives a CSS color. One value has one color in every mark
-and panel of the chart, panels showing subsets and hidden series included,
-and keeps it while the data streams. `scales` fixes colors by value:
+`"color"` scale, or gives a CSS color. On every mark that draws series, a
+category column's colors are series too: `color="service"` draws a line per
+service, as `series="service"` does, unless the mark gives `series` (another
+column, or `False` for none) or its own `stroke` (a line) or `fill` (an
+area, bar, or point). That holds for lines, areas, bars, points (`point`,
+`geopoint`, `point_3d`), histograms, box plots, boxen plots, violins, error
+bars, and rugs, whose `color` is a category column naming their series or a
+color for them all. A line or area has one color per series, so a color
+column changing within one is refused with an `hg.ChartError` naming the
+series; bars and points with `series=False` take each row's color (map and
+3D points refuse it, coloring by their series alone). Marks
+without `color` (radars, pies, funnels, Sankey diagrams, gauges,
+candlesticks) refuse it, naming what to give instead. In `herceg.express`,
+`color=` names the series column, as `series=` does, and statistics are
+computed per series.
+
+One value has one color in every mark and panel of the chart, panels
+showing subsets and hidden series included, and keeps it while the data
+streams: marks of the same column of one data agree, layout marks' items
+included (pie slices, top-level treemap and sunburst branches, radar
+series, map regions and points, network node groups, 3D points and lines),
+and so do marks of data made from it (`hg.derive`, express summaries);
+unrelated data's column of the same name has colors of its own unless an
+`hg.OrdinalScale` joins them. Value columns (`y=["p50", "p99"]`) stand for their names, as an area
+labelled "p50" does. `scales` fixes colors by value:
 
 ```python
-sites = hg.Scale(type="ordinal", map={"Site A": "#00ab41", "Average": "#222222"})
+sites = hg.OrdinalScale(map={"Site A": "#00ab41", "Average": "#222222"})
 hg.Chart(df, scales={"color": sites}, facet="region", facet_columns=3).line(
     x="time",
     y="gain",
@@ -939,9 +1008,9 @@ hg.Chart(totals, scales={"color": sites}).bar(
 
 | Option | What it does |
 | --- | --- |
-| `hg.Scale(type="ordinal", domain=, map=, unknown=)` | A scale of categories in `scales`: `map` fixes outputs by value; the others take the theme's palette by their place in `domain` (the given values in order, others `unknown`; or the columns' values, a categorical's own order first). Named scales other than `"color"` are read by `hg.Channel(scale=...)`. |
+| `hg.OrdinalScale(domain=, map=, unknown=)` | A scale of categories in `scales`: `map` fixes outputs by value; the others take the theme's palette by their place in `domain` (the given values in order, others `unknown`; or the columns' values, a categorical's own order first). Under `"color"`, every mark's colors go through it; named scales other than `"color"` are read by `hg.Channel(scale=...)`, and every mark reading one gives a value one color and one legend entry, whatever data it reads. |
 | `color=` | A column through the color scale, or a CSS color: a line's stroke, a bar's, area's, or point's fill. `stroke` and `fill` win over it. |
-| `encode=hg.Encodings(...)` | Channels: `hg.Channel(field=, scale=)`, `hg.Channel(value=)`, or `hg.when(condition, then, otherwise)`. Lines take color, stroke, dash, stroke_width, and opacity; bars color, fill, stroke, stroke_width, and opacity; areas color, fill, stroke, and opacity. Lines and areas take one value per series. |
+| `encode=hg.Encodings(...)` | Channels: `hg.Channel(field=, scale=)`, `hg.Channel(series=True, scale=)` (the series' names through a scale, for marks whose series are no column's values), `hg.Channel(value=)`, or `hg.when(condition, then, otherwise)`. Lines take color, stroke, dash, stroke_width, and opacity; bars color, fill, stroke, stroke_width, and opacity; areas color, fill, stroke, and opacity. Lines and areas take one value per series. |
 | `style=hg.MarkStyle(by=hg.StyleMap(field=, map=))` | Looks by value: series whose `field` (or, without it, whose series value or wide value column) is a key of `map` take that `hg.SeriesStyle` (stroke, stroke_width, dash, opacity, fill, fill_opacity, stroke_opacity, marker). Bars read each row's value. |
 | `markers=True` / `"x"`, `style=hg.MarkStyle(marker=hg.MarkerStyle(...))` | A point at each observation a line keeps (after reduction), in its color unless styled. |
 | `opacity`, `stroke_opacity` | The whole mark's opacity, and its outline's. |
@@ -952,8 +1021,9 @@ only the default for `dodge` differs. Bars' series stand side by side unless
 `dodge=False` overlaps them or `stack` piles them: `hg.bar(df, x="month",
 y="sales", series="region")` groups the regions' bars. Points, lines,
 areas, and error bars stand at their category's center unless `dodge=True`.
-Coloring bars by a column makes no series, so never places them apart: each
-bar keeps its whole band.
+Coloring bars by a category column splits series, which stand side by side
+unless the column is the bars' category axis; with `series=False`, each bar
+takes its row's color and keeps its whole band.
 
 Bars take `stroke` and `stroke_width` for outlines, and value labels as
 `hg.BarLabels(field=, format=, style=, min_length=, place=)`: a column's
@@ -968,7 +1038,9 @@ sets a color.
 
 ```python
 hg.line(
-    df, x="time", y="value",
+    df,
+    x="time",
+    y="value",
     continuity=hg.Continuity(
         defined=hg.col("quality") >= 0.8,
         max_gap=hg.Duration(hours=1),
@@ -977,8 +1049,14 @@ hg.line(
 )
 (
     hg.Chart(df)
-    .area(x="time", y1="efficiency", y2="limit", where=hg.col("efficiency") < hg.col("limit"),
-          curve="step-after", continuity=hg.Continuity(break_by="day"))
+    .area(
+        x="time",
+        y1="efficiency",
+        y2="limit",
+        where=hg.col("efficiency") < hg.col("limit"),
+        curve="step-after",
+        continuity=hg.Continuity(break_by="day"),
+    )
     .line(x="time", y="efficiency", curve="step-after", continuity=hg.Continuity(break_by="day"))
 )
 ```
@@ -1000,12 +1078,22 @@ Stacked areas refuse `where` and `continuity`.
 (
     hg.Chart(df)
     .line(x="time", y="ms")
-    .rule(y=250, label=hg.Label(text="Threshold", place=hg.LabelPlace(attachment="start", outside=True)))
+    .rule(
+        y=250,
+        label=hg.Label(text="Threshold", place=hg.LabelPlace(attachment="start", outside=True)),
+    )
     .rule(y=300, span=(hg.Fraction(0.5), hg.Fraction(1)), stroke_opacity=0.5)
     .region(x1=start, x2=end, label=hg.Label(text="Incident", place={"side": "bottom"}))
-    .text(at=hg.Position(x=hg.Fraction(0.03), y=1.7), label=hg.Label(
-        text="Peak", style=hg.TextStyle(font_weight=600, background=hg.TextBox(fill="#ffffff"), padding=4)))
-    .text(data=peaks, x="time", y=hg.DataPosition(field="ms", offset=-8), label=hg.Label(field="name"))
+    .text(
+        at=hg.Position(x=hg.Fraction(0.03), y=1.7),
+        label=hg.Label(
+            text="Peak",
+            style=hg.TextStyle(font_weight=600, background=hg.TextBox(fill="#ffffff"), padding=4),
+        ),
+    )
+    .text(
+        data=peaks, x="time", y=hg.DataPosition(field="ms", offset=-8), label=hg.Label(field="name")
+    )
 )
 ```
 
@@ -1024,7 +1112,13 @@ Stacked areas refuse `where` and `continuity`.
 hg.area(usage, x="time", y=["user", "system"], stack="fill")
 hg.area(usage, x="time", y=["user", "system"], stack="center")
 hg.area(usage, x="time", y=["user", "system"], stack=hg.Stack(offset="wiggle", order="inside-out"))
-hg.bar(sales, x="region", y=["q1", "q2"], stack="fill", labels=hg.BarLabels(format={"style": "percent"}))
+hg.bar(
+    sales,
+    x="region",
+    y=["q1", "q2"],
+    stack="fill",
+    labels=hg.BarLabels(format={"style": "percent"}),
+)
 ```
 
 The same options work on `hg.Chart(...).area(...)` and `.bar(...)`. Fill stacks
@@ -1253,7 +1347,7 @@ read the old one's:
 
 ```python
 chart = hx.lineplot(signals, x="time", y="value", series="sensor")
-chart = hx.recompute(chart, signals_now)   # the same chart of the new rows
+chart = hx.recompute(chart, signals_now)  # the same chart of the new rows
 ```
 
 A recompute groups the new rows and computes every estimate, fit, and
@@ -1376,21 +1470,44 @@ reads, and only the source columns that steps and marks use are sent.
 ## Output
 
 ```python
-chart                      # displays in Jupyter, JupyterLab, and VS Code notebooks
-chart.show()               # notebook display, or a browser tab outside notebooks
-chart.save("chart.html")   # self-contained page: herceg and the data embedded
-chart.save("chart.svg")    # static SVG
-chart.save("chart.png")    # PNG at twice the chart size (scale=...)
-chart.save("chart.pdf")    # one-page vector PDF (chart.to_pdf() returns the bytes)
+chart  # displays in Jupyter, JupyterLab, and VS Code notebooks
+chart.show()  # notebook display, or a browser tab outside notebooks
+chart.save("chart.html")  # self-contained page: herceg and the data embedded
+chart.save("chart.svg")  # static SVG
+chart.save("chart.png")  # PNG at twice the chart size (scale=...)
+chart.save("chart.pdf")  # one-page vector PDF (chart.to_pdf() returns the bytes)
 hg.save(chart, "chart.png", scale=3)  # the same format dispatch as chart.save
-chart.to_spec()            # (spec dict, list of binary buffers)
+chart.to_spec()  # (spec dict, list of binary buffers)
 chart.to_snapshot(id_prefix="latency")  # server-rendered markup for a web page to hydrate
-chart.widget()             # a live notebook chart (see below)
+chart.widget()  # a live notebook chart (see below)
 ```
 
 HTML output and notebook display embed the herceg bundle (about 142 KiB,
 52 KiB gzipped), so they work offline. Notebooks show each chart in an
 isolated iframe.
+
+### Errors
+
+What herceg refuses raises `hg.ChartError`, a `ValueError` with the
+engine's fields: `code` (`"unknown-field"`, `"field-type"`,
+`"series-varies"`, `"series-with-values"`, `"unknown-reference"`,
+`"invalid-option"`, ...), `path` (`"marks[1].color"`, options in Python's
+spelling), `mark`, `panel`, `phase`, and `info()`, all of them as a dict.
+Columns, their kinds, and series are checked as each mark is added
+(`chart.line(x="t", y="p90")` raises at once, listing the columns the data
+has); references, such as a channel's `scale`, as the chart is output; and
+what only the engine can check (the rows `hg.derive` makes) as it draws
+SVG, PNG, or PDF. A chart that cannot draw in HTML, a notebook, a widget,
+or Streamlit shows a box of its size in its place saying "Chart could not
+be rendered" and why; an update a widget cannot apply leaves its chart
+under a banner saying so until one applies.
+
+```python
+try:
+    chart.to_svg()
+except hg.ChartError as error:
+    print(error.code, error.path)  # series-varies marks[0].color
+```
 
 `to_snapshot(id_prefix="latency")` renders the chart for a web page, as
 herceg's browser runtime would build it, in a dict of JSON values: put its
@@ -1414,8 +1531,15 @@ scales. The layout is the one at the chart's size: stretching scales text
 too.
 
 ```python
-spark = hg.Chart(df, width=140, height=48, padding=0, legend=False,
-                 x=hg.AxisOptions(show=False, nice=False), y=hg.AxisOptions(show=False, nice=False))
+spark = hg.Chart(
+    df,
+    width=140,
+    height=48,
+    padding=0,
+    legend=False,
+    x=hg.AxisOptions(show=False, nice=False),
+    y=hg.AxisOptions(show=False, nice=False),
+)
 svg = spark.line(x="t", y="v", clip=False).to_svg(
     sizing="fluid", preserve_aspect_ratio="none", stroke_scaling="fixed"
 )
@@ -1430,8 +1554,13 @@ formats. Both functions accept charts from `herceg.express`:
 ```python
 charts = [latency, throughput, errors]
 pdf_bytes = hg.to_pdf(
-    charts, page_size="A4", orientation="landscape", margin=36,
-    title="Performance report", subject="Service performance", language="en-GB",
+    charts,
+    page_size="A4",
+    orientation="landscape",
+    margin=36,
+    title="Performance report",
+    subject="Service performance",
+    language="en-GB",
 )
 hg.save(charts, "report.pdf", page_size="A4", title="Performance report")
 hg.save(latency, "latency.pdf", page_size="Letter")
@@ -1468,7 +1597,7 @@ using system fonts by default. PDF comes from herceg's
 `renderToPDF` in the same engine: vector marks, axes,
 and legends, heatmaps as images, and selectable text. What the renderer
 refuses, such as an option the spec does not accept (`theme="drak"`) or a
-font it cannot embed, raises `ValueError` with herceg's message. Without supplied fonts,
+font it cannot embed, raises `hg.ChartError` with herceg's message. Without supplied fonts,
 PDF uses the standard fonts and Windows-1252 encoding (other characters
 print as "?"). Custom fonts are export options, separate from the spec,
 with the same `fonts=` mapping for SVG, PNG, and PDF:
@@ -1571,14 +1700,14 @@ extra (`pip install 'herceg[notebook]'`).
 
 ```python
 live = hg.Chart(df, title="CPU", zoom=True, brush="x").line(x="time", y="cpu").widget()
-live                                     # display it
+live  # display it
 
-live.append(new_rows, max_rows=10_000)   # stream rows, keeping the last 10,000
-live.replace(today)                      # replace every row
+live.append(new_rows, max_rows=10_000)  # stream rows, keeping the last 10,000
+live.replace(today)  # replace every row
 live.update(title="CPU, today", theme="dark")
-live.viewport = (start, end)             # zoom x (y fits its data); None resets every axis
+live.viewport = (start, end)  # zoom x (y fits its data); None resets every axis
 live.viewport = hg.Viewport(x=(start, end), y=(0, 100))
-live.selection = (start, end)            # brush an x range; None clears it
+live.selection = (start, end)  # brush an x range; None clears it
 live.selection = hg.Selection(x=(start, end), y=(50, 100))
 ```
 
@@ -1595,17 +1724,17 @@ facets; `None` restores an option's default.
 Interaction comes back as properties and callbacks:
 
 ```python
-live.selection                           # an hg.Selection, or None
-live.viewport                            # an hg.Viewport: x, y, y_right, each None when not zoomed
+live.selection  # an hg.Selection, or None
+live.viewport  # an hg.Viewport: x, y, y_right, each None when not zoomed
 
 live.on_select(lambda selection: print(selection))
 live.on_viewport(lambda viewport: print(viewport.x, viewport.y))
-live.on_hover(lambda inspection: print(inspection))   # None when the pointer leaves
+live.on_hover(lambda inspection: print(inspection))  # None when the pointer leaves
 live.on_click(lambda inspection: print(df.iloc[inspection.points[0].row]))
-live.on_click(callback, remove=True)     # stop calling it
+live.on_click(callback, remove=True)  # stop calling it
 live.on_camera(lambda camera: print(camera.azimuth, camera.elevation))  # standalone 3D
 live.on_edge(lambda edge: print(edge.side, edge.bound))  # the view neared an end of `limits`
-live.show_cursor(x=when)                 # a crosshair and the points at a time; hide_cursor() hides it
+live.show_cursor(x=when)  # a crosshair and the points at a time; hide_cursor() hides it
 ```
 
 `on_edge` receives an `hg.ViewEdge`: the `scale`, the `side` (`"start"`,
@@ -1620,10 +1749,11 @@ def load_older(edge):
     global first
     if edge.side != "start":
         return
-    older = fetch_before(first)                        # the application's loader
+    older = fetch_before(first)  # the application's loader
     first = older["time"].min()
-    live.replace(pd.concat([older, shown_rows]))       # older rows first
+    live.replace(pd.concat([older, shown_rows]))  # older rows first
     live.update(limits={"x": hg.ViewLimits(extent=(first, None), edge=True)})
+
 
 live.on_edge(load_older)
 ```
@@ -1656,10 +1786,10 @@ panels has axes refuses `viewport` and a plain `on_viewport`. A
 ```python
 tree = hg.treemap(sales, path=["region", "country"], value="revenue", zoom=True).widget()
 tree.on_drill(lambda root: print(root))
-tree                                  # display it, then drill into a region
-saved_root = tree.drill_root           # for example, ('[0,"Europe"]',)
-tree.drill_root = None                 # show the whole tree
-tree.drill_root = saved_root           # restore that branch
+tree  # display it, then drill into a region
+saved_root = tree.drill_root  # for example, ('[0,"Europe"]',)
+tree.drill_root = None  # show the whole tree
+tree.drill_root = saved_root  # restore that branch
 ```
 
 `item_positions` is an `hg.ItemPositions`: a dictionary from node item keys
@@ -1680,13 +1810,13 @@ shows an error above the chart and reconciles the state to what was applied.
 ```python
 network = hg.graph(links, "source", "target", drag=True).widget()
 network.on_item_move(lambda positions: print(positions))
-network                               # display it, then drag a node
+network  # display it, then drag a node
 positions = network.item_positions
 if positions:
     node = next(iter(positions))
     positions[node] = (10.0, 20.0)
     network.item_positions = positions
-network.item_positions = {}           # reset every moved node
+network.item_positions = {}  # reset every moved node
 ```
 
 Drill and move callbacks also run for Python assignments and resets. Both
@@ -1790,9 +1920,9 @@ live = (
     .widget()
 )
 live.on_row_selection(lambda picked: print(picked.rows, picked.condition))
-live.row_selection                       # an hg.RowSelection
-live.row_selection = [3, 8]              # select rows by position (or a boolean mask)
-live.row_selection = hg.col("fare") > 20 # or a condition; None clears
+live.row_selection  # an hg.RowSelection
+live.row_selection = [3, 8]  # select rows by position (or a boolean mask)
+live.row_selection = hg.col("fare") > 20  # or a condition; None clears
 ```
 
 An `hg.RowSelection` holds the `channel`, the `data` it selects rows of, and

@@ -13,7 +13,6 @@ from .._chart import Chart, Dash, HelperOptions
 from .._data import Column
 from . import _numerics as numerics
 from ._common import (
-    SERIES_GROUP,
     ErrorBar,
     ErrorMethod,
     Levels,
@@ -74,6 +73,7 @@ def barplot(
     x: str,
     y: str,
     series: str | None = None,
+    color: str | None = None,
     order: Sequence[Any] | None = None,
     series_order: Sequence[Any] | None = None,
     orient: Orient | None = None,
@@ -127,7 +127,7 @@ def barplot(
     )
     label = None if series else est.value
     xy = (est.value, est.category) if est.horizontal else (est.category, est.value)
-    chart.bar(*xy, series=series, label=label, legend_group=SERIES_GROUP)
+    chart.bar(*xy, series=series, label=label)
     est.error_bars(chart, dodge=series is not None, stroke=neutral(options.get("theme")))
     return record(chart, est.statistics("barplot"))
 
@@ -139,6 +139,7 @@ def pointplot(
     x: str,
     y: str,
     series: str | None = None,
+    color: str | None = None,
     order: Sequence[Any] | None = None,
     series_order: Sequence[Any] | None = None,
     orient: Orient | None = None,
@@ -198,7 +199,7 @@ def pointplot(
     xy = (est.value, est.category) if est.horizontal else (est.category, est.value)
     # The points come first: their series, in order, give the legend group its
     # colors and slots, which the lines' marks (one per style) then share.
-    chart.point(*xy, series=series, dodge=spread, radius=4, label=label, legend_group=SERIES_GROUP)
+    chart.point(*xy, series=series, dodge=spread, radius=4, label=label)
     est.error_bars(chart, dodge=spread)
     if drawn:
         axis = options.get("y_axis" if est.horizontal else "x_axis")
@@ -213,7 +214,6 @@ def pointplot(
                 dodge=spread,
                 dash=cast(Dash, style),
                 label=label,
-                legend_group=SERIES_GROUP,
             )
     return record(chart, est.statistics("pointplot"))
 
@@ -250,6 +250,7 @@ def lineplot(
     x: str,
     y: str,
     series: str | None = None,
+    color: str | None = None,
     series_order: Sequence[Any] | None = None,
     estimator: Estimator | None = "mean",
     errorbar: ErrorBar = ("ci", 95),
@@ -366,24 +367,12 @@ def lineplot(
     chart = make_chart(table, options, sentence=sentence, palette=palette, x_label=x, y_label=y)
     label = None if series else y
     if interval and error_style == "band":
-        # Bands between two fields take no series: one per series level, named
-        # like its line so that the legend group shares color and visibility.
-        series_levels = variables[series].labels if series else (y,)
-        for i, name in enumerate(series_levels):
-            position = names.index(series) if series else 0
-            part = table if series is None else subset(table, _at_level(keys, position, i))
-            chart.area(
-                x,
-                y1=low,
-                y2=high,
-                data=part,
-                label=name,
-                fill_opacity=0.2,
-                legend_group=SERIES_GROUP,
-            )
+        # A band per series, of the line's table: each stands for what its
+        # line does, sharing its color, legend entry, and visibility.
+        chart.area(x, y1=low, y2=high, series=series, label=label, fill_opacity=0.2)
     if interval and error_style == "bars":
-        chart.error_bar(x=x, y1=low, y2=high, series=series, label=label, legend_group=SERIES_GROUP)
-    chart.line(x, estimated, series=series, label=label, legend_group=SERIES_GROUP)
+        chart.error_bar(x=x, y1=low, y2=high, series=series, label=label)
+    chart.line(x, estimated, series=series, label=label)
     stats = Statistics(
         "lineplot", sentence, {"estimates": readable(table)}, aggregation.seed, dropped
     )
@@ -434,7 +423,7 @@ def _lines_of_rows(
     order = f"in {x} order" if sort else "in the data's order"
     sentence = f"Lines join the rows' {y} {order}{by(series)}{lines}." + left_out
     chart = make_chart(drawn, options, sentence=sentence, palette=palette, x_label=x, y_label=y)
-    chart.line(x, y, series=series, label=None if series else y, legend_group=SERIES_GROUP)
+    chart.line(x, y, series=series, label=None if series else y)
     stats = Statistics("lineplot", sentence, {"rows": readable(table)}, None, dropped)
     return record(chart, stats)
 
@@ -704,7 +693,6 @@ class _CategoryEstimates:
             "dodge": dodge,
             "stroke": stroke,
             "label": None if self.series else self.value,
-            "legend_group": SERIES_GROUP,
         }
         if self.horizontal:
             chart.error_bar(y=self.category, x1=self.low, x2=self.high, **style)
@@ -728,8 +716,3 @@ class _CategoryEstimates:
             self.aggregation.seed,
             self.dropped,
         )
-
-
-def _at_level(keys: list[tuple[int, ...]], position: int, level: int) -> np.ndarray:
-    """The output rows whose key has ``level`` at ``position``."""
-    return np.array([i for i, key in enumerate(keys) if key[position] == level], dtype=np.intp)

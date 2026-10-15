@@ -14,7 +14,9 @@ import {
 import { insetDomain } from "../model/axis.ts";
 import type { Geometry } from "../scene/scene.ts";
 import type { BoxenSpec, BoxPlotSpec, Clip, Frozen, ViolinSpec } from "../spec/spec.ts";
+import { colored } from "./colored.ts";
 import { BandShares } from "./dodge.ts";
+import type { CssColor } from "./encoding.ts";
 import {
   type AxisFormat,
   type BandContext,
@@ -30,6 +32,7 @@ import {
   type MARK,
   type Mark,
   type MarkKey,
+  type MarkSources,
   NUMERIC,
   type Palette,
   requireField,
@@ -57,6 +60,12 @@ export type DistributionOptions<S extends Schema> = (
 ) & {
   /** Category field: a shape per value in each category, side by side. */
   series?: CategoryField<S>;
+  /**
+   * A category field naming the series, whose values color them (as
+   * `series` does, which must then name it too), or a color for every
+   * shape, as `fill` sets it.
+   */
+  color?: CategoryField<S> | CssColor;
   /** Constant color for every shape of the mark; colors come from the palette otherwise. */
   fill?: string;
   /** Opacity of the shapes' fill; 0.25 by default. */
@@ -72,11 +81,6 @@ export type DistributionOptions<S extends Schema> = (
   clip?: Clip;
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
-  /**
-   * Marks naming the same group share series by name: series of the same
-   * name share a color, one legend entry, and visibility.
-   */
-  legendGroup?: string;
   /** `false` leaves the mark out of the chart's legends. */
   legend?: false;
   id?: string;
@@ -145,6 +149,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | BoxenSpec | Violi
   readonly insetDomain = insetDomain;
   readonly spec: Frozen<T>;
   readonly table: Table;
+  readonly identity: MarkSources;
   readonly tooltip: "x" | "y";
   readonly summarizes = true;
   readonly bandPadding = 0.2;
@@ -186,7 +191,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | BoxenSpec | Violi
   readonly #selected = new WeakMap<Series, Summary<G>>();
 
   constructor(input: T, table: Table, axes?: { x: string; y: string }) {
-    this.spec = frozen(input);
+    this.spec = frozen(colored(input, table, "fill"));
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     const type = spec.type;
@@ -206,6 +211,8 @@ export abstract class DistributionMark<T extends BoxPlotSpec | BoxenSpec | Violi
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, `${type} series`);
     this.table = table;
     this.tooltip = this.horizontal ? "y" : "x";
+    // Shapes stand for their series field's values, or for the value field.
+    this.identity = { field: spec.series, values: [this.value] };
   }
 
   /** What to keep of a group's ascending, finite values besides `stats`. */
@@ -680,14 +687,14 @@ export abstract class DistributionMark<T extends BoxPlotSpec | BoxenSpec | Violi
   /**
    * Where each visible series' shapes go in their slots, as geometry draws
    * them: side by side when several series share a category, as grouped
-   * bars are, and in a legend group at the group's places for their names.
+   * bars are, at their field's values' places (see dodge.ts).
    * The slots are kept for picking and inspection, which see only some of
    * the series (the visible ones with groups).
    */
   protected placements(series: readonly Series[], frame: Frame): Map<Series, Placement> {
     // Drawn so, no selection is drawn with the series.
     for (const s of series) this.#selected.delete(s);
-    this.#shares.split(series, frame, this.spec.legendGroup, true);
+    this.#shares.split(series, frame, true);
     const out = new Map<Series, Placement>();
     for (const s of series) if (!frame.hidden.has(s.key)) out.set(s, this.placement(s, frame));
     return out;

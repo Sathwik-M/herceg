@@ -1,9 +1,11 @@
 // Looks of series of connected marks (lines, areas): their color and paint
 // from channels and `style.by`, each one value per series. A channel or
 // map by a field reads the field's value over each series' rows, which
-// must be one: lines and areas have no styles per row.
+// must be one: lines and areas have no styles per row. Each series' value
+// is checked once, then as rows are appended only the new rows.
 
 import type { Table } from "../../data/table.ts";
+import type { FeatureKit } from "../../model/features.ts";
 import type { Drawing, Geometry } from "../../scene/scene.ts";
 import type { ChannelSpec, EncodingsSpec, SeriesStyle, StyleMapSpec } from "../../spec/encoding.ts";
 import type { Dash } from "../../spec/spec.ts";
@@ -17,6 +19,7 @@ import {
   compileChannel,
   type ScaleOf,
 } from "./channels.ts";
+import type { Where } from "./compile.ts";
 
 /** The paint a series takes from the features, over its mark's flat paint. */
 export interface SeriesPaint {
@@ -30,6 +33,8 @@ export interface SeriesPaint {
   strokeOpacity?: number | undefined;
   fillOpacity?: number | undefined;
   style?: SeriesStyle | undefined;
+  /** The value of the field coloring the series, where it is not the series field. */
+  value?: string | undefined;
 }
 
 /** The options of a line's or area's spec its looks come from. */
@@ -64,16 +69,36 @@ const dash = (value: unknown, path: string) => {
     );
 };
 
-/** A series' value of a channel: by its name, its rows, or its source. */
-type Reader<V> = (s: Series | undefined, id: string) => V | undefined;
+/** A series' value of a channel: by its rows, its source, or its name. */
+type Reader<V> = (s: Series | undefined, id: string, label?: string) => V | undefined;
+
+/**
+ * A series' one value of something its rows each have, as last checked:
+ * the last row holding it (`evidence`), the last of the series' rows
+ * (`seen`), and up to which row of the table (`last`; rows by identity,
+ * `rowOffset + position`), in which generation, before which change of
+ * existing values, and of the mark's row view, which rows count.
+ */
+interface Checked {
+  value: string | undefined;
+  evidence: number;
+  seen: number;
+  last: number;
+  generation: number;
+  modified: number;
+  view: number | undefined;
+}
 
 /**
  * The looks of a connected mark's series, compiled: `primary` is the paint
  * `color` sets (a line's stroke, an area's fill).
  */
 export class SeriesStyles {
+  readonly #kit: FeatureKit;
+  readonly #where: Where;
   readonly #spec: SeriesStyleSpec;
   readonly #table: Table;
+  readonly #view: { readonly revision: number } | undefined;
   readonly #primary: "stroke" | "fill";
   readonly #color: Reader<string> | undefined;
   readonly #stroke: Reader<string> | undefined;
@@ -84,6 +109,18 @@ export class SeriesStyles {
   readonly #by: Reader<SeriesStyle> | undefined;
   /** Whether a series' color needs its rows (a field other than the series field, or a condition). */
   readonly #byRows: boolean;
+  /**
+   * The field the series' color is read from, where it is not the series
+   * field, and the option naming it.
+   */
+  readonly #colorField: string | undefined;
+  readonly #colorPath: string;
+  /** The axis whose positions are bands, where rows without a band are no series' (see `#constant`). */
+  readonly #bands: "x" | "y" | undefined;
+  /** Each series' checked values, by series key and what they are of. */
+  readonly #checked = new Map<string, Checked>();
+  /** The series field's codes by value, for one table version (see `#codeOf`). */
+  #codes: { version: number; dictionary: readonly string[]; of: Map<string, number> } | undefined;
   #theme: Theme | undefined;
   /** Each series' paint, by its key, for the table's version and the theme it was found in. */
   #paints = new Map<
@@ -97,11 +134,19 @@ export class SeriesStyles {
     table: Table,
     scales: ScaleOf,
     primary: "stroke" | "fill",
-    path: string,
-    isColor: (value: string) => boolean,
+    where: Where,
+    kit: FeatureKit,
+    view?: { readonly revision: number },
+    bands?: "x" | "y",
   ) {
+    const { isColor } = kit;
+    const { path } = where;
+    this.#kit = kit;
+    this.#where = where;
     this.#spec = spec;
     this.#table = table;
+    this.#view = view;
+    this.#bands = bands;
     this.#primary = primary;
     const encode = spec.encode ?? {};
     const both = (flat: keyof SeriesStyleSpec, channel: keyof EncodingsSpec) => {
@@ -113,12 +158,17 @@ export class SeriesStyles {
     both("dash", "dash");
     both("strokeWidth", "strokeWidth");
     both("opacity", "opacity");
-    const color =
-      encode.color ??
-      (spec.color === undefined
-        ? undefined
-        : colorShortForm(spec.color, table, `${path} color`, isColor));
+    // A paint of the mark's own (a line's stroke, an area's fill) wins over its color.
+    const own = spec[primary] !== undefined || encode[primary] !== undefined;
+    const color = own
+      ? undefined
+      : (encode.color ??
+        (spec.color === undefined
+          ? undefined
+          : colorShortForm(spec.color, table, `${path} color`, isColor)));
     let rows = false;
+    let colorField: string | undefined;
+    let colorPath = `${path} color`;
     const reader = <V>(
       channel: ChannelSpec<V> | undefined,
       check: (value: unknown, at: string) => void,
@@ -144,6 +194,10 @@ export class SeriesStyles {
           (compiled.kind === "field" && compiled.field !== spec.series))
       )
         rows = true;
+      if (paint && compiled.kind === "field" && compiled.field !== spec.series) {
+        colorField = compiled.field;
+        colorPath = at;
+      }
       return this.#reader(compiled, at, defaults, fallback);
     };
     const palette = () => this.#theme?.palette ?? [];
@@ -183,11 +237,13 @@ export class SeriesStyles {
         const key =
           field === undefined || field === spec.series
             ? id
-            : s && this.#constant(s, field, `${path} style.by.field`);
+            : s && this.#field(s, field, `${path} style.by.field`);
         return key === undefined || !Object.hasOwn(by.map, key) ? undefined : by.map[key];
       };
     }
     this.#byRows = rows;
+    this.#colorField = colorField;
+    this.#colorPath = colorPath;
   }
 
   /** Reads `theme`'s palette for values the scales do not map. */
@@ -203,63 +259,154 @@ export class SeriesStyles {
     fallback: () => V,
   ): Reader<V> {
     if (channel.kind === "value") return () => channel.value;
+    if (channel.kind === "series")
+      return (s, id, label) =>
+        channel.scale.output(label ?? s?.label ?? id, defaults(), fallback());
     if (channel.kind === "condition") {
+      // Each row's outcome, as text: dashes are arrays, alike by their steps.
+      const outcome = (row: number) =>
+        JSON.stringify(channel.when(row) ? channel.then : channel.otherwise);
       return (s) => {
-        if (!s) return undefined;
-        let value: V | undefined;
-        this.#each(s, (row) => {
-          const out = channel.when(row) ? channel.then : channel.otherwise;
-          // Dashes are arrays: alike by their steps.
-          if (value !== undefined && JSON.stringify(out) !== JSON.stringify(value))
-            throw this.#varies(path, s);
-          value = out;
-        });
-        return value;
+        const value = s && this.#constant(s, `${path}|condition`, outcome, path);
+        return value === undefined ? undefined : (JSON.parse(value) as V);
       };
     }
     return (s, id) => {
       const value =
-        channel.field === this.#spec.series ? id : s && this.#constant(s, channel.field, path);
+        channel.field === this.#spec.series ? id : s && this.#field(s, channel.field, path);
       return value === undefined ? undefined : channel.scale.output(value, defaults(), fallback());
     };
   }
 
-  #each(s: Series, visit: (row: number) => void): void {
-    for (let k = 0; k < s.length; k++) visit(s.rows ? s.rows[k]! : k);
-  }
-
   /** The value of category `field` over a series' rows, which must be one; undefined for none. */
-  #constant(s: Series, field: string, path: string): string | undefined {
+  #field(s: Series, field: string, path: string): string | undefined {
     const { codes, dictionary } = this.#table.categories(field as never);
-    let code = -1;
-    this.#each(s, (row) => {
-      const at = codes[row]!;
-      if (at < 0) return;
-      if (code >= 0 && at !== code) throw this.#varies(path, s);
-      code = at;
-    });
-    return code < 0 ? undefined : dictionary[code];
-  }
-
-  #varies(path: string, s: Series): Error {
-    return new Error(
-      `${path}: changes within series "${s.label}"; lines and areas take one value per series, so read the series field or give a value`,
+    return this.#constant(
+      s,
+      field,
+      (row) => {
+        const code = codes[row]!;
+        return code < 0 ? undefined : dictionary[code];
+      },
+      path,
+      field,
     );
   }
 
   /**
-   * The color the palette gives a series of source `id`: its style map's,
-   * the mark's constant `given`, its channels', or the palette's (undefined).
-   * Empty when its rows decide it (`attach` sets it).
+   * The one value `read` gives the rows of a series (cached as `of`):
+   * found once, then as the table appends rows checked over its new rows
+   * alone, while the rows checked before are unchanged and the last of them
+   * holding the value is still there. Throws where a series has two.
    */
-  color(id: string, given: string | undefined): string | undefined {
-    if (this.#byRows) return "";
-    return this.#by?.(undefined, id)?.[this.#primary] ?? given ?? this.#paintOf(undefined, id);
+  #constant(
+    s: Series,
+    of: string,
+    read: (row: number) => string | undefined,
+    path: string,
+    field?: string,
+  ): string | undefined {
+    const table = this.#table;
+    const offset = table.rowOffset;
+    const view = this.#view?.revision;
+    const key = `${s.key}|${of}`;
+    let checked = this.#checked.get(key);
+    if (
+      checked &&
+      !(
+        checked.generation === table.generation &&
+        checked.modified === table.modifiedVersion &&
+        checked.view === view &&
+        held(checked, offset)
+      )
+    )
+      checked = undefined;
+    let { value, evidence, seen } = checked ?? { value: undefined, evidence: -1, seen: -1 };
+    const check = (row: number) => {
+      const id = offset + row;
+      if (id > seen) seen = id;
+      const at = read(row);
+      if (at === undefined) return;
+      if (value !== undefined && at !== value) {
+        // A series found varying is checked whole again, so it recovers once its rows agree.
+        this.#checked.delete(key);
+        throw this.#varies(path, s, field);
+      }
+      value = at;
+      if (id > evidence) evidence = id;
+    };
+    if (checked && !this.#view) {
+      // Rows appended since: the table's last ones, of the series where they
+      // are its field's value (whatever order the series draws them in).
+      const { series } = this.#spec;
+      const codes = series === undefined ? undefined : table.categories(series as never);
+      const code = codes && this.#codeOf(codes.dictionary, (JSON.parse(s.key) as string[])[1]!);
+      // Rows without a band are no series' (bandOrder leaves them out).
+      const bands = this.#bands && (this.#bands === "x" ? s.x : s.y);
+      for (let row = checked.last + 1 - offset; row < table.length; row++)
+        if ((!codes || codes.codes[row] === code) && !(bands && !(bands[row]! >= 0))) check(row);
+    } else for (let k = 0; k < s.length; k++) check(s.rows ? s.rows[k]! : k);
+    // Every row of the table is checked now, or not the series'.
+    const last = offset + table.length - 1;
+    this.#checked.set(key, {
+      value,
+      evidence,
+      seen,
+      last,
+      generation: table.generation,
+      modified: table.modifiedVersion,
+      view,
+    });
+    return value;
   }
 
-  #paintOf(s: Series | undefined, id: string): string | undefined {
+  /** `value`'s code in `dictionary`, by an index made once per table version. */
+  #codeOf(dictionary: readonly string[], value: string): number {
+    const version = this.#table.version;
+    if (this.#codes?.version !== version || this.#codes.dictionary !== dictionary)
+      this.#codes = { version, dictionary, of: new Map(dictionary.map((v, i) => [v, i])) };
+    return this.#codes.of.get(value) ?? -1;
+  }
+
+  #varies(path: string, s: Series, field: string | undefined): Error {
+    const series = this.#spec.series;
+    const what = field === undefined ? "its value" : `field "${field}"`;
+    const area = this.#spec.type === "area";
+    const within =
+      series === undefined
+        ? `the ${area ? "area" : "line"}`
+        : `series "${s.label}" (by "${series}")`;
+    const { index, mark } = this.#where;
+    return new this.#kit.ChartError({
+      code: "series-varies",
+      path: `marks[${index}].${path.slice(this.#where.path.length + 1)}`,
+      mark,
+      message: `${path}: ${what} changes within ${within}; ${area ? "areas" : "lines"} take one color per series, so split them by ${series === undefined ? "a series field" : "another field"} or give a constant color`,
+    });
+  }
+
+  /** The value of the field coloring a series, where it is not the series field. */
+  #colorValue(s: Series): string | undefined {
+    const field = this.#colorField;
+    return field === undefined ? undefined : this.#field(s, field, this.#colorPath);
+  }
+
+  /**
+   * The color the palette gives a series of source `id`, named `label`: its
+   * style map's, the mark's constant `given`, its channels', or the
+   * palette's (undefined). Empty when its rows decide it (`attach` sets it).
+   */
+  color(id: string, given: string | undefined, label?: string): string | undefined {
+    if (this.#byRows) return "";
     return (
-      (this.#primary === "stroke" ? this.#stroke : this.#fill)?.(s, id) ?? this.#color?.(s, id)
+      this.#by?.(undefined, id)?.[this.#primary] ?? given ?? this.#paintOf(undefined, id, label)
+    );
+  }
+
+  #paintOf(s: Series | undefined, id: string, label?: string): string | undefined {
+    return (
+      (this.#primary === "stroke" ? this.#stroke : this.#fill)?.(s, id, label) ??
+      this.#color?.(s, id, label)
     );
   }
 
@@ -273,6 +420,12 @@ export class SeriesStyles {
     if (this.#paintsOf?.version !== version || this.#paintsOf.theme !== theme) {
       this.#paints.clear();
       this.#paintsOf = { version, theme };
+      // What was checked of rows the table no longer has goes, so series a
+      // stream leaves behind are not kept; one that returns is checked afresh.
+      const { generation, rowOffset } = this.#table;
+      for (const [key, checked] of this.#checked)
+        if (checked.generation !== generation || !held(checked, rowOffset))
+          this.#checked.delete(key);
     }
     const kept = this.#paints.get(s.key);
     if (kept && kept.rows === s.rows && kept.length === s.length) {
@@ -302,6 +455,7 @@ export class SeriesStyles {
       strokeOpacity: style?.strokeOpacity ?? spec.strokeOpacity,
       fillOpacity: style?.fillOpacity,
       style,
+      value: this.#colorValue(s),
     };
   }
 
@@ -310,6 +464,14 @@ export class SeriesStyles {
     if (opacity === 1) return geometry;
     return { ...geometry, draw: translucent(geometry.draw, opacity) };
   }
+}
+
+/**
+ * Whether the table still has the rows `checked` stands on: the last
+ * holding its value, or for none, the series' last.
+ */
+function held(checked: Checked, rowOffset: number): boolean {
+  return (checked.value === undefined ? checked.seen : checked.evidence) >= rowOffset;
 }
 
 const translucents = new WeakMap<Drawing<Geometry>, Map<number, Drawing<Geometry>>>();

@@ -6,7 +6,9 @@ import { insetDomain } from "../model/axis.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { Rect, SegmentGeometry } from "../scene/scene.ts";
 import type { Clip, ErrorBarSpec, Frozen } from "../spec/spec.ts";
+import { colored } from "./colored.ts";
 import { BandShares } from "./dodge.ts";
+import type { CssColor } from "./encoding.ts";
 import { definedFields } from "./line.ts";
 import {
   type BandContext,
@@ -23,6 +25,7 @@ import {
   type MARK,
   type Mark,
   type MarkKey,
+  type MarkSources,
   NUMERIC,
   type Palette,
   requireField,
@@ -49,6 +52,12 @@ interface ErrorBarStyle<S extends Schema> {
   /** Category field: one series of error bars per value. */
   series?: CategoryField<S>;
   /**
+   * A category field naming the series, whose values color them (as
+   * `series` does, which must then name it too), or a color for every
+   * mark's lines, as `stroke` sets it.
+   */
+  color?: CategoryField<S> | CssColor;
+  /**
    * With `series` and category positions: place the series side by side in
    * each band, as grouped bars are, so each interval stands on its bar.
    */
@@ -58,11 +67,6 @@ interface ErrorBarStyle<S extends Schema> {
   /** Width of the caps at each end in pixels; 0 for none. Default 8. */
   cap?: number;
   label?: string;
-  /**
-   * Marks naming the same group share series by name: series of the same
-   * name share a color, one legend entry, and visibility.
-   */
-  legendGroup?: string;
   /** `false` leaves the mark out of the chart's legends. */
   legend?: false;
   /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
@@ -171,6 +175,7 @@ export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
   readonly insetDomain = insetDomain;
   readonly spec: Frozen<ErrorBarSpec>;
   readonly table: Table<Schema>;
+  readonly identity: MarkSources;
   readonly tooltip: "x" | "y";
   readonly inset: { x: number; y: number };
   readonly #horizontal: boolean;
@@ -185,7 +190,7 @@ export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
   readonly #shares: BandShares | undefined;
 
   constructor(input: ErrorBarSpec, table: Table<Schema>) {
-    this.spec = frozen(input);
+    this.spec = frozen(colored(input, table, "stroke"));
     checkTooltip(table, this.spec.tooltip, "errorbar");
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
@@ -236,6 +241,8 @@ export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
       spec.series,
       spec.label ?? defaultLabel,
     );
+    const values = "center" in ends ? [ends.center, ends.error] : [ends.low, ends.high];
+    this.identity = { field: spec.series, values };
   }
 
   channelKind(axis: "x" | "y") {
@@ -300,7 +307,7 @@ export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
     const across = horizontal ? frame.x : frame.y;
     const half = (this.spec.cap ?? CAP) / 2;
     const out: SegmentGeometry[] = [];
-    this.#shares?.split(series, frame, this.spec.legendGroup, true);
+    this.#shares?.split(series, frame, true);
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
       const shift = this.#shift(s, along);
@@ -540,12 +547,12 @@ export function errorBar<S extends Schema>(
       "xError",
       "yError",
       "series",
+      "color",
       "dodge",
       "stroke",
       "strokeWidth",
       "cap",
       "label",
-      "legendGroup",
       "legend",
       "id",
       "axis",

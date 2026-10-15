@@ -280,6 +280,12 @@ export interface Chart {
    */
   readonly loading: Promise<void> | undefined;
   /**
+   * Settles once the chart's first frame is on screen, the code it waits
+   * for loaded (its compilers), or rejects with the `ChartError` that kept
+   * the first frame from drawing. A later failure is an "error" event.
+   */
+  readonly ready: Promise<void>;
+  /**
    * Draws pending changes now, at the container's current size, instead of
    * on the next frame. It always draws, so a `render` listener calling it
    * hears of another frame.

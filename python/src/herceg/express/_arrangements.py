@@ -13,7 +13,6 @@ from .._data import Column, Matrix
 from . import _numerics as numerics
 from . import _regression as regression
 from ._common import (
-    SERIES_GROUP,
     Source,
     Statistics,
     axis_defaults,
@@ -56,6 +55,7 @@ def pairplot(
     *,
     vars: Sequence[str] | None = None,
     series: str | None = None,
+    color: str | None = None,
     series_order: Sequence[Any] | None = None,
     palette: Sequence[str] | None = None,
     diag_kind: Literal["auto", "hist", "kde"] | None = "auto",
@@ -167,7 +167,6 @@ def pairplot(
                 radius=2,
                 panel=id,
                 label=label,
-                legend_group=SERIES_GROUP,
             )
             continue
         name = names[i]
@@ -187,7 +186,6 @@ def pairplot(
                 series=series,
                 panel=id,
                 label=label,
-                legend_group=SERIES_GROUP,
             )
         else:
             density, _, density_column = densities(
@@ -215,7 +213,6 @@ def pairplot(
                 series=series,
                 panel=id,
                 label=label,
-                legend_group=SERIES_GROUP,
             )
     return record(
         chart,
@@ -232,6 +229,7 @@ def jointplot(
     x: str,
     y: str,
     series: str | None = None,
+    color: str | None = None,
     series_order: Sequence[Any] | None = None,
     palette: Sequence[str] | None = None,
     kind: Literal["scatter", "reg", "kde", "hist"] = "scatter",
@@ -338,7 +336,7 @@ def jointplot(
         )
     chart = make_chart(table, settings, sentence=sentence, palette=palette)
     label = None if series else y
-    chart.point(x, y, series=series, panel="joint", label=label, legend_group=SERIES_GROUP)
+    chart.point(x, y, series=series, panel="joint", label=label)
     tables: dict[str, Mapping[str, np.ndarray]] = {
         "x edges": {"edges": x_edges},
         "y edges": {"edges": y_edges},
@@ -353,9 +351,8 @@ def jointplot(
                 panel="joint",
                 label="fit",
                 fill_opacity=0.2,
-                legend_group="fit",
             )
-        chart.line(x, y, data=fit_table, panel="joint", label="fit", legend_group="fit")
+        chart.line(x, y, data=fit_table, panel="joint", label="fit")
         tables["fit"] = readable(fit_table)
     chart.histogram(
         x,
@@ -363,7 +360,6 @@ def jointplot(
         series=series,
         panel="x",
         label=label,
-        legend_group=SERIES_GROUP,
     )
     chart.histogram(
         y=y,
@@ -371,7 +367,6 @@ def jointplot(
         series=series,
         panel="y",
         label=label,
-        legend_group=SERIES_GROUP,
     )
     return record(chart, Statistics("jointplot", sentence, tables, used_seed, dropped))
 

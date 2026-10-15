@@ -61,7 +61,7 @@ describe("inspected points", () => {
     const at = model.xScale()!.map(2);
     expect(identities(model.inspect(at, 150))).toEqual([
       { mark: 1, markId: "latency", key: '["latency","a"]', label: "a", row: 3 },
-      { mark: 2, markId: undefined, key: '[2,"band"]', label: "a–b", row: 3 },
+      { mark: 2, markId: undefined, key: '[2,"a–b"]', label: "a–b", row: 3 },
     ]);
     // Rows at the same coordinates stay apart: the keyboard reaches each.
     expect(identities(positionOf(model, '["latency","a"]', 2))![0]!.row).toBe(2);

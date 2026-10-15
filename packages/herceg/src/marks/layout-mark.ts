@@ -17,11 +17,63 @@ import type { CameraSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import type { Camera } from "../three/camera.ts";
 import type { MovedNodes, NodeMoves } from "./graph.ts";
-import type { ChartMark, Mark } from "./mark.ts";
+import { type ChartMark, type Mark, seriesOf } from "./mark.ts";
 import type { LayoutClock, NodePositions } from "./node-positions.ts";
 import type { Drill } from "./tree-data.ts";
 
 /** The part of a map's or network's plane to show: x and y ranges in its units, each null for the fitted layout's. */
+
+/**
+ * What a layout mark's items stand for: values of `field` of `table` (the
+ * mark's own unless given), an item's read from its key by `read`
+ * (undefined for items standing for nothing but themselves).
+ */
+export interface ItemSources {
+  readonly field: string;
+  readonly table?: Table | undefined;
+  read(key: string): string | undefined;
+}
+
+/** The value of an item key `[mark, value]`, as pies, radars, and trees key their items. */
+export function secondOf(key: string): string | undefined {
+  const value = (JSON.parse(key) as unknown[])[1];
+  return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * `spec` of points drawn by a layout (maps, 3D charts) with its series
+ * field: `series`, or the category `color` field names one, as on points
+ * along axes (see `seriesOf`); none with `series: false`.
+ */
+export function withSeries<T extends { readonly series?: string | false | undefined }>(
+  spec: T,
+  table: Table,
+): Omit<T, "series"> & { readonly series?: string } {
+  const series = seriesOf(spec, table, "fill");
+  const { series: _, ...rest } = spec;
+  return series === undefined ? rest : { ...rest, series };
+}
+
+/**
+ * `own`, a mark's paint of its own, else `color`, its item's: asked for
+ * either way, since asking registers what the item stands for, which the
+ * legend and hiding read.
+ */
+export function ownOr(own: string | undefined, color: string): string {
+  return own ?? color;
+}
+
+/**
+ * What reads the value of item keys `{ mark, [name]: value }`, as maps,
+ * networks, and 3D marks key their groups (undefined for a group of all).
+ */
+export function memberOf(name: string): (key: string) => string | undefined {
+  return (key) => {
+    const value = (JSON.parse(key) as Record<string, unknown>)[name];
+    return typeof value === "string" ? value : undefined;
+  };
+}
+
 export interface Viewport {
   x: readonly [number, number] | null;
   y: readonly [number, number] | null;
@@ -190,6 +242,12 @@ export interface LayoutMark extends ChartMark {
   readonly otherTables?: readonly Table[];
   /** What the values are, for tooltip headers: the value field, or "Count". */
   readonly measure: string;
+  /**
+   * What the mark's items stand for, for their colors, legend entries, and
+   * visibility (see `Mark.identity`): a pie's slices, its category field's
+   * values.
+   */
+  readonly identity?: ItemSources | undefined;
   /** Entries for the legend, which toggles items by key; `id` as in `LayoutFrame`. */
   legend(id: string | number, color: (key: string) => string, theme: Theme): LegendEntry[];
   /** Legends of color scales and size keys, for marks encoding values that way. */

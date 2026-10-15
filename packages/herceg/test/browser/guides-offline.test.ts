@@ -7,12 +7,11 @@ import { createChart } from "../../src/dom/chart.ts";
 import { line } from "../../src/marks/line.ts";
 
 // The compiler's module loads, but making the compiler fails, as a module
-// that cannot load would fail the import.
-vi.mock("../../src/guides/compile.ts", () => ({
-  guideCompiler: () => {
-    throw new Error("offline");
-  },
+// that cannot load would fail the import: at once, or when a test says.
+const load = vi.hoisted(() => ({
+  failing: (): Promise<never> => Promise.reject(new Error("offline")),
 }));
+vi.mock("../../src/guides/compile.ts", () => ({ guideCompiler: () => load.failing() }));
 
 let host: HTMLDivElement;
 
@@ -36,10 +35,12 @@ it("draws nothing while the compiler cannot load, and draws once nothing needs i
     y: { title: "Load", format: { number: ".1f" } },
   });
   await expect(chart.loading).rejects.toThrow();
-  // Still blocked after the failure: no frame, no export.
+  // Still blocked after the failure: no frame, and an export throws what failed.
   chart.render();
   expect(texts()).toEqual([]);
-  expect(() => chart.toSVG()).toThrow(/chart: its code has not loaded; await chart.loading/);
+  expect(() => chart.toSVG()).toThrow(
+    expect.objectContaining({ phase: "load", message: "offline" }),
+  );
   // An update still needing it tries again, and fails again.
   chart.update({ y: { title: "Again", format: { number: ".2f" } } });
   await expect(chart.loading).rejects.toThrow();
@@ -50,4 +51,30 @@ it("draws nothing while the compiler cannot load, and draws once nothing needs i
   chart.render();
   expect(texts()).toContain("Plain");
   chart.destroy();
+});
+
+it("keeps what an update drew when a load the update made needless fails", async () => {
+  const failing = load.failing;
+  let fail: ((error: Error) => void) | undefined;
+  load.failing = () => new Promise<never>((_, reject) => (fail = reject));
+  const errors: unknown[] = [];
+  const chart = createChart(host, {
+    marks: [line(data, { x: "x", y: "v" })],
+    y: { title: "Load", format: { number: ".1f" } },
+    onError: (error) => errors.push(error),
+  });
+  const loading = chart.loading;
+  await vi.waitFor(() => expect(fail).toBeDefined());
+  chart.update({ y: { title: "Plain" } });
+  chart.render();
+  expect(texts()).toContain("Plain");
+  fail!(new Error("offline"));
+  await expect(loading).rejects.toThrow("offline");
+  chart.render();
+  expect(texts()).toContain("Plain");
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+  expect(errors).toEqual([]);
+  expect(chart.toSVG()).toContain("Plain");
+  chart.destroy();
+  load.failing = failing;
 });

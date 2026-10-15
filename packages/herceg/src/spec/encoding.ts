@@ -28,11 +28,15 @@ export type SymbolName =
 
 /**
  * A value per row: a field's value read through a scale (the channel's
- * default scale, "color" for colors, or the one `scale` names), a constant,
- * or a condition's `then` where `when` holds and its `otherwise` elsewhere.
+ * default scale, "color" for colors, or the one `scale` names), the
+ * series' names through a scale (`{ series: true, scale }`: series of
+ * marks naming one scale share colors, legend entries, and dodged places by
+ * name, as a line and the band around it do), a constant, or a
+ * condition's `then` where `when` holds and its `otherwise` elsewhere.
  */
 export type ChannelSpec<V> =
   | { field: Field; scale?: string }
+  | { series: true; scale: string }
   | { value: V }
   | { condition: { when: Expression; then: V; otherwise: V } };
 
@@ -56,13 +60,16 @@ export interface EncodingsSpec {
 
 /**
  * A scale of categories with fixed outputs, shared by the marks that name
- * it (an unnamed color field uses "color"): every value takes the same
- * color (or shape, dash, number) in every mark and panel, before facets and
- * hidden series, and keeps it while the data streams. With `domain`, its
- * values in that order and only those (others take `unknown`); without, the
+ * it: every value takes the same color (or shape, dash, number) in every
+ * mark and panel reading it, from any table, before facets and hidden
+ * series, and keeps it while the data streams. With `domain`, its values
+ * in that order and only those (others take `unknown`); without, the
  * values of the fields it reads, their dictionaries' order first. Values
  * `map` leaves out take the theme's palette (or the channel's defaults) by
- * their place in the domain.
+ * their place in the domain. A chart declaring "color" colors every mark's
+ * series and fields through it, unless a channel names another; without
+ * it, values take the chart's colors of what they stand for (the same
+ * field of the same table, see the architecture's "Identity and color").
  */
 export interface OrdinalScaleSpec {
   type: "ordinal";

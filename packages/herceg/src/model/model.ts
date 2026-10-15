@@ -3,6 +3,7 @@
 // way. It keeps per-chart state that must survive between frames: geometry
 // buffers, the zoomed x range, hidden series, and layout hysteresis.
 
+import { rootOf } from "../data/origin.ts";
 import type { Table } from "../data/table.ts";
 import type { Fonts } from "../fonts/registry.ts";
 import { type Formatter, formatNumber, timeValueFormatter } from "../format/format.ts";
@@ -32,7 +33,7 @@ import {
   type Bands,
   type ChartMark,
   type Frame,
-  legendKey,
+  keyOwner,
   type Mark,
   type MarkKey,
   numericBands,
@@ -57,6 +58,7 @@ import {
   type Scene,
   tickLabelGap,
 } from "../scene/scene.ts";
+import { ChartError } from "../spec/errors.ts";
 import type { InsidePlace, Place, Side } from "../spec/place.ts";
 import type { AnimationSpec, CameraSpec, ChartSpec, ScaleScope } from "../spec/spec.ts";
 import { insets, type TextPaint } from "../style/style.ts";
@@ -78,6 +80,7 @@ import { axisGuide, TICK } from "./axis-guide.ts";
 import type { Facet } from "./facet.ts";
 import { type CompiledFeatures, type FeatureCompiler, needsFeatures } from "./features.ts";
 import { type AxesState, type CompiledGuides, type GuideCompiler, needsGuides } from "./guides.ts";
+import { identityOf, prefixOf, type TableName } from "./identity.ts";
 import type { ItemPanel, ItemViews } from "./item-views.ts";
 import {
   EDGE,
@@ -258,8 +261,8 @@ const GAP = 6;
 
 export class ChartModel {
   /** The configuration as given, and as the model reads it (see `CompiledGuides.config`). */
-  #source: ChartConfig;
-  #config: ChartConfig;
+  #source!: ChartConfig;
+  #config!: ChartConfig;
   /** What plans guides beyond the default, when the chart has it; and its plan of the configuration. */
   #guides: GuideCompiler | undefined;
   #compiled: CompiledGuides | undefined;
@@ -285,7 +288,7 @@ export class ChartModel {
   pixelRatio = 1;
   /** Pixels per CSS pixel of the images marks draw (heatmaps); see `setSize`. */
   rasterRatio = 1;
-  /** Keys of series hidden through the legend, with the legend groups of series (see HiddenKeys). */
+  /** Keys of series and identities hidden through the legend, with the identities of series (see HiddenKeys). */
   readonly hidden = new HiddenKeys();
   /**
    * Draws marks with the rows of a selection highlighted: set by a chart
@@ -341,8 +344,23 @@ export class ChartModel {
   #legendParts: readonly LegendPart[] = [];
   /** What the last scene's legends say of entries that explain rather than toggle (see `PlacedLegend.notes`). */
   #legendNotes: readonly string[] = [];
-  /** Palette slot per series key, assigned on first appearance and kept. */
+  /** Layout marks' entries, for swatches of their looks beside series' (see `#listItems`). */
+  #also: LegendEntry[] = [];
+  /** Palette slot per identity (or series) key, assigned on first appearance and kept. */
   #slots = new Map<string, number>();
+  /**
+   * What each of the configuration's marks' series stand for (see
+   * model/identity.ts): the prefix of their identity keys, by index.
+   */
+  #scopes: (string | undefined)[] = [];
+  /**
+   * What identity keys name unnamed tables by (see `#configure`), with the
+   * count of the name's giving: a table keeps its name until another is given it.
+   */
+  readonly #names = new WeakMap<Table, { readonly name: TableName; readonly given: number }>();
+  /** The last giving of each name in `#names`, by its JSON. */
+  readonly #given = new Map<string, number>();
+  #gives = 0;
 
   /**
    * `page` resolves themes that follow the page: "auto" and CSS variables.
@@ -359,27 +377,116 @@ export class ChartModel {
   ) {
     this.#guides = guides;
     this.#features = features;
-    this.#source = this.#config = this.#configure(config);
-    this.#style(page);
+    this.#configure(config, page);
+  }
+
+  /** The name `table` keeps from an earlier configuration, unless another table was given it since. */
+  #kept(table: Table): TableName | undefined {
+    const kept = this.#names.get(table);
+    return kept && this.#given.get(JSON.stringify(kept.name)) === kept.given
+      ? kept.name
+      : undefined;
   }
 
   /**
-   * `config` as the model reads it, checked: `scales` merged into the short
-   * forms, and as the guide compiler plans it, when the chart has it.
+   * Takes `config`, read as the model reads it (`scales` merged into the
+   * short forms, and as the guide compiler plans it, when the chart has
+   * it), and its theme and styles in `page`, once all of them are checked.
    */
-  #configure(config: ChartConfig): ChartConfig {
-    this.#source = config;
+  #configure(config: ChartConfig, page: ThemeEnvironment | undefined): void {
+    const source = config;
     const { scales } = config;
     if (scales) {
       config = { ...config };
       for (const name of ["x", "y", "yRight"] as const)
         if (scales[name]) config[name] = { ...config[name], ...scales[name] };
     }
-    this.#compiled = this.#guides?.compile(config);
-    const read = this.#compiled?.config ?? config;
-    [this.#marks, this.#layouts, this.#positions] = validate(read);
-    this.#featured = this.#features?.compile(read, this.#marks, this.#featured);
-    return read;
+    const compiled = this.#guides?.compile(config);
+    const read = compiled?.config ?? config;
+    const [marks, layouts, positions] = validate(read);
+    // Tables' names in identity keys (see model/identity.ts): their own, or
+    // one the chart gives an unnamed table, the place of the first mark
+    // reading it (`{ mark: 2 }`), which it keeps until a new table read in
+    // that place, once no table there has it, is given it. The tables every
+    // mark reads its series' and colors' fields from keep theirs before new
+    // ones are named.
+    const taken = new Set<string>();
+    const named = new Map<Table, TableName>();
+    const sources = read.marks.map((mark) => {
+      const { identity } = mark as Mark;
+      // A layout mark's items may stand for values of another of its tables (a network's nodes).
+      const table = (identity as { table?: Table } | undefined)?.table ?? (mark as Mark).table;
+      if (!identity || !table) return undefined;
+      return rootOf(table, identity.field === undefined ? identity.values : [identity.field]);
+    });
+    const names = (root: Table, place: MarkKey = taken.size, index?: number): TableName => {
+      let name = named.get(root);
+      if (name !== undefined) return name;
+      name = root.name ?? this.#kept(root);
+      if (name === undefined || taken.has(JSON.stringify(name))) {
+        if (root.name !== undefined)
+          throw new ChartError({
+            code: "invalid-option",
+            path: `marks[${index}]`,
+            message: `marks[${index}]: its table is named "${root.name}", as another of the chart's tables is; give each table a name of its own`,
+          });
+        let n = 0;
+        name = { mark: place };
+        while (taken.has(JSON.stringify(name))) name = { mark: place, n: ++n };
+      }
+      taken.add(JSON.stringify(name));
+      named.set(root, name);
+      return name;
+    };
+    read.marks.forEach((mark, index) => {
+      const { table, spec } = mark as Mark & {
+        spec: { color?: unknown; encode?: Record<string, { field?: unknown } | undefined> };
+      };
+      const root = sources[index];
+      if (root && (root.name ?? this.#kept(root))) names(root, undefined, index);
+      for (const field of [
+        spec.color,
+        spec.encode?.color?.field,
+        spec.encode?.stroke?.field,
+        spec.encode?.fill?.field,
+      ])
+        if (table && typeof field === "string" && table.has(field)) {
+          const from = rootOf(table, [field]);
+          if (from.name ?? this.#kept(from)) names(from, undefined, index);
+        }
+    });
+    const scopes = read.marks.map((mark, index) => {
+      const root = sources[index];
+      const { identity } = mark as Mark;
+      if (!root || !identity) return undefined;
+      const table = names(root, mark.spec.id ?? index, index);
+      return prefixOf(identity.field === undefined ? { table } : { table, field: identity.field });
+    });
+    const featured = this.#features?.compile(read, marks, this.#featured, {
+      scopes: positions.map((i) => scopes[i]),
+      positions,
+      field: (table, field) => prefixOf({ table: names(rootOf(table, [field])), field }),
+    });
+    const theme = resolveTheme(read.theme, page);
+    const styles = readNow(styleSources(read), page ?? {});
+    // Nothing is kept of a configuration refused, so the last scene stays valid.
+    for (const [table, name] of named)
+      if (typeof name === "object" && name !== this.#kept(table)) {
+        const given = ++this.#gives;
+        this.#given.set(JSON.stringify(name), given);
+        this.#names.set(table, { name, given });
+      }
+    this.#source = source;
+    this.#compiled = compiled;
+    [this.#marks, this.#layouts, this.#positions, this.#featured, this.#scopes] = [
+      marks,
+      layouts,
+      positions,
+      featured,
+      scopes,
+    ];
+    this.#config = read;
+    this.#style(theme, styles);
   }
 
   /** Which of the guide compiler and the feature compiler the configuration needs and the model lacks. */
@@ -396,19 +503,15 @@ export class ChartModel {
   use(guides?: GuideCompiler, features?: FeatureCompiler, page?: ThemeEnvironment): void {
     this.#guides ||= guides;
     this.#features ||= features;
-    this.#config = this.#configure(this.#source);
-    this.#style(page);
+    this.#configure(this.#source, page);
   }
 
   /**
-   * Resolves the theme and the guides' and panels' styles in `page`: what
-   * they read of it is read now, as styles resolve when scenes ask for them.
+   * Takes the theme and the guides' and panels' styles, resolved in the
+   * page: what they read of it is read then, as styles resolve when scenes
+   * ask for them.
    */
-  #style(
-    page: ThemeEnvironment | undefined,
-    theme = resolveTheme(this.#config.theme, page),
-    styles = readNow(styleSources(this.#config), page ?? {}),
-  ): void {
+  #style(theme: Theme, styles: ReturnType<typeof readNow>): void {
     this.#theme = theme;
     this.#styles = chartStyles(theme, this.#config, styles.environment);
     this.#pageStyles = styles.reading;
@@ -437,7 +540,7 @@ export class ChartModel {
       styles.reading === this.#pageStyles
     )
       return false;
-    this.#style(page, theme, styles);
+    this.#style(theme, styles);
     return true;
   }
 
@@ -447,7 +550,7 @@ export class ChartModel {
   }
 
   update(config: ChartConfig, page?: ThemeEnvironment): void {
-    this.#config = this.#configure(config);
+    this.#configure(config, page);
     // Series join their legend groups again as they are resolved.
     this.hidden.groups.clear();
     // Sides whose panels have scales of their own let go of their y viewport.
@@ -462,7 +565,6 @@ export class ChartModel {
       const shown = this.#limit(view, "x");
       if (shown !== view) this.#viewports.set(group, shown!);
     }
-    this.#style(page);
   }
 
   /** A copy of the camera of the targeted 3D state; multiple cameras require a panel. */
@@ -637,14 +739,17 @@ export class ChartModel {
     };
   }
 
-  #palette: Palette = (seriesKey, _label, color): string => {
-    if (color !== undefined) return color;
-    let slot = this.#slots.get(seriesKey);
+  #palette: Palette = (key, _label, color): string =>
+    color ?? this.#theme.palette[this.#slot(key) % this.#theme.palette.length]!;
+
+  /** The palette slot of an identity (or series) key, given the first time it is asked for. */
+  #slot = (key: string): number => {
+    let slot = this.#slots.get(key);
     if (slot === undefined) {
       slot = this.#slots.size;
-      this.#slots.set(seriesKey, slot);
+      this.#slots.set(key, slot);
     }
-    return this.#theme.palette[slot % this.#theme.palette.length]!;
+    return slot;
   };
 
   /**
@@ -695,31 +800,101 @@ export class ChartModel {
   #resolveSeries(bands: Bands, context: BandContext): MarkSeries[] {
     const layout = this.#panels;
     const { hidden } = this;
-    this.#featured?.update(this.#theme);
+    this.#featured?.update(this.#theme, this.#slot);
     return this.#marks.map((mark, index) => {
-      const group = mark.spec.legendGroup;
+      const scope = this.#scopes[this.#positions[index]!];
+      const partition = mark.identity?.field !== undefined;
       const features = this.#featured?.of(mark);
-      // A legend group's series take their colors by name.
-      let palette: Palette =
-        group === undefined
-          ? this.#palette
-          : (key, label, color) => {
-              const entry = legendKey(group, label ?? key);
-              hidden.groups.set(key, entry);
-              return this.#palette(entry, label, color);
-            };
+      // Series take the colors of what they stand for, and their visibility:
+      // as the last scene found it, where the feature compiler finds it from
+      // their rows (a line colored by another field), so that stacks leave
+      // out what is hidden.
+      let palette: Palette = scope
+        ? (key, label, color, entry) => {
+            const identity = entry ?? hidden.groups.get(key) ?? identityOf(scope, label ?? key);
+            hidden.join(key, identity);
+            return this.#palette(identity, label, color);
+          }
+        : this.#palette;
       if (features) palette = features.palette(palette);
-      const series = mark.series(
-        mark.spec.id ?? this.#positions[index]!,
-        palette,
-        hidden,
-        bands,
-        context,
-        layout?.splits(mark),
-      );
-      if (features) for (const s of series) features.attach(s);
+      const resolve = () => {
+        let moved = false;
+        const series = mark.series(
+          mark.spec.id ?? this.#positions[index]!,
+          palette,
+          hidden,
+          bands,
+          context,
+          layout?.splits(mark),
+        );
+        for (const s of series) {
+          if (scope) {
+            s.entry = identityOf(scope, s.label);
+            if (partition) s.partition = s.entry;
+          }
+          // The feature compiler finds what a series colored by another field stands for.
+          features?.attach(s);
+          if (!s.entry) continue;
+          const was = hidden.has(s.key);
+          hidden.join(s.key, s.entry);
+          moved ||= hidden.has(s.key) !== was;
+        }
+        return { series, moved };
+      };
+      let { series, moved } = resolve();
+      // A series whose rows say it stands for something hidden, or no longer, is resolved again.
+      if (moved) ({ series } = resolve());
       return { mark, series };
     });
+  }
+
+  /** The prefixes of identity keys the configuration's marks' series and items have. */
+  scopes(): ReadonlySet<string> {
+    const scopes = new Set(this.#featured?.scopes);
+    for (const scope of this.#scopes) if (scope) scopes.add(scope);
+    return scopes;
+  }
+
+  /**
+   * The color of a layout mark's item, by its key: by what it stands for
+   * (for a pie's slices, their category's values), which hides it too. Items
+   * name their mark, so the layers of a map or a 3D plot drawn as one find
+   * theirs.
+   */
+  #itemColor = (key: string): string => {
+    const owner = keyOwner(key);
+    const index = this.#config.marks.findIndex((mark, i) => (mark.spec.id ?? i) === owner);
+    const scope = this.#scopes[index];
+    const value = scope && (this.#config.marks[index] as LayoutMark).identity?.read(key);
+    if (value === undefined) return this.#palette(key);
+    // A declared color scale colors items too, as it does every mark's series.
+    const declared = this.#featured?.items;
+    const identity = identityOf(declared?.prefix ?? scope!, value);
+    this.hidden.join(key, identity);
+    return declared?.color(value) ?? this.#palette(identity);
+  };
+
+  /** A layout mark's legend entries, named by what their items stand for. */
+  #itemEntries(mark: LayoutMark, id: MarkKey, theme: Theme): LegendEntry[] {
+    return mark
+      .legend(id, this.#itemColor, theme)
+      .map((item) => ({ ...item, key: this.hidden.groups.get(item.key) ?? item.key }));
+  }
+
+  /**
+   * A filter keeping the first entry of each identity: series and items, of
+   * layers drawn as one too, standing for one value share it.
+   */
+  #lister(): (entry: LegendEntry) => boolean {
+    const listed = new Set<string>();
+    this.#also = [];
+    return (entry) => !listed.has(entry.key) && !!listed.add(entry.key);
+  }
+
+  /** A layout mark's entries, kept for swatches of every mark's look (`#also`), then listed once. */
+  #listItems(entries: LegendEntry[], first: (entry: LegendEntry) => boolean): LegendEntry[] {
+    this.#also.push(...entries);
+    return entries.filter(first);
   }
 
   /**
@@ -888,13 +1063,24 @@ export class ChartModel {
 
   /**
    * Builds the scene for the current data, size, and view state. With
-   * `clouds`, large point series are left to a GPU painter (see PointCloud);
-   * `again` when the scene is laid out again (see `CompiledAxes.fits`).
+   * `clouds`, large point series are left to a GPU painter (see PointCloud).
    */
-  scene(measure: MeasureText, clouds = false, again?: true): Scene {
+  scene(measure: MeasureText, clouds = false): Scene {
+    const scene = this.#sceneOf(measure, clouds);
+    // Series and items a stream left behind let go of what they stood for.
+    this.hidden.prune();
+    return scene;
+  }
+
+  /** The scene; `again` when it is laid out again (see `CompiledAxes.fits`). */
+  #sceneOf(measure: MeasureText, clouds: boolean, again?: true): Scene {
     const config = this.#config;
     const layout = this.#panels;
-    if (!layout && this.#layouts.length > 0) return this.#layoutScene(measure, clouds);
+    if (!layout && this.#layouts.length > 0) {
+      // Layout marks' items read the compiler's scales too.
+      this.#featured?.update(this.#theme, this.#slot);
+      return this.#layoutScene(measure, clouds);
+    }
     this.#items?.clear();
     const theme = this.#theme;
     const { width, height } = this;
@@ -1087,23 +1273,28 @@ export class ChartModel {
     }
 
     // Entries in the order of the chart's marks: series, and layout marks'
-    // items; a legend group's series of one name share the first one's entry.
-    const listed = new Set<string>();
+    // items; series and items standing for one identity share the first one's.
+    const first = this.#lister();
     let along = 0;
     const entries = config.marks.flatMap((chartMark, index) => {
       if (isLayoutMark(chartMark))
-        return chartMark.legend(chartMark.spec.id ?? index, this.#palette, theme);
+        return this.#listItems(
+          this.#itemEntries(chartMark, chartMark.spec.id ?? index, theme),
+          first,
+        );
       const { mark, series } = base[along++]!;
       if (mark.spec.legend === false) return [];
       return series.flatMap((s) => {
         const entry = mark.legendEntry ? mark.legendEntry(s, theme) : { color: s.color };
-        const key = this.hidden.groups.get(s.key) ?? s.key;
-        if (!entry || listed.has(key)) return [];
-        listed.add(key);
-        const item: LegendEntry = { key, label: s.label, color: entry.color };
+        if (!entry) return [];
+        const item: LegendEntry = {
+          key: s.entry ?? s.key,
+          label: s.entryLabel ?? s.label,
+          color: entry.color,
+        };
         if (entry.glyph) item.glyph = entry.glyph;
         if (entry.stroke) item.stroke = entry.stroke;
-        return [item];
+        return first(item) ? [item] : [];
       });
     });
     const showY = config.y?.show ?? true;
@@ -1807,7 +1998,7 @@ export class ChartModel {
     const draw = this.highlight ?? geometryOf;
     // Axes the guides list deeper with the panels' own x plans: lay out again, once.
     if (placing && !again && !guided.fits(placing, (i) => xPlanOf(xGroupAt[i]!, i % columns)))
-      return this.scene(measure, clouds, true);
+      return this.#sceneOf(measure, clouds, true);
     const panels = split.keys.map((key, i): Panel => {
       const row = Math.floor(i / columns);
       const column = i % columns;
@@ -1874,7 +2065,7 @@ export class ChartModel {
           locale,
           measure,
           hidden,
-          color: this.#palette,
+          color: this.#itemColor,
           surface: paint?.fill,
         };
         const drawn = this.#items.panel({ key, label, plot }, item, frame);
@@ -2112,7 +2303,12 @@ export class ChartModel {
     // What the title and legends align in: the chart's width inside its edges.
     const [contentLeft, contentRight] = auto ? [EDGE, width - EDGE] : [pl, width - pr];
     const room = contentRight - contentLeft;
-    const content: LegendContent = { entries, parts: this.#legendParts, hidden: this.hidden };
+    const content: LegendContent = {
+      entries,
+      parts: this.#legendParts,
+      hidden: this.hidden,
+      also: this.#also,
+    };
     const text: LegendText = {
       measure,
       label: styles.legend("legendLabel"),
@@ -2290,7 +2486,7 @@ export class ChartModel {
     const mark = this.#layouts[0]!;
     const parts = mark.legends?.(theme, locale) ?? [];
     const header = this.#furniture(
-      mark.legend(mark.spec.id ?? 0, this.#palette, theme),
+      this.#listItems(this.#itemEntries(mark, mark.spec.id ?? 0, theme), this.#lister()),
       parts,
       measure,
       false,
@@ -2320,8 +2516,8 @@ export class ChartModel {
       locale,
       measure,
       // A copy, which items found before the next scene still read.
-      hidden: new Set(this.hidden),
-      color: this.#palette,
+      hidden: this.hidden.snapshot(),
+      color: this.#itemColor,
       clouds,
       keyed: keyedBy(this.#config),
     });
@@ -2675,11 +2871,6 @@ function validate(config: ChartConfig): [Mark[], LayoutMark[], number[]] {
     if (config.facet && mark.view && mark.spec.facet !== "repeat")
       throw new Error(
         `${mark.spec.type} facet: a row view cannot split into facets yet; give it facet: "repeat"`,
-      );
-    const group = mark.spec.legendGroup;
-    if (group !== undefined && !(typeof group === "string" && group !== ""))
-      throw new TypeError(
-        `${mark.spec.type} legendGroup: expected a name; received ${JSON.stringify(group)}`,
       );
   }
   if (config.facet && config.panels) throw new Error("chart: facet or panels, not both");

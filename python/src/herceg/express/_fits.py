@@ -17,7 +17,6 @@ from .._data import Column
 from . import _numerics as numerics
 from . import _regression as regression
 from ._common import (
-    SERIES_GROUP,
     Levels,
     Source,
     Statistics,
@@ -45,7 +44,6 @@ from ._common import (
     rows_table,
     seed_of,
     shown,
-    subset,
     unit_ranks,
     values,
     variables_of,
@@ -70,6 +68,7 @@ def regplot(
     x: str,
     y: str,
     series: str | None = None,
+    color: str | None = None,
     series_order: Sequence[Any] | None = None,
     order: int = 1,
     logistic: bool = False,
@@ -330,9 +329,7 @@ def regplot(
     # Estimates beside x under the fitted values' name, apart from x's when y is x.
     estimate_table = _estimate_table(estimates, variables, x, fitted, (low, high))
     if scatter and estimating:
-        chart.point(
-            x, fitted, data=estimate_table, series=series, label=label, legend_group=SERIES_GROUP
-        )
+        chart.point(x, fitted, data=estimate_table, series=series, label=label)
         if x_ci is not None and not (x_ci == "ci" and ci is None):
             chart.error_bar(
                 x=x,
@@ -341,27 +338,15 @@ def regplot(
                 data=estimate_table,
                 series=series,
                 label=label,
-                legend_group=SERIES_GROUP,
             )
     elif scatter:
-        chart.point(x, fitted, series=series, label=label, legend_group=SERIES_GROUP)
+        chart.point(x, fitted, series=series, label=label)
     if banded:
-        series_levels = variables[series].labels if series else (y,)
-        position = names.index(series) if series else None
-        for i, name in enumerate(series_levels):
-            at_level = key_rows[:, position] == i if position is not None else None
-            rows_at = slice(None) if at_level is None else np.flatnonzero(at_level)
-            chart.area(
-                x,
-                y1=low,
-                y2=high,
-                data=subset(fit_table, rows_at),
-                label=name,
-                fill_opacity=0.2,
-                legend_group=SERIES_GROUP,
-            )
+        # A band per series, of the fit line's table: each stands for what its
+        # line does, sharing its color, legend entry, and visibility.
+        chart.area(x, y1=low, y2=high, data=fit_table, series=series, label=label, fill_opacity=0.2)
     if fit_reg:
-        chart.line(x, fitted, data=fit_table, series=series, label=label, legend_group=SERIES_GROUP)
+        chart.line(x, fitted, data=fit_table, series=series, label=label)
     terms = model.order + 1
     coefficient_table = {
         "group": np.arange(len(coefficients)),

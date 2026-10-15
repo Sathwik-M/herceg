@@ -12,6 +12,7 @@ import type { LegendEntry } from "../model/legend.ts";
 import type { ArcGeometry, Geometry, ShapesGeometry, TextGeometry } from "../scene/scene.ts";
 import type { Frozen, GaugeBand, GaugeSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
+import { refuseColor } from "./colored.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
 
@@ -300,6 +301,7 @@ export function gauge<S extends Schema>(
   table: Table<S>,
   options: GaugeOptions<S>,
 ): ChartMark<Frozen<GaugeSpec>> {
+  refuseColor(options, "gauge");
   const spec: GaugeSpec = { type: "gauge", value: options.value };
   if (options.min !== undefined) spec.min = options.min;
   if (options.max !== undefined) spec.max = options.max;

@@ -36,18 +36,14 @@ def table(chart, index=0):
 # Estimates -------------------------------------------------------------------------
 
 
-def test_barplot_draws_bars_and_dodged_error_bars_of_one_legend_group():
+def test_barplot_draws_bars_and_dodged_error_bars_of_one_series_column():
     chart = hx.barplot(TIPS, x="day", y="tip", series="sex", seed=3)
     bars, errors = marks(chart)
-    assert bars == {
-        "type": "bar",
-        "x": "day",
-        "y": "tip",
-        "series": "sex",
-        "legendGroup": "series",
-        "data": "data",
-    }
-    assert errors["dodge"] is True and errors["legendGroup"] == "series"
+    assert bars == {"type": "bar", "x": "day", "y": "tip", "series": "sex", "data": "data"}
+    assert errors["dodge"] is True and errors["series"] == "sex" and errors["data"] == "data"
+    # Bars and their intervals list each sex once.
+    svg = chart.to_svg()
+    assert svg.count(">female</text>") == 1 and svg.count(">male</text>") == 1
     spec, _ = chart.to_spec()
     assert spec["x"]["title"] == "day" and spec["y"]["title"] == "tip"
     assert "95% bootstrap confidence intervals (1,000 resamples, seed 3" in spec["description"]
@@ -130,10 +126,12 @@ def test_lineplot_aggregates_x_values_with_a_band_per_series():
     t = np.repeat(np.arange(10.0), 6)
     data = {"t": t, "g": np.tile(["a", "b"], 30), "v": np.sin(t) + RNG.normal(0, 0.1, 60)}
     chart = hx.lineplot(data, x="t", y="v", series="g", seed=1)
-    band_a, band_b, line = marks(chart)
-    assert [band_a["label"], band_b["label"]] == ["a", "b"]
-    assert band_a["type"] == "area" and band_a["legendGroup"] == line["legendGroup"] == "series"
-    assert line["series"] == "g"
+    band, line = marks(chart)
+    assert band["type"] == "area" and band["series"] == line["series"] == "g"
+    # The bands read the lines' table: a band and its line stand for one value.
+    assert band["data"] == line["data"]
+    svg = chart.to_svg()
+    assert svg.count(">a</text>") == 1 and svg.count(">b</text>") == 1
     estimates = hx.statistics(chart).tables["estimates"]
     assert len(estimates["t"]) == 20 and estimates["n"].tolist() == [3.0] * 20
     raw = hx.lineplot(data, x="t", y="v", series="g", estimator=None, errorbar=None)
@@ -144,6 +142,17 @@ def test_lineplot_aggregates_x_values_with_a_band_per_series():
     assert [mark["type"] for mark in marks(bars)] == ["errorbar", "line"]
     with pytest.raises(ValueError, match='lineplot error_style: expected "band" or "bars"'):
         hx.lineplot(data, x="t", y="v", error_style="ci")  # type: ignore[arg-type]
+
+
+def test_color_splits_series_before_statistics():
+    t = np.repeat(np.arange(4.0), 4)
+    data = {"t": t, "g": np.tile(["a", "b"], 8), "v": t + np.tile([0.0, 10.0], 8)}
+    by_color = hx.lineplot(data, x="t", y="v", color="g", seed=1)
+    assert marks(by_color) == marks(hx.lineplot(data, x="t", y="v", series="g", seed=1))
+    # One estimate per series and x, not one per x across both.
+    assert len(hx.statistics(by_color).tables["estimates"]["t"]) == 8
+    with pytest.raises(hg.ChartError, match="lineplot color: colors the series, so it names"):
+        hx.lineplot(data, x="t", y="v", series="g", color="t")
 
 
 def test_lineplot_keeps_time_x():
@@ -161,7 +170,10 @@ def test_regplot_fits_a_line_with_a_bootstrap_band_per_series():
     data = {"x": x, "y": 2 * x + RNG.normal(0, 1, 80), "g": np.repeat(["a", "b"], 40)}
     chart = hx.regplot(data, x="x", y="y", series="g", seed=5)
     kinds = [mark["type"] for mark in marks(chart)]
-    assert kinds == ["point", "area", "area", "line"]
+    assert kinds == ["point", "area", "line"]
+    # Points, bands, and fits of one level are one legend entry.
+    svg = chart.to_svg()
+    assert svg.count(">a</text>") == 1 and svg.count(">b</text>") == 1
     stats = hx.statistics(chart)
     coefficients = stats.tables["coefficients"]
     for group, rows in enumerate((slice(0, 40), slice(40, 80))):
@@ -675,7 +687,7 @@ def test_strip_box_and_violin_plots():
     strip = hx.stripplot(PENGUINS, x="species", y="flipper", series="sex", dodge=True, seed=4)
     (points,) = marks(strip)
     assert points["dodge"] is True and points["jitter"] == {"width": 0.5, "seed": 4}
-    assert points["legendGroup"] == "series"
+    assert points["series"] == "sex"
     assert hx.statistics(strip).seed == 4
     assert "50% of each series' slot in the category" in hx.statistics(strip).description
     plain = hx.stripplot(PENGUINS, x="flipper", y="species", jitter=False)
@@ -763,7 +775,12 @@ def test_pairplot_pairs_every_number_column_in_subplots():
     # The scatter plots of a row show one y range.
     first, second = spec["panels"][1]["y"]["domain"], spec["panels"][2]["y"]["domain"]
     assert first == second == [float(data["flipper"].min()), float(data["flipper"].max())]
-    assert all(mark.get("legendGroup") == "series" for mark in spec["marks"])
+    # Every table made beside the data stands for its values.
+    assert all(
+        entry.get("origin", "data") == "data"
+        for name, entry in spec["data"].items()
+        if name != "data" and "columns" in entry
+    )
     corner = hx.pairplot(data, vars=["flipper", "mass"], corner=True, diag_kind="hist")
     spec, _ = corner.to_spec()
     assert sorted((mark["panel"], mark["type"]) for mark in spec["marks"]) == [
@@ -895,7 +912,7 @@ def test_rugplot_marks_each_value_at_the_plot_edge():
     chart = hx.rugplot(PENGUINS, x="flipper", series="species", length=10)
     (rug,) = marks(chart)
     assert rug["type"] == "rug" and rug["x"] == "flipper" and rug["length"] == 10
-    assert rug["series"] == "species" and rug["legendGroup"] == "series"
+    assert rug["series"] == "species"
     sideways = hx.rugplot(PENGUINS, y="mass")
     assert marks(sideways)[0]["y"] == "mass"
     assert "<svg" in chart.to_svg()
@@ -1202,8 +1219,8 @@ def test_pointplot_joins_its_estimates_with_lines_that_break_at_missing_categori
     chart = hx.pointplot(data, x="day", y="tip", series="sex", errorbar=None, dodge=True)
     points, lines = marks(chart)
     assert lines["type"] == "line" and lines["dodge"] is True
-    assert lines["legendGroup"] == points["legendGroup"] == "series"
     spec, buffers = chart.to_spec()
+    assert spec["data"][lines["data"]]["origin"] == points["data"]
     joined = spec["data"][lines["data"]]["columns"]["tip"]
     # Every series has a row in every category: m has none on sat, so its line breaks.
     estimates = np.frombuffer(buffers[joined["buffer"]], dtype="<f8")
@@ -1560,7 +1577,7 @@ def test_lineplot_units_draw_a_line_per_unit_in_its_series_color():
         errorbar=None,
     )
     (line,) = marks(chart)
-    assert line["series"] == "event" and line["legendGroup"] == "series"
+    assert line["series"] == "event"
     spec, buffers = chart.to_spec()
     drawn = spec["data"]["data"]["columns"]
     y = np.frombuffer(buffers[drawn["signal"]["buffer"]], dtype="<f8")
@@ -1762,7 +1779,6 @@ def test_boxenplot_draws_the_boxen_mark_with_seaborns_letter_values():
         "y": "flipper",
         "series": "sex",
         "depth": "trustworthy",
-        "legendGroup": "series",
         "data": "data",
     }
     tables = hx.statistics(chart).tables

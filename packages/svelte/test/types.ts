@@ -145,7 +145,8 @@ Point(internals, {
   jitter: { width: 0.4 },
 });
 ErrorBar(internals, { data: tips, x: "day", y1: "low", y2: "high", series: "sex", dodge: true });
-Line(internals, { data: tips, x: "tip", y: "tip", legendGroup: "sex" });
+Line(internals, { data: tips, x: "day", y: "tip", color: "sex" });
+Line(internals, { data: tips, x: "day", y: "tip", color: "sex", series: false });
 // @ts-expect-error jitter takes a width
 Point(internals, { data: tips, x: "day", y: "tip", jitter: { seed: 2 } });
 

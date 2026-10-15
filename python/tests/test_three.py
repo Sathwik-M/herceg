@@ -189,7 +189,7 @@ def test_line_3d_emits_its_fields_and_takes_chart_options():
         ValueError, match="line_3d stroke_width: expected a positive number of pixels; received 0"
     ):
         hg.Chart(points()).line_3d("x", "y", "z", stroke_width=0)
-    with pytest.raises(TypeError, match="line_3d series: column 'x' holds number values"):
+    with pytest.raises(hg.ChartError, match="line_3d series: column 'x' holds number values"):
         hg.Chart(points()).line_3d("x", "y", "z", series="x")
     svg = hg.Chart(points(), width=400, height=300).line_3d("x", "y", "z").to_svg()
     assert 'stroke-linecap="round"' in svg
@@ -227,7 +227,7 @@ def test_3d_options_and_fields_are_checked():
         ValueError, match=r"Chart box_aspect: expected three positive lengths; received \(1, 0, 1\)"
     ):
         hg.Chart(points(), box_aspect=(1, 0, 1)).point_3d("x", "y", "z").to_spec()
-    with pytest.raises(TypeError, match="point_3d z: column 'kind' holds category values"):
+    with pytest.raises(hg.ChartError, match="point_3d z: column 'kind' holds category values"):
         hg.Chart(points()).point_3d("x", "y", "kind")
     with pytest.raises(ValueError, match=r"surface z: expected a 2D matrix; received shape \(3,\)"):
         hg.surface(z=[1, 2, 3])

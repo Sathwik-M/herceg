@@ -88,11 +88,11 @@ def test_invalid_rows(field, values, error):
 
 
 def test_fields_and_leaf_labels():
-    with pytest.raises(KeyError, match="dendrogram first: no column 'missing'"):
+    with pytest.raises(hg.ChartError, match="dendrogram first: no column 'missing'"):
         hg.Chart(DATA).dendrogram("missing", "second", "height", leaves=LEAVES)
     for first in (["a", "b", "c"], np.array([0, 2, 5], dtype="datetime64[ms]")):
         with pytest.raises(
-            TypeError, match="dendrogram first: column 'first' holds .* values; expected number"
+            hg.ChartError, match="dendrogram first: column 'first' holds .* values; expected number"
         ):
             tree({**DATA, "first": first})
     for leaves in (["a"], ["a", "b", "a", "d"], ["a", "b", 3, "d"], "abcd"):

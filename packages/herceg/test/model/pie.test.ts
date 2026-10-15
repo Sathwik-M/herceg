@@ -100,7 +100,8 @@ describe("pie", () => {
     const labels = scene.panels[0]!.marks.filter((m): m is TextGeometry => m.kind === "text");
     expect(labels.flatMap((m) => m.labels).sort()).toEqual(["East", "North", "South", "West"]);
     expect(labels.map((m) => m.anchor).sort()).toEqual(["end", "start"]);
-    const keys = legendOf(scene).map((entry) => entry.key);
+    // The keyboard steps through slices' item keys, in the legend's order.
+    const keys = legendOf(scene).map((entry) => JSON.stringify([0, entry.label]));
     expect(model.stepItem(undefined, 1)).toBe(keys[0]);
     expect(model.stepItem(undefined, -1)).toBe(keys[3]);
     expect(model.stepItem(keys[1], 1)).toBe(keys[2]);

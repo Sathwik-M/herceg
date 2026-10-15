@@ -42,10 +42,14 @@ import {
   type MARK,
   type Mark,
   type MarkKey,
+  type MarkSources,
   NUMERIC,
+  ownColor,
   type Palette,
   requireField,
+  requireSeriesFields,
   SeriesSplitter,
+  seriesOf,
 } from "./mark.ts";
 import { PositionStack } from "./position-stack.ts";
 import { rowOf, type Series, TableCache, visibleRange, xExtent, yExtent } from "./series.ts";
@@ -76,8 +80,12 @@ interface BarStyle<S extends Schema> {
   clip?: Clip;
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
-  /** Category field: one bar series per value. */
-  series?: CategoryField<S>;
+  /**
+   * Category field: one bar series per value. Without it, a category field
+   * as `color` splits the rows too; `false` splits by neither, and a
+   * `color` field then colors each bar.
+   */
+  series?: CategoryField<S> | false;
   /** Pile series up at each position. */
   stack?: BarStack;
   /**
@@ -97,9 +105,10 @@ interface BarStyle<S extends Schema> {
   /** From 0 to 1: the bars', fill and edges. */
   opacity?: number;
   /**
-   * The bars' fill: a category field (each bar its value's color through the
-   * chart's "color" scale, without placing bars apart) or a color. The short
-   * form of `encode.color`; `fill` wins over it.
+   * The bars' fill: a category field (which splits the rows into a bar
+   * series per value unless `series` says otherwise; with `series: false`,
+   * each bar its value's color) or a color. The short form of
+   * `encode.color`; `fill` wins over it.
    */
   color?: CategoryField<S> | CssColor;
   /** Channels per bar: color, fill, stroke, strokeWidth, opacity. */
@@ -113,11 +122,6 @@ interface BarStyle<S extends Schema> {
    * Labels that do not fit are left out.
    */
   labels?: boolean | BarLabels<S>;
-  /**
-   * Marks naming the same group share series by name: series of the same
-   * name share a color, one legend entry, and visibility.
-   */
-  legendGroup?: string;
   /** `false` leaves the mark out of the chart's legends. */
   legend?: false;
   /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
@@ -193,6 +197,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
   readonly pointText?: (s: Series, row: number, format: AxisFormat) => string;
   readonly bandPadding = 0.2;
   readonly featured: boolean;
+  readonly identity: MarkSources;
   /**
    * Series stand side by side: unless `dodge: false` or a stack piles them,
    * or the series field is the position field (one series a position).
@@ -277,7 +282,9 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
       ...labels,
       pattern: format?.number !== undefined || format?.time !== undefined,
     };
-    this.featured = asksFeatures(spec, FEATURES, table) || this.#labelOptions.pattern;
+    if (typeof spec.series === "string") requireField(table, spec.series, CATEGORY, "bar series");
+    const series = seriesOf(spec, table, "fill");
+    this.featured = asksFeatures(spec, FEATURES, table, series) || this.#labelOptions.pattern;
     this.#rowStack = new RowStack(
       "signed",
       spec.stack === "fill" ? { offset: { resolve: fillLayers, fill: true } } : {},
@@ -300,7 +307,14 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
       this.#position = xs[0]!;
       lengths = ys;
     }
-    if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "bar series");
+    requireSeriesFields(
+      lengths,
+      series,
+      this.#horizontal ? "bar x" : "bar y",
+      false,
+      spec.series === undefined,
+    );
+    this.identity = { field: series, values: lengths };
     this.zero = this.#horizontal ? "x" : "y";
     this.tooltip = this.#horizontal ? "y" : "x";
     if (spec.stack === "fill")
@@ -310,10 +324,10 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
       table,
       this.#categorical ? undefined : this.#position,
       lengths,
-      spec.series,
+      series,
       spec.label,
     );
-    this.#dodges = (spec.dodge ?? !spec.stack) && spec.series !== this.#position;
+    this.#dodges = (spec.dodge ?? !spec.stack) && series !== this.#position;
   }
 
   channelKind(axis: "x" | "y") {
@@ -345,7 +359,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
         )
       : table.numbers(this.#position as never);
     // A color in CSS syntax the mark draws itself; the feature compiler, others.
-    const fill = spec.fill ?? (this.featured ? undefined : spec.color);
+    const fill = spec.fill ?? (this.featured ? undefined : ownColor(spec.color, table));
     const series = buildSeries(table, this.#split.sources(), positions, key, palette, fill);
     // Rows facets split into panels stack within their panel (stackPanels):
     // the whole table's stacks let go of their buffers.
@@ -373,7 +387,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
           series.map((s, i) => (shown[i] ? s.values : undefined)),
           signature,
         );
-      } else if (spec.series !== undefined) {
+      } else if (this.identity.field !== undefined) {
         this.#stacks = new TableCache();
         this.#rowStack.clear();
         const { tops, bases, totals } = this.#positionStack.update(
@@ -531,9 +545,10 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
     // `along` places bars; `across` measures their lengths.
     const along = horizontal ? frame.y : frame.x;
     const across = horizontal ? frame.x : frame.y;
-    // Dodged series take their slots (a legend group's marks by the group's
-    // series), which picking, inspection, and selections read back.
-    this.#shares.split(series, frame, spec.legendGroup, this.#dodges);
+    // Dodged series take their slots (by their field's values, which other
+    // marks splitting rows by it share), which picking, inspection, and
+    // selections read back.
+    this.#shares.split(series, frame, this.#dodges);
     const { share, width, groups, offset: offsetOf } = this.placement(visible, along);
     const out: Geometry[] = [];
     const labels = spec.labels
@@ -724,12 +739,12 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
   /**
    * How bars of the `visible` series fill their positions' slots along
    * `along`, as geometry last split them: each position gets a slot, which
-   * grouped series split (in a legend group, by the group's series) and
+   * grouped series split (by their field's values, see dodge.ts) and
    * stacked ones share. Also what selections read of the bars drawn.
    * With a frame, prepare the visible series' slots before placing them.
    */
   placement(visible: readonly Series[], along: PositionScale, frame?: Frame): BarPlacement {
-    if (frame) this.#shares.split(visible, frame, this.spec.legendGroup, this.#dodges);
+    if (frame) this.#shares.split(visible, frame, this.#dodges);
     const slot = this.#slot(along);
     const stack = this.spec.stack;
     const shares = this.#shares;
@@ -1366,7 +1381,6 @@ export function bar<S extends Schema>(
       "dash",
       "opacity",
       "label",
-      "legendGroup",
       "legend",
       "labels",
       "halo",

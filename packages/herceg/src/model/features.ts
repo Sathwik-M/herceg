@@ -45,21 +45,52 @@ export interface FeatureCompiler {
   /**
    * Throws for what the configuration's marks ask that it refuses, naming
    * where. `previous`, the chart's compilation before, keeps its scales'
-   * values in their places.
+   * values in their places. `identities` says what the marks' series stand
+   * for, which colors by value follow.
    */
   compile(
     config: ChartConfig,
     marks: readonly Mark[],
     previous: CompiledFeatures | undefined,
+    identities: Identities,
   ): CompiledFeatures;
+}
+
+/** What the model resolved of what series stand for (see model/identity.ts). */
+export interface Identities {
+  /**
+   * The prefix of each mark's series' identity keys, as the compiler's
+   * `marks`: undefined for marks whose series stand for nothing.
+   */
+  readonly scopes: readonly (string | undefined)[];
+  /** Each of the compiler's `marks`' index in the chart's `marks`, which errors name. */
+  readonly positions: readonly number[];
+  /** The prefix of the identity keys of `field`'s values in `table`. */
+  field(table: Table, field: string): string;
 }
 
 /** A configuration's mark features, compiled. */
 export interface CompiledFeatures {
   /** What `mark` takes from the features; undefined for a mark that uses none. */
   of(mark: Mark): MarkFeatures | undefined;
-  /** Before each scene's series: the categorical scales' values, from every mark's rows. */
-  update(theme: Theme): void;
+  /**
+   * Before each scene's series: the categorical scales' values, from every
+   * mark's rows, and `slot`, the chart's palette slot of an identity key
+   * (for colors by value that no declared scale gives).
+   */
+  update(theme: Theme, slot: (key: string) => number): void;
+  /**
+   * The prefixes of identity keys the compiler gives series and rows beyond
+   * the core's (see marks/features/identity.ts), whose hidden keys stay.
+   */
+  readonly scopes: ReadonlySet<string>;
+  /**
+   * With `scales.color` declared, what layout marks' items (a pie's slices)
+   * stand for and their colors: its values, through it, as every mark's.
+   */
+  readonly items?:
+    | { readonly prefix: string; color(value: string): string | undefined }
+    | undefined;
 }
 
 /** One mark's compiled features. */
@@ -174,13 +205,24 @@ export interface RowPaint {
 /**
  * Whether a mark's spec sets any of `options`, which need the feature
  * compiler, or a `color` other than a color in CSS syntax that names no
- * field of `table` (which the mark draws itself).
+ * field of `table` (which the mark draws itself) or the mark's `series`
+ * field (whose series the chart colors by value) unless the browser reads
+ * that name as a color too.
  */
-export function asksFeatures(spec: object, options: readonly string[], table?: Table): boolean {
+export function asksFeatures(
+  spec: object,
+  options: readonly string[],
+  table?: Table,
+  series?: string,
+): boolean {
   const { color } = spec as { color?: string };
   return (
     options.some((key) => (spec as Record<string, unknown>)[key] !== undefined) ||
-    (color !== undefined && (!!table?.has(color) || !/^(#|rgb|hsl|var\()/.test(color)))
+    (color !== undefined &&
+      (color !== series
+        ? !!table?.has(color) || !/^(#|rgb|hsl|var\()/.test(color)
+        : // A series field named as a color is (the compiler refuses the name).
+          !!globalThis.CSS?.supports("color", color)))
   );
 }
 

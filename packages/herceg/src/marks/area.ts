@@ -33,11 +33,13 @@ import {
   type MARK,
   type Mark,
   type MarkKey,
+  type MarkSources,
   NUMERIC,
+  ownColor,
   type Palette,
   requireField,
   SeriesSplitter,
-  seriesKey,
+  seriesOf,
   valueKind,
 } from "./mark.ts";
 import {
@@ -99,9 +101,10 @@ interface AreaCommon<S extends Schema> {
   /** From 0 to 1: the whole mark's, fill and outline. */
   opacity?: number;
   /**
-   * The areas' fill: a category field (constant within each series)
-   * through the chart's "color" scale, or a color. The short form of
-   * `encode.color`; `fill` wins over it.
+   * The areas' fill: a category field (which splits the rows into an area
+   * per value unless `series` says otherwise, and is then constant within
+   * each series), or a color. The short form of `encode.color`; `fill`
+   * wins over it.
    */
   color?: CategoryField<S> | CssColor;
   /** Channels, each constant within a series: color, fill, stroke, opacity. */
@@ -114,11 +117,6 @@ interface AreaCommon<S extends Schema> {
   where?: Condition;
   curve?: Curve;
   label?: string;
-  /**
-   * Marks naming the same group share series by name: series of the same
-   * name share a color, one legend entry, and visibility.
-   */
-  legendGroup?: string;
   /** `false` leaves the mark out of the chart's legends. */
   legend?: false;
   id?: string;
@@ -128,9 +126,11 @@ interface AreaCommon<S extends Schema> {
 interface Filled<S extends Schema> {
   /**
    * Category field: one area per value. Stacked, the areas stack in the
-   * order of the legend on every position any of them has.
+   * order of the legend on every position any of them has. Without it, a
+   * category field as `color` splits the rows too; `false` keeps one area
+   * per value field.
    */
-  series?: CategoryField<S>;
+  series?: CategoryField<S> | false;
   /**
    * Pile the areas up: `true`, a mode ("fill" for shares, "center" or
    * "wiggle" for streams), or how (`offset`, the layers' `order`, and
@@ -144,9 +144,9 @@ interface Filled<S extends Schema> {
   x2?: never;
 }
 
-/** A band between two fields: no series or stack. */
-interface Banded {
-  series?: never;
+/** A band between two fields: one per value of a series field (or `color` field), and no stack. */
+interface Banded<S extends Schema> {
+  series?: CategoryField<S> | false;
   stack?: never;
 }
 
@@ -168,7 +168,7 @@ export type AreaOptions<S extends Schema> = AreaCommon<S> & {
         /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
         axis?: "left" | "right";
       })
-    | (Banded & {
+    | (Banded<S> & {
         orient?: "x";
         x: PositionField<S>;
         axis?: "left" | "right";
@@ -195,7 +195,7 @@ export type AreaOptions<S extends Schema> = AreaCommon<S> & {
         x: NumericField<S> | readonly NumericField<S>[];
         axis?: "left";
       })
-    | (Banded & {
+    | (Banded<S> & {
         orient?: "y";
         y: PositionField<S>;
         axis?: "left";
@@ -270,20 +270,15 @@ export function areaFormError(spec: {
       return `area ${orient}: a band between ${low} and ${high} runs along ${orient}; give ${orient === "x" ? "an" : "a"} ${orient} field`;
     if (typeof edges[orient] !== "string")
       return `area ${orient}: a band runs along one ${orient} field; give one field`;
-    if (edges[other] !== undefined || spec.series !== undefined || mode)
-      return `area: ${other} (with series or stack) or ${low} and ${high}, not both; drop one`;
+    if (edges[other] !== undefined || mode)
+      return `area: ${other} (with stack) or ${low} and ${high}, not both; drop one`;
     if (spec.orient !== undefined && spec.orient !== orient)
       return `area orient: a band between ${low} and ${high} runs along ${orient}; drop orient`;
-    if (spec.dodge)
-      return "area dodge: places the series of a series field side by side; a band has none";
+    if (spec.dodge) return "area dodge: bands do not stand side by side; drop dodge";
     return undefined;
   }
   if (spec.x === undefined || spec.y === undefined)
     return "area: needs x and y, or a band: y1 and y2 along x, or x1 and x2 along y";
-  if (gaps !== undefined && spec.series === undefined)
-    return "area stack.gaps: for stacks by a series field; give series, or drop gaps";
-  if (spec.dodge && spec.series === undefined)
-    return "area dodge: places series side by side; give a series field";
   if (spec.dodge && mode)
     return "area dodge: a stack's layers stand on each other; drop dodge or stack";
   return undefined;
@@ -301,6 +296,8 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
   readonly #roles: Roles;
   /** Undefined for a band between two fields. */
   readonly #split: SeriesSplitter | undefined;
+  /** For bands split by a series field. */
+  readonly #bandSplit: SeriesSplitter | undefined;
   readonly #stack: RowStack;
   /** Indexes of each stacked layer's edges, by series key, for long stacks of fields. */
   #stackIndexes = new Map<string, { top: RangeIndex; bottom: RangeIndex | undefined }>();
@@ -326,6 +323,7 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
   readonly #shares: BandShares | undefined;
   readonly zero: "x" | "y" | undefined;
   readonly featured: boolean;
+  readonly identity: MarkSources;
   /** How layers stack: `stack`, as `true`, a mode, or an object of its parts. */
   readonly #stacking: Stacking;
 
@@ -336,7 +334,9 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
     const spec = this.spec;
     this.table = table;
     this.#stacking = stackingOf(spec.stack as AreaStack | StackSpec | undefined);
-    this.featured = asksFeatures(spec, FEATURES, table);
+    if (typeof spec.series === "string") requireField(table, spec.series, CATEGORY, "area series");
+    const series = seriesOf(spec, table, "fill");
+    this.featured = asksFeatures(spec, FEATURES, table, series);
     this.#stack = new RowStack("sum", {
       indexed: true,
       ...(typeof this.#stacking.mode === "string" && {
@@ -376,22 +376,40 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
       const position = (orient === "x" ? spec.x : spec.y) as string;
       requireField(table, position, POSITION, `area ${orient}`);
       for (const edge of edges) requireField(table, spec[edge]!, NUMERIC, `area ${edge}`);
-      this.#roles = {
-        orient,
-        position,
-        values: [spec[edges[0]]!, spec[edges[1]]!],
-        banded: table.kind(position) === "category",
-      };
+      const values = [spec[edges[0]]!, spec[edges[1]]!];
+      const banded = table.kind(position) === "category";
+      this.#roles = { orient, position, values, banded };
+      // Bands over categories run in band order, which their series sort by.
+      if (series !== undefined)
+        this.#bandSplit = new SeriesSplitter(
+          table,
+          banded ? undefined : position,
+          [values[1]!],
+          series,
+          spec.label,
+        );
     } else {
-      const roles = rolesOf(table, "area", spec.x!, spec.y!, spec.orient, spec.series);
+      const roles = rolesOf(
+        table,
+        "area",
+        spec.x!,
+        spec.y!,
+        spec.orient,
+        series,
+        spec.series === undefined,
+      );
       this.#roles = roles;
-      if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "area series");
       // Areas over categories run in band order, which their series sort by.
       const position = roles.banded ? undefined : roles.position;
-      this.#split = new SeriesSplitter(table, position, roles.values, spec.series, spec.label);
-      if (this.#stacking.mode && spec.series !== undefined)
+      this.#split = new SeriesSplitter(table, position, roles.values, series, spec.label);
+      if (this.#stacking.mode && series !== undefined)
         this.#union = new UnionStack(this.#stacking.mode, this.#stacking.order);
     }
+    if (this.#stacking.gaps !== undefined && series === undefined)
+      throw new Error("area stack.gaps: for stacks by a series field; give series, or drop gaps");
+    if (spec.dodge && series === undefined)
+      throw new Error("area dodge: places series side by side; give a series field");
+    this.identity = { field: series, values: this.#roles.values };
     const { orient, banded } = this.#roles;
     if (spec.dodge) {
       if (!banded)
@@ -432,28 +450,27 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
       : table.numbers(position as never);
     let series: Series[];
     // A color in CSS syntax the mark draws itself; the feature compiler, others.
-    const fill = spec.fill ?? (this.featured ? undefined : spec.color);
+    const fill = spec.fill ?? (this.featured ? undefined : ownColor(spec.color, table));
     if (!this.#split) {
+      // One band, standing for its two fields, or one per value of a series field.
       const [low, high] = values as [string, string];
-      const top = table.numbers(high as never);
-      const id = seriesKey(key, "band");
-      const label = spec.label ?? `${low}–${high}`;
-      const color = palette(id, label, fill);
-      series = [
+      const name = `${low}–${high}`;
+      const sources = this.#bandSplit?.sources() ?? [
         {
-          key: id,
-          label,
-          color: fill ?? color,
-          x: positions,
-          y: top,
-          y0: table.numbers(low as never),
-          values: top,
-          range: true,
+          id: name,
+          label: spec.label ?? name,
+          y: high,
           rows: undefined,
-          length: table.length,
           sorted: !banded && table.isSorted(position as never),
         },
       ];
+      series = buildSeries(table, sources, positions, key, palette, fill);
+      const bottom = table.numbers(low as never);
+      for (const s of series) {
+        s.y0 = bottom;
+        s.range = true;
+        s.field = undefined;
+      }
     } else {
       series = buildSeries(table, this.#split.sources(), positions, key, palette, fill);
     }
@@ -758,7 +775,7 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
     const style = { baseline, fillOpacity, outline, strokeWidth };
     this.#indexes.drew(frame.owner, frame.scene, this.table);
     // Parts of series (a highlight's selected rows) stand in their wholes' slots.
-    if (!series.every((s) => s.whole)) this.#shares?.split(series, frame, spec.legendGroup, true);
+    if (!series.every((s) => s.whole)) this.#shares?.split(series, frame, true);
     const visible = series.filter((s) => !frame.hidden.has(s.key));
     if (this.#stacking.order === "inside-out")
       visible.sort(
@@ -771,18 +788,24 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
     // Bands and stacks curve all their boundaries together, so layers share
     // edges and never overlap. When they cannot (log y, or too dense), every
     // layer is straight, so shared edges still match.
+    // A stack's layers curve together; bands of a series field each alone.
+    const groups = stacked ? [drawn] : drawn.map((s) => [s]);
     const rows =
       spec.curve === "monotone" && layered && drawn[0] && !log
-        ? curveRows(drawn[0], view)
+        ? groups.map((group) => curveRows(group[0]!, view))
         : undefined;
     if (rows) {
-      const layers = drawn.map((s) => ({ series: s, top: s.y, bottom: s.y0 }));
-      const edges = traceCurvedLayers(layers, view, rows, stacked);
       // Charts that animate changed values curve the layers between two scenes alike.
       const curve = frame.keyed ? curveLayers : undefined;
-      return drawn.flatMap((s, i) =>
-        dressed({ ...this.#area(s, edges[i]!, style, frame), curve }, visible[i]!, frame),
-      );
+      let i = 0;
+      return groups.flatMap((group, g) => {
+        const layers = group.map((s) => ({ series: s, top: s.y, bottom: s.y0 }));
+        const edges = traceCurvedLayers(layers, view, rows[g]!, stacked);
+        return group.flatMap((s, k) => {
+          const whole = visible[i++]!;
+          return dressed({ ...this.#area(s, edges[k]!, style, frame), curve }, whole, frame);
+        });
+      });
     }
     const curve = spec.curve === "monotone" && layered ? "linear" : spec.curve;
     const linear = view.x.type !== "log" && !log;
@@ -1021,7 +1044,6 @@ export function area<S extends Schema>(
       ...FEATURES,
       "curve",
       "label",
-      "legendGroup",
       "legend",
       "id",
       "axis",

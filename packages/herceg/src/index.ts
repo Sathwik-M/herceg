@@ -79,6 +79,7 @@ export type {
 export { fromRows, Table, table } from "./data/table.ts";
 export type { Selection } from "./dom/brushed.ts";
 export { type ChartOptions, type ChartUpdate, createChart } from "./dom/chart.ts";
+export { showFailure } from "./dom/errors.ts";
 export type { ChartEvents, ChartListener, PanelTarget, ViewCause } from "./dom/events.ts";
 export type {
   Axis,
@@ -212,6 +213,14 @@ export type { SvgAlign, SvgSizing } from "./render/svg.ts";
 export { type TimeBreaks, timeBreaks } from "./scale/breaks.ts";
 export * from "./scale/schemes.ts";
 export type { PlotRect } from "./scene/scene.ts";
+export {
+  ChartError,
+  type ChartErrorCode,
+  type ChartErrorInfo,
+  type ChartErrorPhase,
+  chartError,
+  errorInfo,
+} from "./spec/errors.ts";
 export type * from "./spec/spec.ts";
 export { SPEC_VERSION } from "./spec/spec.ts";
 export type { Theme } from "./theme.ts";

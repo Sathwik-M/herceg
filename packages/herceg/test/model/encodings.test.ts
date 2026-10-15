@@ -390,7 +390,7 @@ describe("point color by category", () => {
 
   it("gives each value the color scale's next color, in the field's order, with a color key", () => {
     const { scene, model } = build({
-      marks: [point(cities, { x: "x", y: "y", color: "region" })],
+      marks: [point(cities, { x: "x", y: "y", series: false, color: "region" })],
     });
     const [g] = scene.panels[0]!.marks as PointGeometry[];
     expect(g!.colors!.categorical).toBe(true);
@@ -416,7 +416,9 @@ describe("point color by category", () => {
 
   it("reads the category in tooltips, swatches in its color, and leaves rows without one out", () => {
     const sparse = table({ x: [1, 2, 3], y: [1, 2, 3], kind: ["a", null, "b"] });
-    const { model, scene } = build({ marks: [point(sparse, { x: "x", y: "y", color: "kind" })] });
+    const { model, scene } = build({
+      marks: [point(sparse, { x: "x", y: "y", series: false, color: "kind" })],
+    });
     const [g] = scene.panels[0]!.marks as PointGeometry[];
     expect(g!.count).toBe(2);
     const at = (i: number) => model.inspect(model.xScale()!.map(i), model.yScale()!.map(i));
@@ -428,14 +430,14 @@ describe("point color by category", () => {
 
   it("describes no data when no row has a category", () => {
     const none = table({ x: [1, 2], y: [1, 2], kind: [null, null] as (string | null)[] });
-    const { model } = build({ marks: [point(none, { x: "x", y: "y", color: "kind" })] });
+    const { model } = build({
+      marks: [point(none, { x: "x", y: "y", series: false, color: "kind" })],
+    });
     expect(describeChart(model)).toContain("y: no data.");
   });
 
-  it("keeps a series' colors when the series field is the color field", () => {
-    const { scene } = build({
-      marks: [point(cities, { x: "x", y: "y", series: "region", color: "region" })],
-    });
+  it("names the series by a category color, keeping their colors", () => {
+    const { scene } = build({ marks: [point(cities, { x: "x", y: "y", color: "region" })] });
     expect((scene.panels[0]!.marks as PointGeometry[]).every((g) => !g.colors)).toBe(true);
     expect(keysOf(scene)).toEqual([]);
     expect(legendOf(scene).map((item) => item.color)).toEqual(LIGHT.palette.slice(0, 3));
@@ -460,7 +462,9 @@ describe("point color by category", () => {
 
   it("keeps a value's color as the table streams", () => {
     const stream = table({ x: [0], y: [0], kind: ["k0"] }, { maxRows: 2 });
-    const { model } = build({ marks: [point(stream, { x: "x", y: "y", color: "kind" })] });
+    const { model } = build({
+      marks: [point(stream, { x: "x", y: "y", series: false, color: "kind" })],
+    });
     const colors = new Map<string, string>();
     for (let i = 1; i < 40; i++) {
       stream.append({ x: [i], y: [i], kind: [`k${i}`] });
@@ -477,7 +481,9 @@ describe("point color by category", () => {
       y: [1, 2],
       kind: encodedCategory(new Int32Array([1, 0]), ["A", "B"]),
     });
-    const { scene } = build({ marks: [point(flipped, { x: "x", y: "y", color: "kind" })] });
+    const { scene } = build({
+      marks: [point(flipped, { x: "x", y: "y", series: false, color: "kind" })],
+    });
     expect(keysOf(scene)[0]!.entries.map((e) => [e.label.text, e.fill])).toEqual([
       ["A", LIGHT.palette[0]],
       ["B", LIGHT.palette[1]],
@@ -490,8 +496,8 @@ describe("point color by category", () => {
     const { model, scene } = build({
       scales: { color: { type: "ordinal", map: { b: "#00ab41" } } },
       marks: [
-        point(first, { x: "x", y: "y", color: "kind" }),
-        point(second, { x: "x", y: "y", color: "kind" }),
+        point(first, { x: "x", y: "y", series: false, color: "kind" }),
+        point(second, { x: "x", y: "y", series: false, color: "kind" }),
         line(second, { x: "x", y: "y", series: "kind", color: "kind" }),
       ],
     });
@@ -525,7 +531,7 @@ describe("point color by category", () => {
   it("take values outside an explicit domain in the scale's unknown color", () => {
     const { scene } = build({
       scales: { color: { type: "ordinal", domain: ["s", "n"], unknown: "#999999" } },
-      marks: [point(cities, { x: "x", y: "y", color: "region" })],
+      marks: [point(cities, { x: "x", y: "y", series: false, color: "region" })],
     });
     expect(keysOf(scene)[0]!.entries.map((e) => [e.label.text, e.fill])).toEqual([
       ["s", LIGHT.palette[0]],
@@ -543,7 +549,7 @@ describe("point color by category", () => {
     });
     const { scene, model } = build({
       theme: { tokens: { palette: palette } },
-      marks: [point(many, { x: "x", y: "y", color: "kind" })],
+      marks: [point(many, { x: "x", y: "y", series: false, color: "kind" })],
     });
     const [g] = scene.panels[0]!.marks as PointGeometry[];
     expect(g!.colors!.palette).toHaveLength(254);
@@ -557,7 +563,7 @@ describe("point color by category", () => {
     expect(() =>
       build({
         scales: { color: { type: "ordinal", domain: ["n"], unknown: 3 } },
-        marks: [point(cities, { x: "x", y: "y", color: "region" })],
+        marks: [point(cities, { x: "x", y: "y", series: false, color: "region" })],
       }),
     ).toThrow("chart scales.color.unknown (read by point (mark 0) color): expected a color");
   });
@@ -572,7 +578,7 @@ describe("point color by category", () => {
     });
     const { model } = build({
       scales: { color: { type: "ordinal", map } },
-      marks: [point(stream, { x: "x", y: "y", color: "kind" })],
+      marks: [point(stream, { x: "x", y: "y", series: false, color: "kind" })],
     });
     const colorOf = (label: string) =>
       keysOf(model.scene(estimateText))[0]!.entries.find((e) => e.label.text === label)!.fill;
@@ -586,16 +592,25 @@ describe("point color by category", () => {
   it("refuses ramp options for a category color", () => {
     for (const options of [{ colors: viridis }, { colorDomain: [0, 1] }, { colorMidpoint: 0 }])
       expect(() =>
-        point(cities, { x: "x", y: "y", color: "region", ...(options as object) }),
+        point(cities, { x: "x", y: "y", series: false, color: "region", ...(options as object) }),
       ).toThrow(/point colors: "region" is a category field/);
   });
 
   it("loads from specs and draws in static SVG", () => {
     const spec: ChartSpec = {
       data: { t: { columns: { x: [1, 2], y: [3, 4], c: ["p", "q"] } } },
-      marks: [{ type: "point", x: "x", y: "y", color: "c" }],
+      marks: [
+        { type: "point", x: "x", y: "y", color: "c" },
+        { type: "point", x: "x", y: "y", color: "c", series: false },
+      ],
     };
     const { scene } = build(loadSpec(spec).config);
+    // Series by color, and points colored row by row in the same colors
+    // (their one series listed in a neutral color).
+    expect(legendOf(scene).map((e) => e.color)).toEqual([
+      ...LIGHT.palette.slice(0, 2),
+      LIGHT.muted,
+    ]);
     expect(keysOf(scene)[0]!.entries.map((e) => e.fill)).toEqual(LIGHT.palette.slice(0, 2));
   });
 });

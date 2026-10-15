@@ -14,6 +14,7 @@ import type { ChartSpec } from "./spec/spec.ts";
 export type { Fonts } from "./fonts/registry.ts";
 export type { PdfExportOptions, PdfPageOptions } from "./pdf.ts";
 export type { ChartSnapshot, SnapshotOptions } from "./render/snapshot.ts";
+export { ChartError, type ChartErrorInfo, chartError, errorInfo } from "./spec/errors.ts";
 export type * from "./spec/spec.ts";
 export { SPEC_VERSION } from "./spec/spec.ts";
 export { validateSpec } from "./spec/validate.ts";

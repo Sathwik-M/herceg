@@ -834,8 +834,8 @@ describe("a navigator's strip under panels", () => {
         ({ key }) => key === NAVIGATOR_PANEL,
       )?.plot.height;
     expect(strip(215)).toBeUndefined();
-    expect(strip(245)).toBe(19);
-    expect(strip(300)).toBe(40);
+    expect(strip(225)).toBe(22);
+    expect(strip(245)).toBe(40);
   });
 
   it("leaves weighted rows what they need, to the pixel, and takes huge weights", () => {

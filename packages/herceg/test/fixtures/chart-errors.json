@@ -1,0 +1,158 @@
+{
+  "about": "Errors a chart refuses its options with, as ChartErrorInfo: the same code and path from the engine (a spec loaded and drawn) and from the Python package (the same marks added), with each one's message in its own words and, where Python spells an option otherwise, its path (python_path). Read by packages/herceg/test/model/conformance.test.ts and python/tests/test_conformance.py.",
+  "data": {
+    "t": [0, 1, 2, 3],
+    "v": [1, 2, 3, 4],
+    "w": [4, 3, 2, 1],
+    "region": ["eu", "eu", "us", "us"],
+    "service": ["checkout", "checkout", "checkout", "search"],
+    "red": ["a", "a", "b", "b"]
+  },
+  "cases": [
+    {
+      "name": "a field the table does not have",
+      "mark": {
+        "type": "line",
+        "x": "t",
+        "y": "p99"
+      },
+      "code": "unknown-field",
+      "path": "marks[0].y",
+      "message": "line y: no field \"p99\"",
+      "python": "line y: no column 'p99'"
+    },
+    {
+      "name": "a field of the wrong kind",
+      "mark": {
+        "type": "bar",
+        "x": "region",
+        "y": "service"
+      },
+      "code": "field-type",
+      "path": "marks[0].x",
+      "message": "bar x: field \"region\" holds category values; expected number or time",
+      "python": "bar x: column 'region' holds category values; expected number or time"
+    },
+    {
+      "name": "several value fields with a series inferred from color",
+      "mark": {
+        "type": "line",
+        "x": "t",
+        "y": ["v", "w"],
+        "color": "region"
+      },
+      "code": "series-with-values",
+      "path": "marks[0].color",
+      "message": "series by \"region\" from color",
+      "python": "series by 'region' from color"
+    },
+    {
+      "name": "a color changing within a series of another field",
+      "mark": {
+        "type": "line",
+        "x": "t",
+        "y": "v",
+        "series": "service",
+        "color": "region"
+      },
+      "code": "series-varies",
+      "path": "marks[0].color",
+      "message": "field \"region\" changes within series \"checkout\" (by \"service\")",
+      "python": "column 'region' changes within series 'checkout' (by 'service')"
+    },
+    {
+      "name": "a color changing within the one line",
+      "mark": {
+        "type": "line",
+        "x": "t",
+        "y": "v",
+        "series": false,
+        "color": "region"
+      },
+      "code": "series-varies",
+      "path": "marks[0].color",
+      "message": "field \"region\" changes within the line",
+      "python": "column 'region' changes within the line"
+    },
+    {
+      "name": "a scale the chart does not have",
+      "mark": {
+        "type": "line",
+        "x": "t",
+        "y": "v",
+        "series": "region",
+        "encode": {
+          "color": {
+            "field": "region",
+            "scale": "zones"
+          }
+        }
+      },
+      "code": "unknown-reference",
+      "path": "marks[0].encode.color.scale",
+      "message": "the chart has no scale \"zones\"",
+      "python": "the chart has no scale 'zones'"
+    },
+    {
+      "name": "a channel's field the table does not have",
+      "mark": {
+        "type": "line",
+        "x": "t",
+        "y": "v",
+        "encode": {
+          "color": {
+            "field": "zone"
+          }
+        }
+      },
+      "code": "unknown-field",
+      "path": "marks[0].encode.color.field",
+      "message": "encode.color.field: no field \"zone\"",
+      "python": "encode.color.field: no column 'zone'"
+    },
+    {
+      "name": "a channel's field, in each language's spelling",
+      "mark": {
+        "type": "line",
+        "x": "t",
+        "y": "v",
+        "encode": {
+          "strokeWidth": {
+            "field": "zone"
+          }
+        }
+      },
+      "code": "unknown-field",
+      "path": "marks[0].encode.strokeWidth.field",
+      "python_path": "marks[0].encode.stroke_width.field",
+      "message": "encode.strokeWidth.field: no field \"zone\"",
+      "python": "encode.stroke_width.field: no column 'zone'"
+    },
+    {
+      "name": "a color that is neither a field nor a color",
+      "mark": {
+        "type": "line",
+        "x": "t",
+        "y": "v",
+        "color": "stie"
+      },
+      "code": "invalid-option",
+      "path": "marks[0].color",
+      "message": "\"stie\" is neither a field nor a color",
+      "python": "'stie' is neither a column nor a color"
+    },
+    {
+      "name": "a name both a field and a color",
+      "mark": {
+        "type": "line",
+        "x": "t",
+        "y": "v",
+        "color": "red"
+      },
+      "code": "invalid-option",
+      "path": "marks[0].color",
+      "message": "\"red\" names both a field and a color",
+      "python": "'red' names both a column and a color"
+    }
+  ]
+}

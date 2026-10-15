@@ -267,17 +267,16 @@ def test_appends_from_several_threads_all_take_part():
     assert hx.statistics(live._express.chart).tables["estimates"]["n"].sum() == 48
 
 
-def test_a_recomputed_chart_with_other_marks_is_sent_whole():
+def test_a_new_series_level_is_sent_as_tables_of_the_same_marks():
     live = hx.lineplot(head(DATA, 30), x="t", y="tip", series="sex", n_boot=50).widget()
     browser = Browser(live)
-    # A series level more: its band is a mark more.
+    # A series level more: the band and the line each draw one more series.
     more = {name: values.copy() for name, values in head(DATA, 60).items()}
     more["sex"] = np.where(np.arange(60) < 50, more["sex"], "x")
     live.replace(more)
     content, buffers = browser.messages[-1]
-    assert content["type"] == "chart" and content["revision"] == 1
-    assert len(content["spec"]["marks"]) == 4 and buffers
-    assert browser.resent == [] and live._snapshot()["spec"] == content["spec"]
+    assert content["type"] == "tables" and content["revision"] == 1 and buffers
+    assert browser.resent == [] and len(live._snapshot()["spec"]["marks"]) == 2
 
 
 def test_a_recompute_keeps_moves_of_the_nodes_its_new_tables_still_have():

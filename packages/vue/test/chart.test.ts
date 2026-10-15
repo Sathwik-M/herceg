@@ -246,7 +246,7 @@ describe("<Chart>", () => {
     app = createApp(
       defineComponent({
         components: { ...components, LoadMarks },
-        template: `<Chart><LoadMarks /></Chart>`,
+        template: `<Chart error-mode="throw"><LoadMarks /></Chart>`,
       }),
     );
     app.config.errorHandler = (error) => errors.push(error);
@@ -752,7 +752,7 @@ describe("<Chart>", () => {
       defineComponent({
         components,
         setup: () => ({ metrics, field }),
-        template: `<Chart><Line :data="metrics" x="t" :y="field" /></Chart>`,
+        template: `<Chart error-mode="throw"><Line :data="metrics" x="t" :y="field" /></Chart>`,
       }),
     );
     app.config.errorHandler = (error) => errors.push(error);
@@ -1118,11 +1118,64 @@ describe("<Chart>", () => {
 
   it("rejects children that are not marks", () => {
     const errors: unknown[] = [];
-    app = createApp(defineComponent({ components, template: "<Chart><span /></Chart>" }));
+    app = createApp(
+      defineComponent({ components, template: '<Chart error-mode="throw"><span /></Chart>' }),
+    );
     app.config.errorHandler = (error) => errors.push(error);
     app.config.warnHandler = () => {};
     app.mount(host);
     expect(String(errors[0])).toMatch(/mark components/);
+  });
+});
+
+describe("<Chart> that cannot draw", () => {
+  const alert = () => host.querySelector<HTMLElement>('[role="alert"]');
+
+  it("shows mark components it refuses in its place, emits error, and draws once they are fixed", async () => {
+    const codes: string[] = [];
+    const field = ref("missing");
+    app = createApp(
+      defineComponent({
+        components,
+        setup: () => ({
+          metrics,
+          field,
+          heard: (error: { code: string }) => codes.push(error.code),
+        }),
+        template: `<Chart :height="200" @error="heard"><Line :data="metrics" x="t" :y="field" /></Chart>`,
+      }),
+    );
+    app.mount(host);
+    expect(alert()!.textContent).toMatch(/^Chart could not be rendered\n.*no field "missing"/);
+    expect(codes).toEqual(["unknown-field"]);
+    field.value = "a";
+    await nextTick();
+    expect(alert()).toBeNull();
+    expect(paths()).toHaveLength(1);
+    field.value = "missing";
+    await nextTick();
+    expect(alert()!.textContent).toMatch(/^Chart update failed; showing previous data/);
+    expect(paths()).toHaveLength(1);
+  });
+
+  it("throws what comes later with error-mode throw, for onErrorCaptured", async () => {
+    const rows = table({ t: [0, 1], v: [1, 2], kind: ["a", "a"], g: ["p", "p"] });
+    const errors: unknown[] = [];
+    app = createApp(
+      defineComponent({
+        components,
+        setup: () => ({ rows }),
+        template: `<Chart error-mode="throw" :height="200"><Line :data="rows" x="t" y="v" series="g" color="kind" /></Chart>`,
+      }),
+    );
+    app.config.errorHandler = (error) => errors.push(error);
+    app.config.warnHandler = () => {};
+    app.mount(host);
+    rows.append({ t: [2], v: [3], kind: ["b"], g: ["p"] });
+    await expect
+      .poll(() => errors.map(String))
+      .toEqual([expect.stringMatching(/changes within series "p"/)]);
+    expect(alert()).toBeNull();
   });
 });
 

@@ -1147,6 +1147,7 @@ describe("right axes in panels", () => {
         facet: facet("region"),
         yRight: { scope: "panel" },
         interaction: { zoom: "y" },
+        errorMode: "throw",
       }),
     ).toThrow("cannot zoom along y");
   });

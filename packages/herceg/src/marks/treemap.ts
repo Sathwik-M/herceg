@@ -13,12 +13,15 @@ import { contrastingText } from "../scale/color.ts";
 import type { Geometry, RectGeometry, TextGeometry } from "../scene/scene.ts";
 import type { Frozen, TreemapSpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
-import type {
-  LayoutControls,
-  LayoutFrame,
-  LayoutItem,
-  LayoutMark,
-  LayoutResult,
+import { refuseColor } from "./colored.ts";
+import {
+  type ItemSources,
+  type LayoutControls,
+  type LayoutFrame,
+  type LayoutItem,
+  type LayoutMark,
+  type LayoutResult,
+  secondOf,
 } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
 import { type ChartMark, DIM, frozen, type MARK } from "./mark.ts";
@@ -59,6 +62,7 @@ export class TreemapMark implements LayoutMark {
   readonly spec: Frozen<TreemapSpec>;
   readonly table: Table;
   readonly measure: string;
+  readonly identity: ItemSources | undefined;
   /** Clicks and Enter drill into nodes with `interaction.zoom`, and charts select their rows. */
   readonly interactions = ["zoom"] as const;
   readonly selects = true;
@@ -71,6 +75,12 @@ export class TreemapMark implements LayoutMark {
     this.#data = new TreeData(table, spec, "treemap");
     this.table = table;
     this.measure = spec.value ?? "Count";
+    // Branches stand for their top-level nodes' values, as series of that field do.
+    const { encoding } = this.#data;
+    this.identity = {
+      field: "path" in encoding ? encoding.path[0]! : encoding.id,
+      read: secondOf,
+    };
   }
 
   legend(id: string | number, color: (key: string) => string): LegendEntry[] {
@@ -320,6 +330,7 @@ export function treemap<S extends Schema>(
   table: Table<S>,
   options: TreemapOptions<S>,
 ): ChartMark<Frozen<TreemapSpec>> {
+  refuseColor(options, "treemap");
   const { path } = options;
   // Every option is kept, so the mark refuses a tree named both ways.
   const spec = {

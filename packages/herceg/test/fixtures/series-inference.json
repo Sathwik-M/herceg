@@ -1,0 +1,118 @@
+{
+  "about": "Which field splits a line's, area's, or bar's rows into series, given its spec options and its table's fields' kinds: `series`, or without one a category `color` field (short form or encode.color's field), unless series is false or the mark's own paint (a line's stroke, an area's or bar's fill, flat or in encode) overrides the color. Read by packages/herceg/test/model/conformance.test.ts (seriesOf) and python/tests/test_conformance.py (series_of).",
+  "fields": {
+    "t": "number",
+    "v": "number",
+    "load": "number",
+    "region": "category",
+    "service": "category"
+  },
+  "cases": [
+    {
+      "name": "a category color field splits a line",
+      "mark": "line",
+      "options": { "color": "region" },
+      "series": "region"
+    },
+    {
+      "name": "an explicit series decides, whatever the color",
+      "mark": "line",
+      "options": { "series": "service", "color": "region" },
+      "series": "service"
+    },
+    {
+      "name": "series false splits by neither",
+      "mark": "line",
+      "options": { "series": false, "color": "region" },
+      "series": null
+    },
+    {
+      "name": "a constant color splits nothing",
+      "mark": "line",
+      "options": { "color": "#c00000" },
+      "series": null
+    },
+    {
+      "name": "a number color field splits nothing",
+      "mark": "line",
+      "options": { "color": "load" },
+      "series": null
+    },
+    {
+      "name": "a name that is no field splits nothing",
+      "mark": "line",
+      "options": { "color": "rebeccapurple" },
+      "series": null
+    },
+    {
+      "name": "a line's stroke overrides its color",
+      "mark": "line",
+      "options": { "color": "region", "stroke": "#000000" },
+      "series": null
+    },
+    {
+      "name": "encode's stroke overrides a line's color",
+      "mark": "line",
+      "options": { "color": "region", "encode": { "stroke": { "value": "#000000" } } },
+      "series": null
+    },
+    {
+      "name": "encode's color field splits a line",
+      "mark": "line",
+      "options": { "encode": { "color": { "field": "region" } } },
+      "series": "region"
+    },
+    {
+      "name": "through a named scale too",
+      "mark": "line",
+      "options": { "encode": { "color": { "field": "region", "scale": "regions" } } },
+      "series": "region"
+    },
+    {
+      "name": "a condition splits nothing",
+      "mark": "line",
+      "options": {
+        "encode": {
+          "color": {
+            "condition": {
+              "when": [">", ["field", "v"], 1],
+              "then": "#c00000",
+              "otherwise": "#999999"
+            }
+          }
+        }
+      },
+      "series": null
+    },
+    {
+      "name": "a category color field splits an area",
+      "mark": "area",
+      "options": { "color": "region" },
+      "series": "region"
+    },
+    {
+      "name": "an area's fill overrides its color",
+      "mark": "area",
+      "options": { "color": "region", "fill": "#3266d6" },
+      "series": null
+    },
+    {
+      "name": "a category color field splits bars",
+      "mark": "bar",
+      "options": { "color": "region" },
+      "series": "region"
+    },
+    {
+      "name": "bars with series false color each bar",
+      "mark": "bar",
+      "options": { "series": false, "color": "region" },
+      "series": null
+    },
+    {
+      "name": "encode's fill overrides bars' color",
+      "mark": "bar",
+      "options": { "color": "region", "encode": { "fill": { "field": "service" } } },
+      "series": null
+    }
+  ]
+}

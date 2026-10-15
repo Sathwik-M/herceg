@@ -137,7 +137,7 @@ export class RowStyles {
    * channel's, the theme's muted color where rows have colors of their own
    * (as legends list the series), or the palette's (undefined).
    */
-  color(name: string, given: string | undefined): string | undefined {
+  color(name: string, given: string | undefined, label?: string): string | undefined {
     const by = this.#spec.style?.by;
     const mapped =
       by && (by.field === undefined || by.field === this.#spec.series)
@@ -147,8 +147,12 @@ export class RowStyles {
     if (given !== undefined) return given;
     const fill = this.#fill;
     if (fill?.kind === "value") return fill.value;
-    if (fill?.kind === "field" && fill.field === this.#spec.series)
-      return fill.scale.output(name, this.#theme?.palette ?? [], this.#theme?.muted ?? "#999999");
+    if (fill?.kind === "series" || (fill?.kind === "field" && fill.field === this.#spec.series))
+      return fill.scale.output(
+        fill.kind === "series" ? (label ?? name) : name,
+        this.#theme?.palette ?? [],
+        this.#theme?.muted ?? "#999999",
+      );
     if (fill) return this.#theme?.muted;
     return undefined;
   }
@@ -196,36 +200,45 @@ export class RowStyles {
   }
 
   /**
-   * A series' look where its rows have none of their own: its channels'
-   * constants and outputs for the series' value, under its style map's.
+   * What a series' channels give all its rows: outputs for its name
+   * (`{ series: true }`, by its label), and where rows have no looks of
+   * their own, constants and outputs for its value (`name`).
    */
-  #seriesPaint(name: string): RowPaint | undefined {
+  #seriesPaint(name: string, label: string): RowPaint | undefined {
     const theme = this.#theme;
+    const byRow = this.byRow;
     const value = <V>(channel: Channel<V> | undefined, defaults: readonly V[], fallback: V) =>
-      channel?.kind === "value"
-        ? channel.value
-        : channel?.kind === "field"
-          ? channel.scale.output(name, defaults, fallback)
-          : undefined;
-    const paint: RowPaint = {
+      channel?.kind === "series"
+        ? channel.scale.output(label, defaults, fallback)
+        : byRow
+          ? undefined
+          : channel?.kind === "value"
+            ? channel.value
+            : channel?.kind === "field"
+              ? channel.scale.output(name, defaults, fallback)
+              : undefined;
+    const paint = definedOf({
       stroke: value(this.#stroke, theme?.palette ?? [], theme?.muted ?? "#999999"),
       strokeWidth: value(this.#width, [], 1),
       opacity: value(this.#opacity, [], 1),
-    };
-    const style = this.seriesStyle(name);
-    const merged = style ? { ...paint, ...definedOf(style) } : paint;
-    return Object.values(merged).some((v) => v !== undefined) ? merged : undefined;
+    });
+    return Object.keys(paint).length ? paint : undefined;
   }
 
-  /** The looks a series' rows take, and which each takes. */
+  /**
+   * The looks a series' rows take, and which each takes: its rows' own
+   * over what its channels give them all, under its style map's.
+   */
   rows(
     s: Series,
     name: string,
   ): { paints: readonly RowPaint[]; of(row: number): number } | undefined {
     const looks = this.#read();
+    const all = this.#seriesPaint(name, s.label);
+    const series = this.seriesStyle(name);
     if (!looks) {
-      const paint = this.#seriesPaint(name);
-      return paint ? { paints: [paint], of: () => 0 } : undefined;
+      const paint = { ...all, ...(series && definedOf(series)) };
+      return Object.keys(paint).length ? { paints: [paint], of: () => 0 } : undefined;
     }
     // Kept per series while the data and theme are the same.
     const kept = this.#rows.get(s.key);
@@ -236,11 +249,12 @@ export class RowStyles {
     const parts = new Map<number, number>();
     const alike = new Map<string, number>();
     const paints: RowPaint[] = [];
-    const series = this.seriesStyle(name);
     for (let k = 0; k < s.length; k++) {
       const look = looks.of[s.rows ? s.rows[k]! : k]!;
       if (parts.has(look)) continue;
-      const paint = series ? { ...looks.paints[look]!, ...definedOf(series) } : looks.paints[look]!;
+      let paint = looks.paints[look]!;
+      if (all) paint = { ...all, ...definedOf(paint) };
+      if (series) paint = { ...paint, ...definedOf(series) };
       const content = JSON.stringify(paint);
       let part = alike.get(content);
       if (part === undefined) {
@@ -329,7 +343,9 @@ export class RowStyles {
     defaults: readonly V[],
     fallback: V,
   ): { part: Part; output(row: number): V | undefined } {
-    if (!channel) return { part: { count: 1, at: () => 0 }, output: () => undefined };
+    // The series' names are the series': rows of one series look alike (`#seriesPaint`).
+    if (!channel || channel.kind === "series")
+      return { part: { count: 1, at: () => 0 }, output: () => undefined };
     if (channel.kind === "value")
       return { part: { count: 1, at: () => 0 }, output: () => channel.value };
     if (channel.kind === "condition")
@@ -346,8 +362,8 @@ export class RowStyles {
   }
 }
 
-/** A series style's paint for a row's look: the paint properties it sets. */
-function definedOf(style: SeriesStyle): RowPaint {
+/** A series style's or a look's paint properties it sets. */
+function definedOf(style: SeriesStyle | RowPaint): RowPaint {
   const out: { -readonly [K in keyof RowPaint]: RowPaint[K] } = {};
   for (const name of PAINT) if (style[name] !== undefined) out[name] = style[name] as never;
   return out;

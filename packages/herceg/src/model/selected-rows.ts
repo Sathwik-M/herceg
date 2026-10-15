@@ -148,7 +148,7 @@ function readingsOf(mark: Mark): Reading[] {
   const across = along === "x" ? "y" : "x";
   // Several fields on the value axis are a series each, unless a series field splits rows.
   const byField = (position: Place, values: readonly string[]): Reading[] =>
-    spec.series === undefined && values.length > 1
+    mark.identity?.field === undefined && values.length > 1
       ? values.map((name) => ({ id: name, [along]: position, [across]: field(name) }))
       : [{ [along]: position, [across]: field(values[0]!) }];
   // A heatmap's cell: at its field's value, or the span between its edges.
@@ -348,7 +348,8 @@ function brushCondition(
   const shown = parts.filter((d) => !d.hidden);
   if (!first || shown.length === 0) return false;
   const ids = new Set(shown.map(({ series }) => sourceOf(series)));
-  const seriesField = (mark.spec as { series?: string }).series;
+  // The field splitting series, given or from the color.
+  const seriesField = mark.identity?.field;
   const readings = readingsOf(mark).filter((r) => r.id === undefined || ids.has(r.id));
   // What the brush puts on the rows drawn as `d`, read through its panel's scales.
   const condition = (d: Drawn) =>
