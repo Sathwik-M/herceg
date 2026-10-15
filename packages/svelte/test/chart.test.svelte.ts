@@ -1,5 +1,4 @@
 import {
-  type ChartOptions,
   custom,
   type DrawContext,
   facet,
@@ -18,7 +17,8 @@ import {
   timeBreaks,
 } from "herceg";
 import { type Component, flushSync, mount, unmount } from "svelte";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { EXPORT_SCENE, type ExportsScene } from "../../herceg/src/render/export-scene.ts";
 import Annotations from "./Annotations.svelte";
 import Dendrograms from "./Dendrograms.svelte";
 import Faulty from "./Faulty.svelte";
@@ -37,26 +37,10 @@ import Stacks from "./Stacks.svelte";
 import Stray from "./Stray.svelte";
 import Tips from "./Tips.svelte";
 
-// The options each chart was last given, at creation and by `update`, which
-// tests compare with the props that made them.
-const given = vi.hoisted(() => new WeakMap<object, Record<string, unknown>>());
-vi.mock("herceg", async (original) => {
-  const herceg = await original<typeof import("herceg")>();
-  return {
-    ...herceg,
-    createChart(container: HTMLElement, options: ChartOptions) {
-      const chart = herceg.createChart(container, options);
-      given.set(chart, { ...options });
-      const update = chart.update.bind(chart);
-      chart.update = (changes) => {
-        Object.assign(given.get(chart)!, changes);
-        update(changes);
-      };
-      return chart;
-    },
-  };
-});
-const optionsOf = (chart: HercegChart) => given.get(chart) as unknown as ChartOptions;
+// Read the chart's applied configuration through the export seam, without
+// depending on Browser Mode intercepting the herceg module to record options.
+const optionsOf = (chart: HercegChart) =>
+  (chart as HercegChart & ExportsScene)[EXPORT_SCENE]((_, model) => model.config);
 
 let host: HTMLDivElement;
 let mounted: Record<string, unknown> | undefined;
@@ -561,9 +545,16 @@ describe("<Chart>", () => {
   });
 
   it("binds the chart and destroys it on unmount", () => {
-    const props = lines();
+    const props = lines({ options: { title: "First" } });
     const chart = props.chart;
+    // The chart is a class instance, kept raw even in the bound $state.
+    // svelte-ignore state_snapshot_uncloneable
+    expect($state.snapshot(chart)).toBe(chart);
     expect(chart.toSVG()).toContain("<svg");
+    props.options = { title: "Second" };
+    flushSync();
+    expect(props.chart).toBe(chart);
+    expect(chart.root.getAttribute("aria-label")).toBe("Second");
     unmount(mounted!);
     mounted = undefined;
     flushSync();
