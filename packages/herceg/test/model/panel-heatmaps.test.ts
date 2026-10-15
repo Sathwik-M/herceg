@@ -15,6 +15,7 @@ import type { RasterGeometry, Scene } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ScaleScope } from "../../src/spec/spec.ts";
 import { rampsOf } from "../helpers/guides.ts";
+import { cellOf, positionOf, stopsOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -159,26 +160,26 @@ describe("heatmaps split by facets", () => {
       y: { scope: "panel" },
       x: { scope: "panel" },
     });
-    const [stop] = model.keyboardStops("S");
+    const [stop] = stopsOf(model, "S");
     const key = stop!.key;
     const rowAt = (panel: string, position: number | undefined) =>
       position === undefined ? undefined : rowOf(model.panelSeries(panel)[0]!, position);
     // S draws (b, p) and (c, p) on its top row, (a, q) below them.
-    const first = model.stepCell("S", key, -1, 0, 0);
+    const first = cellOf(model, "S", key, -1, 0, 0);
     expect(rowAt("S", first)).toBe(6);
-    const right = model.stepCell("S", key, first!, 1, 0);
+    const right = cellOf(model, "S", key, first!, 1, 0);
     expect(rowAt("S", right)).toBe(4);
     // Down from c: the nearest cell of the next row, a.
-    const down = model.stepCell("S", key, right!, 0, -1);
+    const down = cellOf(model, "S", key, right!, 0, -1);
     expect(rowAt("S", down)).toBe(1);
     // A keyboard read names the cell's own categories and row.
-    const read = model.inspectPosition(key, down!, "S")!;
+    const read = positionOf(model, key, down!, "S")!;
     expect(read).toMatchObject({ panel: "S", label: "a" });
     expect(read.points.map((p) => [p.label, p.value, p.row])).toEqual([["q", 2, 1]]);
     // E has one row of cells: down leaves it.
-    const e = model.stepCell("E", key, -1, 0, 0);
+    const e = cellOf(model, "E", key, -1, 0, 0);
     expect(rowAt("E", e)).toBe(2);
-    expect(model.stepCell("E", key, e!, 0, -1)).toBeUndefined();
+    expect(cellOf(model, "E", key, e!, 0, -1)).toBeUndefined();
   });
 
   it("summarize every panel's cells by the chart's categories", () => {

@@ -57,6 +57,45 @@ class Selection:
 
 
 @dataclass(frozen=True)
+class ViewEdge:
+    """The view came near an end of what the chart's ``limits`` let a scale show
+    (``widget.on_edge``): the ``scale`` ("x", "y", or "y_right"), the ``side``
+    ("start", its low values, or "end"), what the view shows (``domain``), the
+    ``bound`` it is near (the extent's end, or the data's), the subplots
+    showing the scale (``panels``, None when every panel does), and what
+    moved the view there (``cause``: "pointer", "wheel", "keyboard", "api",
+    "sync", "data", or "options")."""
+
+    scale: str
+    side: str
+    domain: Range
+    bound: float | _dt.datetime
+    cause: str
+    panels: tuple[str, ...] | None = None
+
+
+def decode_edge(payload: Any) -> ViewEdge | None:
+    """An edge event from the browser, with datetimes on time axes; None for one it cannot read."""
+    if not isinstance(payload, Mapping):
+        return None
+    try:
+        time = payload.get("time") is True
+        low, high = payload["domain"]
+        panels = payload.get("panels")
+        scale = payload["scale"]
+        return ViewEdge(
+            scale="y_right" if scale == "yRight" else str(scale),
+            side=str(payload["side"]),
+            domain=(_time(float(low), time), _time(float(high), time)),
+            bound=_time(float(payload["bound"]), time),
+            cause=str(payload["cause"]),
+            panels=None if panels is None else tuple(str(p) for p in panels),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+@dataclass(frozen=True)
 class InspectedField:
     """A column of the row a tooltip is at that its mark's tooltip shows
     (``hg.Tooltip(fields=...)``)."""

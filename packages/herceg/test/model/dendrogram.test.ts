@@ -18,6 +18,7 @@ import type { SegmentGeometry } from "../../src/scene/scene.ts";
 import { LIGHT } from "../../src/theme.ts";
 import { clustermap } from "../fixtures/clustermap.ts";
 import { legendOf } from "../helpers/guides.ts";
+import { stopsOf } from "../helpers/keyboard.ts";
 
 const linkage = () => table({ first: [0, 2, 5], second: [1, 3, 4], height: [1, 2, 4] });
 const options = {
@@ -264,7 +265,7 @@ describe("dendrogram", () => {
     });
     expect(describeChart(model)).toContain("Columns: 4 leaves, 3 merges. Merge heights 1 to 4.");
     expect(legendOf(scene)).toEqual([]);
-    expect(model.keyboardStops("")).toEqual([]);
+    expect(stopsOf(model, "")).toEqual([]);
     expect(
       model.inspect(scene.panels[0]!.plot.x + 20, scene.panels[0]!.plot.y + 20),
     ).toBeUndefined();

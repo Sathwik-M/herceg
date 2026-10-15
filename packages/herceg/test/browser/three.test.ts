@@ -199,6 +199,7 @@ describe("3D charts", () => {
     const wheel = (chart: Chart) =>
       chart.root.dispatchEvent(
         new WheelEvent("wheel", {
+          ctrlKey: true,
           bubbles: true,
           cancelable: true,
           deltaY: -100,
@@ -222,9 +223,9 @@ describe("3D charts", () => {
     zooms.destroy();
   });
 
-  it("turn sideways under touches and leave the page to scroll up and down", async () => {
+  it("turn sideways under touches and leave the page to scroll up and down, and pinch", async () => {
     const chart = await mount();
-    expect(chart.root.style.touchAction).toBe("pan-y");
+    expect(chart.root.style.touchAction).toBe("pan-y pinch-zoom");
     chart.destroy();
   });
 
@@ -740,7 +741,7 @@ it("combines map and orbit touch controls while keeping gestures in their panels
   );
   expect(chart.getCamera()!.azimuth).toBe(40);
   chart.update({ interaction: { zoom: false } });
-  expect(chart.root.style.touchAction).toBe("pan-y");
+  expect(chart.root.style.touchAction).toBe("pan-y pinch-zoom");
   chart.destroy();
 });
 

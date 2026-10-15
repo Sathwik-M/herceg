@@ -17,6 +17,7 @@ import type {
   TextGeometry,
 } from "../../src/scene/scene.ts";
 import { legendOf, rampsOf } from "../helpers/guides.ts";
+import { axisOf, positionOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig, width = 600, height = 300) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -500,7 +501,7 @@ describe("horizontal bar", () => {
       ["q2", "-10"],
     ]);
     const key = model.series()[1]!.key;
-    const keyboard = model.inspectPosition(key, 2)!;
+    const keyboard = positionOf(model, key, 2)!;
     expect([keyboard.axis, keyboard.label, keyboard.points.length]).toEqual(["y", "E", 2]);
   });
 
@@ -598,9 +599,9 @@ describe("horizontal bar", () => {
   it("places the cursor along y whatever the tooltip mode", () => {
     for (const mode of ["nearest-y", "nearest", "nearest-x"] as const) {
       const { model } = build({ marks: [bar(sales, { x: "q1", y: "region" })], tooltip: { mode } });
-      expect(model.cursorAxis()).toBe("y");
+      expect(axisOf(model)).toBe("y");
     }
-    expect(build({ marks: [bar(sales, { x: "region", y: "q1" })] }).model.cursorAxis()).toBe("x");
+    expect(axisOf(build({ marks: [bar(sales, { x: "region", y: "q1" })] }).model)).toBe("x");
   });
 
   it("names the category in nearest-point tooltips", () => {

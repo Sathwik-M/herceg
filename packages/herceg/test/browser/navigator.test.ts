@@ -317,6 +317,7 @@ describe("a navigator's sliders", () => {
       const rect = a.root.getBoundingClientRect();
       a.root.dispatchEvent(
         new WheelEvent("wheel", {
+          ctrlKey: true,
           bubbles: true,
           cancelable: true,
           deltaY: 200,
@@ -1114,6 +1115,7 @@ describe("a navigator under panels", () => {
     const rect = chart.root.getBoundingClientRect();
     chart.root.dispatchEvent(
       new WheelEvent("wheel", {
+        ctrlKey: true,
         bubbles: true,
         cancelable: true,
         deltaY: -200,

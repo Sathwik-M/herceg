@@ -1,5 +1,6 @@
 // The built-in tooltip's content: fields of the row it is at, and content
 // of the application's own (`renderTooltip`) in its box.
+import "./interactive.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart, MountedChart } from "../../src/dom/chart.ts";

@@ -25,7 +25,9 @@
     class: className,
     style = "",
     chart = $bindable(null),
+    initial,
     onviewport,
+    onedge,
     onselect,
     onhover,
     onclick,
@@ -40,6 +42,15 @@
   }: ChartProps = $props();
 
   type Options = Omit<ChartUpdate, "marks">;
+
+  // The server's markup, as the chart found it: shown in a host of its own
+  // until the chart takes it over.
+  const snapshot = untrack(() => initial);
+  if (snapshot && typeof snapshot.hydrate !== "function")
+    throw new TypeError(
+      "Chart initial: expected hydration(snapshot), from herceg, of what renderToSnapshot wrote; pass the snapshot through it",
+    );
+  let snapshotHost = $state<HTMLDivElement>();
 
   /** What the tooltip is at, which the `renderTooltip` snippet renders into `tooltipHost`. */
   let shown = $state.raw<Inspection | null>(null);
@@ -124,6 +135,7 @@
     });
   }
   listen("viewport", () => onviewport);
+  listen("edge", () => onedge);
   listen("select", () => onselect);
   listen("hover", () => onhover);
   listen("click", () => onclick);
@@ -142,10 +154,11 @@
   function create(view: View) {
     // Options given as undefined take their defaults, as if left out.
     const given = Object.entries(view.options).filter(([, value]) => value !== undefined);
-    current = createChart(container, {
+    const config = {
       ...(Object.fromEntries(given) as Omit<ChartOptions, "marks">),
       marks: view.marks,
-    });
+    };
+    current = snapshot ? snapshot.hydrate(snapshotHost!, config) : createChart(container, config);
     chart = current;
     applied = view;
   }
@@ -191,6 +204,10 @@
   class={className}
   style="width: {size(options.width, '100%')}; height: {size(options.height, '320px')}; {style}"
 >
+  {#if snapshot}
+    <!-- The server's markup, which the chart takes over. -->
+    <div bind:this={snapshotHost} style="width: 100%; height: 100%">{@html snapshot.snapshot.html}</div>
+  {/if}
   <!-- Mark components render only empty anchors, kept out of the layout. -->
   <div bind:this={anchors} hidden>{@render children?.()}</div>
   <!-- The chart shows this in its tooltip's box. -->

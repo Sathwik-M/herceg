@@ -171,6 +171,60 @@ def svg(
     )
 
 
+def snapshot(
+    spec: dict[str, Any],
+    buffers: list[bytes],
+    *,
+    width: int | None,
+    height: int | None,
+    id_prefix: str,
+    fonts: Fonts | None,
+    locale: str | None,
+    time_zone: str | None,
+) -> dict[str, Any]:
+    """A chart rendered for a page to show and a browser to hydrate (see
+    ``Chart.to_snapshot``), by herceg's DOM-free renderer in an embedded V8."""
+    if not isinstance(id_prefix, str) or not re.fullmatch(r"[A-Za-z][\w-]*", id_prefix):
+        raise ValueError(
+            "to_snapshot id_prefix: expected a name that starts ids, unique in the page "
+            f'("latency"); received {shown(id_prefix)}'
+        )
+    for name, value in (("width", width), ("height", height)):
+        if value is not None and not (
+            isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+        ):
+            raise ValueError(
+                f"to_snapshot {name}: expected a size in CSS pixels; received {shown(value)}"
+            )
+    if time_zone == "local":
+        raise ValueError(
+            'to_snapshot time_zone: "local" is this machine\'s zone, which browsers may '
+            'not share; give an IANA zone or "UTC"'
+        )
+    options = {
+        "width": width,
+        "height": height,
+        "idPrefix": id_prefix,
+        "locale": locale,
+        "timeZone": time_zone,
+        "fonts": _font_faces(fonts, "to_snapshot") or None,
+    }
+    try:
+        result = _call(
+            "hercegStatic.snapshot",
+            json.dumps(spec),
+            _encoded(buffers),
+            json.dumps({key: value for key, value in options.items() if value is not None}),
+        )
+    except ValueError as error:
+        message = str(error)
+        raise ValueError(
+            message.replace("renderToSnapshot ", "to_snapshot ").replace("timeZone", "time_zone")
+        ) from None
+    snapshot: dict[str, Any] = json.loads(result)
+    return snapshot
+
+
 def _svg(
     spec: dict[str, Any],
     buffers: list[bytes],

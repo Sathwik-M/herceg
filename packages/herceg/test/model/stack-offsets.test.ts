@@ -9,6 +9,7 @@ import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { AreaGeometry, TextGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
+import { positionOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig) {
   const model = new ChartModel({ locale: "en-US", ...config });
@@ -43,7 +44,7 @@ describe("normalized and stream stacks", () => {
       close(b!.top, [1, 1, 0]);
       close(b!.base, [0.25, 0.5, 0]);
       expect((horizontal ? model.xScale() : model.yScale())!.domain).toEqual([0, 1]);
-      expect(model.inspectPosition(model.series()[0]!.key, 0)!.points[0]).toMatchObject({
+      expect(positionOf(model, model.series()[0]!.key, 0)!.points[0]).toMatchObject({
         value: 2,
         text: "0.25 share (2 raw)",
       });
@@ -75,7 +76,7 @@ describe("normalized and stream stacks", () => {
           (g) => g.labels,
         ),
       ).toContain("20%");
-      expect(model.inspectPosition(model.series()[0]!.key, 0)!.points[0]).toMatchObject({
+      expect(positionOf(model, model.series()[0]!.key, 0)!.points[0]).toMatchObject({
         value: 2,
         text: "0.2 share (2 raw)",
       });
@@ -101,7 +102,7 @@ describe("normalized and stream stacks", () => {
           b!.top,
           baseline.map((v, i) => v + [8, 8, 0][i]!),
         );
-        expect(model.inspectPosition(model.series()[0]!.key, 0)!.points[0]).toMatchObject({
+        expect(positionOf(model, model.series()[0]!.key, 0)!.points[0]).toMatchObject({
           value: 2,
           text: "2",
         });
@@ -156,9 +157,9 @@ describe("normalized and stream stacks", () => {
         expect(s.edges!.top[1]! - s.edges!.bottom![1]!).toBeCloseTo(
           gaps === "zero" ? 0 : mode === "fill" ? 0.5 : 4,
         );
-        expect(
-          model.inspectPosition(model.series()[0]!.key, 1)!.points.map((p) => p.label),
-        ).toEqual(["a"]);
+        expect(positionOf(model, model.series()[0]!.key, 1)!.points.map((p) => p.label)).toEqual([
+          "a",
+        ]);
       });
     }
     it(`keeps ${mode} NaN gaps and finite layers, rejecting negatives until corrected`, () => {
@@ -255,7 +256,7 @@ describe("normalized and stream stacks", () => {
       marks: [area(table({ t: [0], a: [1e16], b: [1] }), { x: "t", y: ["a", "b"], stack: "fill" })],
     }).model;
     expect(
-      tinyAfter.inspectPosition(tinyAfter.series()[1]!.key, 0)!.points.find((p) => p.label === "b")!
+      positionOf(tinyAfter, tinyAfter.series()[1]!.key, 0)!.points.find((p) => p.label === "b")!
         .text,
     ).toContain("0.0000000000000001 share (1 raw)");
     const huge = build({
@@ -300,7 +301,7 @@ describe("normalized and stream stacks", () => {
     }
     model.hidden.add(model.series()[0]!.key);
     model.scene(estimateText);
-    expect(model.inspectPosition(model.series()[1]!.key, 0)!.points[0]!.text).toContain("raw");
+    expect(positionOf(model, model.series()[1]!.key, 0)!.points[0]!.text).toContain("raw");
   });
 
   it("long inside-out curves share boundaries in geometric order", () => {

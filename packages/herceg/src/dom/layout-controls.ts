@@ -3,6 +3,8 @@
 // loads the one family's controls, so a map never downloads a 3D chart's.
 
 import type { LayoutControls } from "../marks/layout-mark.ts";
+import type { Bindings } from "../model/bindings.ts";
+import type { ChartConfig } from "../model/model.ts";
 import type { Controls, ControlsHost, ControlsModule } from "./controls.ts";
 
 /** What a chart lends its controls, as it has them. */
@@ -36,14 +38,33 @@ export async function mountControls(
   kind: LayoutControls["kind"],
   parts: ChartParts,
 ): Promise<Controls> {
-  const { Controls } = await load(kind);
+  // Bindings come with the interaction controller, which the chart loads too.
+  const [{ Controls }, { Bindings }] = await Promise.all([load(kind), import("./interaction.ts")]);
   const { live, legend, cursor, ...shared } = parts;
+  // The chart's bindings, compiled again when its configuration changes.
+  // Those it refuses are its controller's to report: here they bind nothing.
+  let compiled: [ChartConfig, Bindings] | undefined;
+  const bindings = () => {
+    const { config } = parts.model;
+    if (compiled?.[0] !== config) {
+      let bound: Bindings;
+      try {
+        bound = new Bindings(config.interaction);
+      } catch {
+        bound = new Bindings();
+      }
+      compiled = [config, bound];
+    }
+    return compiled[1];
+  };
   return new Controls({
     ...shared,
+    bindings,
     announce(text) {
       live.textContent = text;
     },
     onPlot: (target) => !legend.contains(target as Node),
+    focused: () => parts.chart.root.ownerDocument.activeElement === parts.chart.root,
     cursor: () => {
       const at = cursor();
       return at && { panel: at.panel, key: at.key || undefined };

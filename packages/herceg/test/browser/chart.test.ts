@@ -271,6 +271,7 @@ describe("interaction", () => {
     });
     chart.root.dispatchEvent(
       new WheelEvent("wheel", {
+        ctrlKey: true,
         deltaY: -200,
         clientX: chart.root.getBoundingClientRect().left + 300,
         bubbles: true,
@@ -490,9 +491,10 @@ describe("events and brushing", () => {
       marks: [line(table({ t: [0, 1, 2, 3], v: [1, 2, 3, 4] }), { x: "t", y: "v" })],
       x: { domain: [0, 3] },
     });
-    // The brush loads on demand.
+    // The brush loads on demand. Touches brush along x and leave vertical
+    // scrolling and pinches to the page, as the chart does not zoom.
     await chart.loading;
-    expect(chart.root.style.touchAction).toBe("pan-y");
+    expect(chart.root.style.touchAction).toBe("pan-y pinch-zoom");
     const x = modelOf(chart).xScale()!;
     press(chart.root, "pointerdown", x.map(1), 150);
     press(chart.root, "pointermove", x.map(2), 150);
@@ -1501,7 +1503,11 @@ describe("zooming and brushing in two dimensions", () => {
     };
     chart.root.dispatchEvent(
       type === "wheel"
-        ? new WheelEvent("wheel", { ...init, deltaY: -200 })
+        ? new WheelEvent("wheel", {
+            ctrlKey: true,
+            ...init,
+            deltaY: -200,
+          })
         : new PointerEvent(type, { ...init, button: 0, pointerId: MOUSE }),
     );
   };

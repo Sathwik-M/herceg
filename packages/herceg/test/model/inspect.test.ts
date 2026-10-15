@@ -24,6 +24,7 @@ import { treemap } from "../../src/marks/treemap.ts";
 import { violin } from "../../src/marks/violin.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel, type Inspection } from "../../src/model/model.ts";
+import { positionOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -63,8 +64,8 @@ describe("inspected points", () => {
       { mark: 2, markId: undefined, key: '[2,"band"]', label: "a–b", row: 3 },
     ]);
     // Rows at the same coordinates stay apart: the keyboard reaches each.
-    expect(identities(model.inspectPosition('["latency","a"]', 2))![0]!.row).toBe(2);
-    expect(identities(model.inspectPosition('["latency","a"]', 1))![0]!.row).toBe(1);
+    expect(identities(positionOf(model, '["latency","a"]', 2))![0]!.row).toBe(2);
+    expect(identities(positionOf(model, '["latency","a"]', 1))![0]!.row).toBe(1);
   });
 
   it("give table rows for series split by a field, stacks, and horizontal bars", () => {
@@ -78,10 +79,10 @@ describe("inspected points", () => {
     });
     const b = keyOf(stacked, "b");
     // Series b's points are rows 2 and 3.
-    expect(stacked.inspectPosition(b, 1)!.points.find((p) => p.key === b)!.row).toBe(3);
+    expect(positionOf(stacked, b, 1)!.points.find((p) => p.key === b)!.row).toBe(3);
     const horizontal = build({ marks: [bar(sales, { x: "units", y: "region", series: "kind" })] });
     const a = keyOf(horizontal, "a");
-    expect(horizontal.inspectPosition(a, 1)!.points.find((p) => p.key === a)!.row).toBe(1);
+    expect(positionOf(horizontal, a, 1)!.points.find((p) => p.key === a)!.row).toBe(1);
   });
 
   it("give points' rows, in the panel's part of the table with facets", () => {
@@ -136,7 +137,7 @@ describe("inspected points", () => {
     ]) {
       const model = build({ marks: [mark] });
       const [s] = model.series();
-      expect(identities(model.inspectPosition(s!.key, 0))![0]!.row).toBeUndefined();
+      expect(identities(positionOf(model, s!.key, 0))![0]!.row).toBeUndefined();
     }
   });
 });

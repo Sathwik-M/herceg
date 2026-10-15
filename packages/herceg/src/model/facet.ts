@@ -19,6 +19,7 @@ import type { MarkSeries } from "./inspect.ts";
 import {
   type AnnotatedPanel,
   across,
+  alongY,
   annotations,
   checkBands,
   checkFit,
@@ -173,19 +174,20 @@ export class Facet implements PanelLayout {
     }
     const scopes = this.scopes(options);
     checkBands(marks, options, scopes);
-    // A y zoom moves both y scales through the same pixels, so every panel must share each.
-    const { zoom } = options.interaction ?? {};
-    if (typeof zoom === "string" && zoom.includes("y")) {
+    // A y zoom or pan moves both y scales through the same pixels, so every panel must share each.
+    const along = alongY(options.interaction);
+    if (along) {
+      const [path, does] = along;
       if (scopes.y !== "chart")
         throw new Error(
-          'chart interaction.zoom: panels with y scales of their own cannot zoom along y yet; share y or zoom along "x"',
+          `chart interaction.${path}: panels with y scales of their own cannot ${does} along y yet; share y or ${does} along "x"`,
         );
       if (
         scopes.yRight !== "chart" &&
         marks.some((mark) => mark.spec.axis === "right" && usesY(mark))
       )
         throw new Error(
-          `chart interaction.zoom: panels with right y scales of their own (yRight.scope "${scopes.yRight}") cannot zoom along y yet; share them or zoom along "x"`,
+          `chart interaction.${path}: panels with right y scales of their own (yRight.scope "${scopes.yRight}") cannot ${does} along y yet; share them or ${does} along "x"`,
         );
     }
     for (const mark of marks) {

@@ -15,6 +15,7 @@ import { renderToSVG } from "../../src/render/static.ts";
 import type { LineGeometry, RuleGeometry, Scene } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ChartSpec } from "../../src/spec/spec.ts";
+import { positionOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig, width = 600, height = 300) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -324,7 +325,7 @@ describe("right y axis", () => {
     const x = model.xScale()!;
     const right = model.yRightScale()!;
     const requests = model.series()[1]!;
-    const keyed = model.inspectPosition(requests.key, 1)!;
+    const keyed = positionOf(model, requests.key, 1)!;
     const point = keyed.points.find((p) => p.key === requests.key)!;
     expect(point.text).toBe("4.8K");
     expect(point.py).toBeCloseTo(right.map(4800), 3);

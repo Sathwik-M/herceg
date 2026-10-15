@@ -29,7 +29,7 @@ function set(node: Element, name: string, value: string): void {
  * What the layer keeps for one geometry: its elements, updated in place,
  * or for drawings without elements, one group and a hash of its markup.
  */
-interface Retained {
+export interface Retained {
   kind: string;
   nodes: Element[];
   /** Hash of the group's markup; undefined for elements. */
@@ -44,7 +44,7 @@ interface Retained {
  * second copy of every drawn path in memory; a collision, which would skip
  * one update, is vanishingly unlikely at 53 bits.
  */
-function hash(text: string): number {
+export function hash(text: string): number {
   let h1 = 0xdeadbeef;
   let h2 = 0x41c6ce57;
   for (let i = 0; i < text.length; i++) {
@@ -58,7 +58,7 @@ function hash(text: string): number {
 }
 
 /** What the layer keeps for one panel: its clip, and its data and annotation groups. */
-interface PanelNodes {
+export interface PanelNodes {
   clip: SVGClipPathElement;
   clipRect: SVGRectElement;
   /** Data, clipped to the panel's plot. */
@@ -70,6 +70,80 @@ interface PanelNodes {
   annotations: SVGGElement;
   markNodes: Map<string, Retained>;
   annotationNodes: Map<string, Retained>;
+}
+
+/**
+ * What a layer is made of: its elements, what it drew, and the hashes of
+ * the markup its groups hold. A layer makes its own, or takes those of a
+ * chart's server markup (dom/adopt.ts).
+ */
+export interface LayerParts {
+  svg: SVGSVGElement;
+  defs: SVGDefsElement;
+  under: SVGGElement;
+  guides: SVGGElement;
+  overlay: SVGGElement;
+  panels: Map<string, PanelNodes>;
+  underHash: number;
+  guidesHash: number;
+  /** Clip paths made so far, for unique ids. */
+  clips: number;
+  chartClip: SVGRectElement | undefined;
+}
+
+/** The parts of a new, empty layer. */
+function newParts(document: Document): LayerParts {
+  const svg = element(document, "svg", { "aria-hidden": "true" });
+  svg.style.cssText = "position:absolute;left:0;top:0;overflow:visible";
+  const parts: LayerParts = {
+    svg,
+    defs: element(document, "defs"),
+    under: element(document, "g"),
+    guides: element(document, "g"),
+    overlay: element(document, "g", { "pointer-events": "none" }),
+    panels: new Map(),
+    underHash: hash(""),
+    guidesHash: hash(""),
+    clips: 0,
+    chartClip: undefined,
+  };
+  svg.append(parts.defs, parts.under, parts.guides, parts.overlay);
+  return parts;
+}
+
+/**
+ * What the layer draws of a panel, in order: the data cut to its plot (with
+ * `marks`, else the canvas draws it), then above it the data its marks do
+ * not cut to the plot and the guide drawings (rules, text).
+ */
+export function panelDrawing(
+  panel: Panel,
+  marks: boolean,
+): { data: readonly Geometry[]; above: readonly Geometry[] } {
+  const cut = (mark: Geometry) => clipOf(mark) === "plot";
+  const drawn = marks ? panel.marks.filter((mark) => !mark.draw.guide) : [];
+  return {
+    data: drawn.filter(cut),
+    above: [
+      ...drawn.filter((mark) => !cut(mark)),
+      ...panel.marks.filter((mark) => mark.draw.guide),
+    ],
+  };
+}
+
+/** A geometry's elements, cut to `clip` (a clip path's `url(...)`), for drawings that have them. */
+export function elementsOf(
+  mark: Geometry,
+  context: SvgContext,
+  clip: string | undefined,
+): SvgElement[] | undefined {
+  const elements = mark.draw.elements?.(mark, context);
+  return elements && clip
+    ? elements.map(({ tag, attributes }) => ({
+        tag,
+        attributes: { ...attributes, "clip-path": clip },
+      }))
+    : elements;
 }
 
 /**
@@ -88,27 +162,33 @@ export class SvgLayer {
    * panel's data group, then each panel's annotation group.
    */
   readonly #under: SVGGElement;
-  #underMarkup = "";
+  /** Hashes of the markup the under and guides groups hold. */
+  #underHash: number;
+  #guidesHash: number;
   /** Axes, title, and color legend. */
   readonly #guides: SVGGElement;
-  readonly #panels = new Map<string, PanelNodes>();
+  readonly #panels: Map<string, PanelNodes>;
   readonly #id: string;
   /** Clip paths made so far, for unique ids. */
-  #clips = 0;
+  #clips: number;
   /** The chart's own clip, for marks cut to the chart; made when first needed. */
   #chartClip: SVGRectElement | undefined;
-  #guideMarkup = "";
 
-  constructor(document: Document, id: string) {
+  constructor(document: Document, id: string, adopted?: LayerParts) {
     this.#document = document;
     this.#id = id;
-    this.svg = element(document, "svg", { "aria-hidden": "true" });
-    this.svg.style.cssText = "position:absolute;left:0;top:0;overflow:visible";
-    this.#defs = element(document, "defs");
-    this.#under = element(document, "g");
-    this.#guides = element(document, "g");
-    this.overlay = element(document, "g", { "pointer-events": "none" });
-    this.svg.append(this.#defs, this.#under, this.#guides, this.overlay);
+    ({
+      svg: this.svg,
+      overlay: this.overlay,
+      defs: this.#defs,
+      under: this.#under,
+      guides: this.#guides,
+      panels: this.#panels,
+      underHash: this.#underHash,
+      guidesHash: this.#guidesHash,
+      clips: this.#clips,
+      chartClip: this.#chartClip,
+    } = adopted ?? newParts(document));
   }
 
   #panelNodes(key: string): PanelNodes {
@@ -129,8 +209,14 @@ export class SvgLayer {
     return nodes;
   }
 
-  /** Draws the scene. With `marks: false` the canvas owns grid and data. */
-  render(scene: Scene, options: { marks: boolean }): void {
+  /**
+   * Draws the scene. With `marks: false` the canvas owns grid and data.
+   * Images (heatmaps) are encoded on a canvas unless `encodeRaster` says how.
+   */
+  render(
+    scene: Scene,
+    options: { marks: boolean; encodeRaster?: SvgContext["encodeRaster"] },
+  ): void {
     const { svg } = this;
     const { width, height, theme } = scene;
     set(svg, "width", String(width));
@@ -142,15 +228,16 @@ export class SvgLayer {
 
     // Backgrounds and grid lines are the canvas' when it draws the marks.
     const under = options.marks ? underMarkup(scene) : "";
-    if (under !== this.#underMarkup) {
+    const underHash = hash(under);
+    if (underHash !== this.#underHash) {
       this.#under.innerHTML = under;
-      this.#underMarkup = under;
+      this.#underHash = underHash;
     }
 
     const document = this.#document;
     const context: SvgContext = {
       theme,
-      encodeRaster: (raster) => canvasRasterUrl(raster, document),
+      encodeRaster: options.encodeRaster ?? ((raster) => canvasRasterUrl(raster, document)),
     };
     const seen = new Set<string>();
     if (cutToChart(scene)) {
@@ -177,9 +264,10 @@ export class SvgLayer {
     }
     // The series legend is the chart's HTML buttons.
     const markup = guidesMarkup(scene, this.#id, false);
-    if (markup !== this.#guideMarkup) {
+    const guidesHash = hash(markup);
+    if (guidesHash !== this.#guidesHash) {
       this.#guides.innerHTML = markup;
-      this.#guideMarkup = markup;
+      this.#guidesHash = guidesHash;
     }
   }
 
@@ -189,13 +277,8 @@ export class SvgLayer {
     set(nodes.clipRect, "y", String(plot.y));
     set(nodes.clipRect, "width", String(plot.width));
     set(nodes.clipRect, "height", String(plot.height));
-    const cut = (mark: Geometry) => clipOf(mark) === "plot";
-    const data = marks ? panel.marks.filter((mark) => !mark.draw.guide && cut(mark)) : [];
+    const { data, above } = panelDrawing(panel, marks);
     this.#renderKeyed(nodes.marks, nodes.markNodes, data, context);
-    const above = [
-      ...(marks ? panel.marks.filter((mark) => !mark.draw.guide && !cut(mark)) : []),
-      ...panel.marks.filter((mark) => mark.draw.guide),
-    ];
     const plotClip = `url(#${nodes.clip.id})`;
     const chartClip = `url(#${this.#id}-clip-chart)`;
     this.#renderKeyed(nodes.annotations, nodes.annotationNodes, above, context, (mark) => {
@@ -230,12 +313,7 @@ export class SvgLayer {
       seen.add(mark.key);
       const old = retained.get(mark.key);
       const clip = clipOf?.(mark);
-      let elements = mark.draw.elements?.(mark, context);
-      if (elements && clip)
-        elements = elements.map(({ tag, attributes }) => ({
-          tag,
-          attributes: { ...attributes, "clip-path": clip },
-        }));
+      const elements = elementsOf(mark, context, clip);
       const entry = elements
         ? this.#updateElements(old, mark.kind, elements)
         : this.#updateMarkup(old, mark.kind, mark.draw.svg(mark, context));

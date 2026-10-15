@@ -21,6 +21,7 @@ import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { panels } from "../../src/model/panels.ts";
 import type { Rect, SegmentGeometry, TextGeometry } from "../../src/scene/scene.ts";
 import { legendOf } from "../helpers/guides.ts";
+import { positionOf, stopsOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", ...config });
@@ -191,9 +192,9 @@ describe("a layout mark in a subplot", () => {
       const [slice] = items(model, "share");
       expect(JSON.parse(slice!.key)[0]).toBe(pieAt);
       expect(model.inspectItem(slice!.key, "share")!.points[0]!.mark).toBe(pieAt);
-      const [series] = model.keyboardStops("trend");
+      const [series] = stopsOf(model, "trend");
       expect(JSON.parse(series!.key)[0]).toBe(1 - pieAt);
-      expect(model.inspectPosition(series!.key, 0, "trend")!.points[0]!.mark).toBe(1 - pieAt);
+      expect(positionOf(model, series!.key, 0, "trend")!.points[0]!.mark).toBe(1 - pieAt);
       // The legend follows the marks' order.
       const labels = model.legendEntries().map(({ label }) => label);
       expect(labels.indexOf("revenue") < labels.indexOf("a")).toBe(first === "line");

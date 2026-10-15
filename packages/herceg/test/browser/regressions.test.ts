@@ -168,6 +168,7 @@ describe("runtime regressions", () => {
     const rect = chart.root.getBoundingClientRect();
     chart.root.dispatchEvent(
       new WheelEvent("wheel", {
+        ctrlKey: true,
         deltaY: -300,
         clientX: rect.left + px,
         bubbles: true,

@@ -30,6 +30,7 @@ import {
 } from "../../src/model/selected-rows.ts";
 import { staticCompilers } from "../../src/render/compilers.ts";
 import type { AreaGeometry, PointGeometry, RectGeometry } from "../../src/scene/scene.ts";
+import { positionOf } from "../helpers/keyboard.ts";
 
 /** Tables as charts read them, whatever their fields. */
 const table = (columns: Record<string, ColumnInput>, options?: { maxRows?: number }): Table =>
@@ -524,7 +525,7 @@ describe("lassos and clicks as rows", () => {
     });
     const [lp] = logged.panels();
     const [series] = logged.panelSeries(lp!.key);
-    expect(logged.inspectPosition(series!.key, 0)!.points[0]!.value).toBe(10);
+    expect(positionOf(logged, series!.key, 0)!.points[0]!.value).toBe(10);
   });
 
   it("select a histogram series' rows in its bin, and a facet panel's own rows", () => {

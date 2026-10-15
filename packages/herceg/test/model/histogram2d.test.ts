@@ -13,6 +13,7 @@ import { renderToSVG } from "../../src/render/static.ts";
 import type { RasterGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import { rampsOf } from "../helpers/guides.ts";
+import { cellOf, positionOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -118,9 +119,9 @@ describe("2D histograms", () => {
     expect(model.inspect(model.xScale()!.map(8), model.yScale()!.map(2))).toBeUndefined();
     // The keyboard reads cells row by row from the top left.
     const key = model.series()[0]!.key;
-    const top = model.stepCell(model.panels()[0]!.key, key, -1, 0, 0);
-    expect(model.inspectPosition(key, top!)!.points[0]!.label).toBe("x 0 – 5, y 5 – 10");
-    expect(model.stepCell(model.panels()[0]!.key, key, top!, 1, 0)).toBe(2);
+    const top = cellOf(model, model.panels()[0]!.key, key, -1, 0, 0);
+    expect(positionOf(model, key, top!)!.points[0]!.label).toBe("x 0 – 5, y 5 – 10");
+    expect(cellOf(model, model.panels()[0]!.key, key, top!, 1, 0)).toBe(2);
   });
 
   it("describe their values, bins, and fullest cell", () => {

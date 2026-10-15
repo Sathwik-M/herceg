@@ -4,7 +4,7 @@ import type { LegendGuide, LegendItem } from "../scene/scene.ts";
 import type { TextPaint } from "../style/style.ts";
 import type { Theme } from "../theme.ts";
 
-interface Entry {
+export interface Entry {
   button: HTMLButtonElement;
   swatch: HTMLSpanElement;
   /** The label, and its text: in it when the label has a box, else the label itself. */
@@ -22,15 +22,28 @@ interface Entry {
  */
 export class Legend {
   readonly element: HTMLDivElement;
-  readonly #entries = new Map<string, Entry>();
-  readonly #toggle: (keys: string | readonly string[]) => void;
+  readonly #entries: Map<string, Entry>;
 
-  constructor(document: Document, toggle: (keys: string | readonly string[]) => void) {
-    this.element = document.createElement("div");
+  /**
+   * A new legend, or one taking over the element and entries of a chart's
+   * server markup (`adopted`, see dom/adopt.ts). `toggle` hides and shows
+   * what a button names.
+   */
+  constructor(
+    document: Document,
+    toggle: (keys: string | readonly string[]) => void,
+    adopted?: { element: HTMLDivElement; entries: Map<string, Entry> },
+  ) {
+    this.element = adopted?.element ?? document.createElement("div");
     this.element.setAttribute("role", "group");
     this.element.setAttribute("aria-label", "Legend");
     this.element.style.cssText = "position:absolute;left:0;top:0;width:100%;height:0";
-    this.#toggle = toggle;
+    this.#entries = adopted?.entries ?? new Map();
+    // One listener for every button, those adopted included.
+    this.element.addEventListener("click", ({ target }) => {
+      for (const { button, targets } of this.#entries.values())
+        if (button.contains(target as Node)) toggle(targets);
+    });
   }
 
   /** Shows the legends' entries, each legend's in its label style; none without legends. */
@@ -43,8 +56,7 @@ export class Legend {
     for (const legend of legends)
       for (const item of legend.entries) {
         const labelStyle = labelStyles(legend);
-        // Legends listing a series each have a button of their own for it.
-        const id = legends.length > 1 ? JSON.stringify([legend.key, item.key]) : item.key;
+        const id = entryId(legends, legend, item);
         seen.add(id);
         let entry = this.#entries.get(id);
         if (!entry) {
@@ -54,7 +66,6 @@ export class Legend {
           swatch.style.cssText = "width:10px;height:10px;border-radius:2px;flex:none";
           const label = document.createElement("span");
           button.append(swatch, label);
-          button.addEventListener("click", () => this.#toggle(entry!.targets));
           entry = { button, swatch, label, text: label, shown: "", targets: item.key };
           this.#entries.set(id, entry);
         }
@@ -80,6 +91,15 @@ export class Legend {
       this.#entries.delete(key);
     }
   }
+}
+
+/** The key of a legend entry's button: legends listing a series each have a button of their own for it. */
+export function entryId(
+  legends: readonly LegendGuide[],
+  legend: LegendGuide,
+  item: LegendItem,
+): string {
+  return legends.length > 1 ? JSON.stringify([legend.key, item.key]) : item.key;
 }
 
 /**

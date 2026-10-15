@@ -567,12 +567,28 @@ export interface TooltipSpec {
   axisLabels?: boolean;
 }
 
+/**
+ * How the chart answers the pointer, the wheel, touch, and keys. `pan`,
+ * `zoom`, `brush`, `rotate`, and `drag` are presets: each stands for the
+ * bindings it lists (see docs), which `bindings` comes before. Defaults suit
+ * pages that scroll: the vertical wheel scrolls the page, and the wheel
+ * zooms only with Ctrl or ⌘ held (as trackpads pinch).
+ */
 export interface InteractionSpec {
   /**
-   * Wheel zoom and drag pan along x (`true` or "x"), y, or both ("xy");
-   * double-click resets. Category axes do not zoom. Maps and networks zoom and pan both
-   * ways (`true` or "xy"), 3D charts magnify their camera, and treemaps and
-   * sunbursts drill into nodes (`true`).
+   * Dragging pans these axes (`true` is x; a map's or network's plane, both
+   * ways), the horizontal wheel (and Shift with the wheel) pans x, and
+   * double-click resets. Category axes do not pan. `zoom` pans as well,
+   * unless `pan` is false.
+   */
+  pan?: boolean | ZoomSpec;
+  /**
+   * Zooms these axes: the wheel with Ctrl or ⌘ held, a trackpad or touch
+   * pinch, and the + and − keys zoom, 0 and double-click reset, and
+   * dragging pans unless `pan` is false. `true` is x (category axes do not
+   * zoom); maps and networks zoom both ways (`true` or "xy"), 3D charts
+   * magnify their camera, and treemaps and sunbursts drill into nodes on a
+   * click (`true`).
    */
   zoom?: boolean | ZoomSpec;
   /**
@@ -582,15 +598,233 @@ export interface InteractionSpec {
    * instead (Shift-drag pans); lassos only select. Maps and networks take "lasso".
    */
   brush?: BrushSpec;
-  /** Charts with the same sync name share their cursor, x range, and selection. */
-  sync?: string;
+  /**
+   * Gestures bound to actions, matched in order before the presets'
+   * bindings: the first whose gesture matches the input, and whose action
+   * applies where it happens, takes it. A gesture may be bound once.
+   */
+  bindings?: readonly BindingSpec[];
+  /** How far the view may go, and when it nears its ends, per scale ("x", "y", "yRight"). */
+  limits?: ViewLimitsSpec;
+  /**
+   * Shares the cursor, the view, and the selection with the charts of the
+   * same group: a group's name for all three along x, or each channel's
+   * group (and scale) on its own; channels left out are not shared.
+   */
+  sync?: string | SyncSpec;
   /**
    * Dragging turns 3D charts; true by default. Their `zoom` is `true` or
-   * false: the wheel magnifies them.
+   * false: the wheel (with Ctrl or ⌘) magnifies them.
    */
   rotate?: boolean;
   /** Dragging a network's node moves it, and it stays where it is dropped. */
   drag?: boolean;
+}
+
+/** A key held with a gesture. */
+export type Modifier = "shift" | "ctrl" | "alt" | "meta";
+
+/**
+ * The wheel (or a trackpad's two-finger scroll) along an axis, either by
+ * default: the axis it moves most along, x for Shift with a mouse wheel in
+ * browsers that report it so. With `focused`, only while the chart has the
+ * keyboard focus.
+ */
+export interface WheelGesture {
+  type: "wheel";
+  axis?: "x" | "y";
+  /** Keys held, exactly: none by default. */
+  modifiers?: readonly Modifier[];
+  focused?: boolean;
+}
+
+/** A press that moves: by a mouse button (0, the primary, by default) or a touch or pen. */
+export interface DragGesture {
+  type: "drag";
+  button?: 0 | 1 | 2;
+  /** Only presses of this kind; any by default. */
+  pointer?: "mouse" | "touch" | "pen";
+  modifiers?: readonly Modifier[];
+}
+
+/** Two fingers moving apart or together. Trackpad pinches arrive as the wheel with Ctrl held. */
+export interface PinchGesture {
+  type: "pinch";
+}
+
+/**
+ * A key, as `KeyboardEvent.key` names it, while the chart has the keyboard
+ * focus. Shift is not counted for single characters other than letters,
+ * which may need it ("+").
+ */
+export interface KeyGesture {
+  type: "key";
+  key: string;
+  modifiers?: readonly Modifier[];
+}
+
+/** A double click on the plot. */
+export interface DoubleClickGesture {
+  type: "doubleClick";
+  modifiers?: readonly Modifier[];
+}
+
+/**
+ * Pans these axes (by default x, or a plane both ways): by a drag's or the
+ * wheel's movement, or for a key, by `step`, fractions of the view across
+ * and up ([0.1, 0] moves a tenth of the x range right).
+ */
+export interface PanAction {
+  type: "pan";
+  axes?: ZoomSpec;
+  step?: readonly [number, number];
+}
+
+/**
+ * Zooms these axes (as `pan`): the wheel and pinches about the pointer, a
+ * double click there by `factor` (2 by default), and a key about the
+ * plot's middle by `factor` (1.25 by default); a factor above 1 zooms in.
+ */
+export interface ZoomAction {
+  type: "zoom";
+  axes?: ZoomSpec;
+  factor?: number;
+}
+
+/**
+ * Selects what a drag covers along x or y, a rectangle, or a lasso; with
+ * `zoom`, zooms to its ranges on release instead (a lasso still selects).
+ * Brushes that select rows for `rowSelection` never zoom.
+ */
+export interface BrushAction {
+  type: "brush";
+  shape?: BrushSpec;
+  zoom?: boolean;
+}
+
+/** Back to the configured view. */
+export interface ResetAction {
+  type: "reset";
+}
+
+/** Nothing: the page scrolls or zooms as it would, and later bindings are not tried. */
+export interface PageScrollAction {
+  type: "pageScroll";
+}
+
+/** The cursor follows a drag, which pans nothing (as a touch scrubs along a line). */
+export interface CursorAction {
+  type: "cursor";
+}
+
+/** A 3D chart's camera turns with a drag. */
+export interface OrbitAction {
+  type: "orbit";
+}
+
+/** A network's node moves with a drag that starts on it. */
+export interface MoveItemAction {
+  type: "moveItem";
+}
+
+/** A gesture and what it does: only actions the gesture can perform. */
+export type BindingSpec =
+  | { gesture: WheelGesture; action: PanAction | ZoomAction | PageScrollAction }
+  | {
+      gesture: DragGesture;
+      action:
+        | PanAction
+        | BrushAction
+        | PageScrollAction
+        | CursorAction
+        | OrbitAction
+        | MoveItemAction;
+    }
+  | { gesture: PinchGesture; action: ZoomAction | PageScrollAction }
+  | { gesture: KeyGesture; action: PanAction | ZoomAction | ResetAction }
+  | { gesture: DoubleClickGesture; action: ZoomAction | ResetAction };
+
+/** Limits of the views of the position scales, by name. */
+export interface ViewLimitsSpec {
+  x?: ScaleLimitsSpec;
+  y?: ScaleLimitsSpec;
+  yRight?: ScaleLimitsSpec;
+}
+
+/**
+ * How far the view of a scale may go, and when it nears its ends. Every
+ * view asked for keeps inside `extent` (pans keep their span; a view wider
+ * than the extent shows the extent), whoever asks: the pointer, keys,
+ * `setViewport`, a brush, or a synced chart. A view fitted to the data (the
+ * first, or after a reset) shows the data, or the axis' `domain`.
+ */
+export interface ScaleLimitsSpec {
+  /** The values the view may show, epoch ms on time axes; null for no end on that side. */
+  extent?: readonly [number | null, number | null];
+  /**
+   * Reports an `edge` event when the view comes within `threshold` (a
+   * fraction of its span, 0.1 by default) of an end of the extent, or, on an
+   * x scale every panel shares, of the data where the extent has none, and
+   * again only once it has moved `hysteresis` (0.05) farther away, or the
+   * end moved. `true` takes the defaults.
+   */
+  edge?: boolean | { threshold?: number; hysteresis?: number };
+}
+
+/**
+ * The channels a chart shares, each with the charts of its group (a name
+ * alone, or with the scale that carries it): the cursor's position and the
+ * view's range along x by default, and the selection whole (its x and y
+ * ranges and lassos). Values travel as data: times as epoch ms, categories
+ * by name. A chart along y follows one along x with `scale: "y"`; a
+ * selection's range along one axis is shared alone with `scale: "x"` or "y".
+ * `panels` shares the cursor among the chart's own panels.
+ */
+export interface SyncSpec {
+  cursor?: string | CursorSyncSpec;
+  viewport?: string | SyncChannelSpec;
+  selection?: string | SelectionSyncSpec;
+  /**
+   * The cursor across the chart's own panels (facets, subplots): where the
+   * pointer or keyboard is in one, the others show a crosshair and their
+   * points at the same x. On by default for panels sharing an x scale;
+   * `true` or `{ snap?, tooltip? }` also for panels with x scales of their
+   * own (the value read on each one's scale); `false` turns it off.
+   */
+  panels?: boolean | CursorShowSpec;
+}
+
+/** A sync channel: its group's name and the chart's scale it carries. */
+export interface SyncChannelSpec {
+  group: string;
+  scale?: "x" | "y";
+}
+
+/**
+ * Which points a cursor at a shared value reads: the data's x nearest to it
+ * across the series, and each series' point there ("nearest", the default,
+ * as the pointer reads); each series' last point at or before it
+ * ("previous", for readings at other frequencies: an hourly series' 10:00
+ * for 10:37); or its first at or after it ("next"). Series with no point
+ * there in view show none. "previous" and "next" read along x; cursors
+ * along y (horizontal bars, lines along y) read the nearest.
+ */
+export type CursorSnap = "nearest" | "previous" | "next";
+
+/** How a chart shows a cursor that is not its own pointer's: which points, and whether with its tooltip. */
+export interface CursorShowSpec {
+  snap?: CursorSnap;
+  /** The chart's tooltip shows at the cursor too; off by default. */
+  tooltip?: boolean;
+}
+
+/** The cursor's channel, and how the chart shows the cursors it receives (one tooltip at most). */
+export interface CursorSyncSpec extends SyncChannelSpec, CursorShowSpec {}
+
+/** The selection's channel: its group's name, and what of selections it carries ("xy", all, by default). */
+export interface SelectionSyncSpec {
+  group: string;
+  scale?: "x" | "y" | "xy";
 }
 
 /** What selects rows in a chart bound to a selection store: range and rectangle brushes, lassos, and clicks. */

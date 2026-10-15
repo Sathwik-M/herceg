@@ -9,6 +9,7 @@ import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { Scene, SegmentGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
+import { positionOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig, width = 600, height = 300) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -138,7 +139,7 @@ describe("error bars", () => {
     // Keyboard navigation does not land on a row without a category.
     const missing = table({ g: ["a", null], lo: [1, 2], hi: [2, 3] });
     const { model: keyed } = build({ marks: [errorBar(missing, { x: "g", y1: "lo", y2: "hi" })] });
-    expect(keyed.inspectPosition(keyed.series()[0]!.key, 1)).toBeUndefined();
+    expect(positionOf(keyed, keyed.series()[0]!.key, 1)).toBeUndefined();
   });
 
   it("count only intervals inside the x view, without joining them", () => {

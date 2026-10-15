@@ -9,6 +9,7 @@
 // methods do; each command starts from the state asked
 // for so far, drawn or not, so commands faster than frames add up.
 
+import type { Bindings } from "../model/bindings.ts";
 import type { Controls } from "../model/item-views.ts";
 import type { ChartModel } from "../model/model.ts";
 import type { Chart } from "./handle.ts";
@@ -18,6 +19,10 @@ export interface ControlsHost {
   readonly chart: Chart;
   /** What the chart drew last: its items, and for maps and networks the plane's scales. */
   readonly model: ChartModel;
+  /** The gestures the chart's `interaction` binds: what the wheel, drags, and double clicks do. */
+  bindings(): Bindings;
+  /** Whether the chart has the keyboard focus, which wheel bindings may ask for. */
+  focused(): boolean;
   /** The pointer overlay, above the marks, where controls draw outlines (a lasso). */
   readonly overlay: SVGGElement;
   /** Reads a sentence aloud through the chart's live region. */
@@ -50,25 +55,4 @@ export class PointerOwnership {
 /** A controls module, as `LayoutMark.controls` loads it. */
 export interface ControlsModule {
   Controls: new (host: ControlsHost) => Controls;
-}
-
-/** All loaded control families use the same touch policy, regardless of import order. */
-export function touchAction(host: ControlsHost): void {
-  const { zoom, brush, drag, rotate = true } = host.model.config.interaction ?? {};
-  const kinds = new Set(host.model.items?.asked().map(({ kind }) => kind));
-  const plane = kinds.has("map") || kinds.has("drag");
-  const axes = host.model.config.marks.some((mark) => !("layout" in mark && mark.layout === true));
-  const along = !axes
-    ? ""
-    : `${zoom === true ? "x" : zoom || ""}${brush === "lasso" ? "xy" : (brush ?? "")}`;
-  host.chart.root.style.touchAction =
-    (plane && (zoom || brush === "lasso")) || (kinds.has("drag") && drag)
-      ? "none"
-      : along.includes("x") && along.includes("y")
-        ? "none"
-        : along.includes("x") || (kinds.has("orbit") && rotate)
-          ? "pan-y"
-          : along.includes("y")
-            ? "pan-x"
-            : "";
 }

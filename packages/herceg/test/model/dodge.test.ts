@@ -15,6 +15,7 @@ import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { panels } from "../../src/model/panels.ts";
 import type { PointGeometry, RectGeometry, Scene, SegmentGeometry } from "../../src/scene/scene.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
+import { positionOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -430,8 +431,8 @@ describe("dodge across marks and panels", () => {
     // Only the second bin is drawn, a bar per series.
     expect(of<RectGeometry>(scene, "rect").map((bars) => bars.count)).toEqual([1, 1]);
     const [a] = model.series();
-    expect(model.inspectPosition(a!.key, 0)).toBeUndefined();
-    const second = model.inspectPosition(a!.key, 1)!.points;
+    expect(positionOf(model, a!.key, 0)).toBeUndefined();
+    const second = positionOf(model, a!.key, 1)!.points;
     expect(second.every((p) => Number.isFinite(p.px))).toBe(true);
   });
 

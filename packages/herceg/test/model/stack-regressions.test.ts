@@ -9,6 +9,7 @@ import { RowStack } from "../../src/marks/stack.ts";
 import { offsetLayers } from "../../src/marks/stack-offset.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
+import { positionOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig) {
   const model = new ChartModel({ locale: "en-US", ...config });
@@ -46,7 +47,7 @@ for (const stack of ["center", "wiggle"] as const) {
                 stack,
               });
         const model = build({ marks: [mark], [axis]: { tooltipFormat: format } });
-        expect(model.inspectPosition(model.series()[0]!.key, 0)!.points.map((p) => p.text)).toEqual(
+        expect(positionOf(model, model.series()[0]!.key, 0)!.points.map((p) => p.text)).toEqual(
           format.style === "unit" ? ["2 ms", "6 ms"] : ["$2.00", "$6.00"],
         );
       });

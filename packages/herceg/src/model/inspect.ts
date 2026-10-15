@@ -250,7 +250,7 @@ export class Inspector {
       }
     }
     if (!Number.isFinite(snapped)) return undefined;
-    return this.#inspectAt(axis, snapped, series, yAxis);
+    return this.inspectAt(axis, snapped, series, yAxis);
   }
 
   /**
@@ -445,36 +445,11 @@ export class Inspector {
   }
 
   /**
-   * Inspects one point of a series, identified by position, plus the other
-   * visible series at its x (or its y, for marks inspected along y). Used by
-   * keyboard navigation, which must reach every point even when values repeat.
+   * Every series' point at `value` on `axis` (for "y", a value of `yAxis`);
+   * with an `anchor` series, at its position `anchorPosition` for the
+   * series sharing its positions.
    */
-  inspectPosition(seriesKey: string, position: number): AxisInspection | undefined {
-    const series = this.#visibleSeries(() => true);
-    const anchor = series.find((s) => s.key === seriesKey);
-    if (!anchor || position < 0 || position >= anchor.length) return undefined;
-    const axis = this.#ownerOf.get(anchor)!.mark.tooltip === "y" ? "y" : "x";
-    const value = placeAt(anchor, axis, rowOf(anchor, position));
-    // The cursor needs a place along its axis; a point that is not drawn
-    // there (a zero on a log axis, say) leaves the other series' points.
-    const scale = this.#frame[axis];
-    if (!Number.isFinite(scale.map(value)) || (scale.type === "band" && value < 0))
-      return undefined;
-    const along = series.filter((s) => this.#ownerOf.get(s)!.mark.tooltip === axis);
-    const inspection = this.#inspectAt(
-      axis,
-      value,
-      along.includes(anchor) ? along : [anchor],
-      this.#left,
-      anchor,
-      position,
-    );
-    // Nothing drawn at this position: no tooltip rather than an empty one.
-    return inspection.points.length > 0 ? inspection : undefined;
-  }
-
-  /** Every series' point at `value` on `axis` (for "y", a value of `yAxis`). */
-  #inspectAt(
+  inspectAt(
     axis: "x" | "y",
     value: number,
     series: readonly Series[],

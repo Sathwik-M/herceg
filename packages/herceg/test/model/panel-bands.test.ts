@@ -14,6 +14,7 @@ import { renderToSVG } from "../../src/render/static.ts";
 import type { RectGeometry, Scene, SegmentGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ScaleScope } from "../../src/spec/spec.ts";
+import { positionOf, stopsOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -209,8 +210,8 @@ describe("categories resolved per panel", () => {
     const nearest = model.inspect(x.map(1), e.plot.y + e.plot.height / 2, "nearest");
     expect(nearest).toMatchObject({ value: 1, label: "d" });
     expect(nearest!.points.map((p) => p.row)).toEqual([5]);
-    const [stop] = model.keyboardStops("S");
-    const read = model.inspectPosition(stop!.key, 1, "S");
+    const [stop] = stopsOf(model, "S");
+    const read = positionOf(model, stop!.key, 1, "S");
     expect(read).toMatchObject({ panel: "S", value: 1, label: "c" });
     expect(read!.points.map((p) => p.row)).toEqual([4]);
     // Values are formatted as the panel's axis names its bands.
@@ -721,8 +722,8 @@ describe("categories resolved per panel", () => {
     const s = model.panels()[1]!;
     const hit = model.inspect(s.x.map(1), s.y.map(5.5), "nearest", "S")!;
     expect(hit.points.map(({ row, text }) => [row, text])).toEqual([[4, "5 – 6"]]);
-    const [stop] = model.keyboardStops("S");
-    expect(model.inspectPosition(stop!.key, 1, "S")!.label).toBe("c");
+    const [stop] = stopsOf(model, "S");
+    expect(positionOf(model, stop!.key, 1, "S")!.label).toBe("c");
 
     // Horizontal ones, in subplots, whose y categories are their own by default.
     const two = build({
@@ -787,8 +788,8 @@ describe("categories resolved per panel", () => {
     };
     expect(lines(0).map(([day]) => day)).toEqual(["mon", "wed"]);
     expect(lines(1).map(([day]) => day)).toEqual(["wed", "tue"]);
-    const [stop] = model.keyboardStops("S");
-    const read = model.inspectPosition(stop!.key, 1, "S")!;
+    const [stop] = stopsOf(model, "S");
+    const read = positionOf(model, stop!.key, 1, "S")!;
     expect([read.label, read.points[0]!.text]).toEqual(["wed", "open 2, high 3, low 1, close 2.5"]);
   });
 

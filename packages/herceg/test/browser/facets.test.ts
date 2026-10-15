@@ -228,6 +228,7 @@ describe("facets in the browser", () => {
     const rect = chart.root.getBoundingClientRect();
     chart.root.dispatchEvent(
       new WheelEvent("wheel", {
+        ctrlKey: true,
         deltaY: -200,
         clientX: rect.left + px,
         clientY: rect.top + b!.plot.y + 10,
@@ -368,6 +369,7 @@ describe("facet panels with x scales of their own", () => {
   const wheel = (chart: Chart, x: number, y: number) => {
     const rect = chart.root.getBoundingClientRect();
     const event = new WheelEvent("wheel", {
+      ctrlKey: true,
       deltaY: -200,
       clientX: rect.left + x,
       clientY: rect.top + y,
@@ -733,6 +735,7 @@ describe("subplots with x scales of their own", () => {
     const rect = chart.root.getBoundingClientRect();
     chart.root.dispatchEvent(
       new WheelEvent("wheel", {
+        ctrlKey: true,
         deltaY: -200,
         clientX: rect.left + spreadPanel!.x.map(20),
         clientY: rect.top + spreadPanel!.plot.y + 5,
@@ -1054,6 +1057,7 @@ describe("right axes in panels", () => {
     const rect = chart.root.getBoundingClientRect();
     chart.root.dispatchEvent(
       new WheelEvent("wheel", {
+        ctrlKey: true,
         deltaY: -200,
         clientX: rect.left + x,
         clientY: rect.top + y,

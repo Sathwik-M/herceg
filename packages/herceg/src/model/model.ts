@@ -40,7 +40,7 @@ import {
   type RowParts,
   usesY,
 } from "../marks/mark.ts";
-import { type Series, samePositions } from "../marks/series.ts";
+import type { Series } from "../marks/series.ts";
 import type { FieldReaders } from "../marks/tooltip-fields.ts";
 import { domainExtent, unionExtent } from "../marks/trace.ts";
 import type { TimeBreaks } from "../scale/breaks.ts";
@@ -453,10 +453,15 @@ export class ChartModel {
     // Sides whose panels have scales of their own let go of their y viewport.
     const { y, yRight } = this.#yViewport;
     const kept = {
-      y: this.#shares("y") ? y : null,
-      yRight: this.#shares("yRight") ? yRight : null,
+      y: this.#limit(this.#shares("y") ? y : null, "y"),
+      yRight: this.#limit(this.#shares("yRight") ? yRight : null, "yRight"),
     };
     if (kept.y !== y || kept.yRight !== yRight) this.#yViewport = kept;
+    // Views stay inside limits that changed too.
+    for (const [group, view] of this.#viewports) {
+      const shown = this.#limit(view, "x");
+      if (shown !== view) this.#viewports.set(group, shown!);
+    }
     this.#style(page);
   }
 
@@ -503,6 +508,11 @@ export class ChartModel {
     return this.#viewports.get(this.xGroupOf(panel)) ?? null;
   }
 
+  /** Whether every panel shares one left y scale, so the chart has one y view. */
+  get sharesY(): boolean {
+    return this.#shares("y");
+  }
+
   /** Whether every panel shares one x scale: unless the chart's `x.scope` says otherwise. */
   get sharesX(): boolean {
     return this.#scope("x") === "chart";
@@ -529,10 +539,37 @@ export class ChartModel {
    * (see `xGroupOf`); null without a panel fits every scale.
    */
   setViewport(domain: readonly [number, number] | null, panel?: string): void {
-    const shown = range(domain);
+    const group = domain ? this.xGroupOf(panel) : "";
+    const shown = this.#limit(range(domain), "x");
     if (panel === undefined && !shown) this.#viewports.clear();
-    else if (shown) this.#viewports.set(this.xGroupOf(panel), shown);
+    else if (shown) this.#viewports.set(group, shown);
     else this.#viewports.delete(this.xGroupOf(panel));
+  }
+
+  /**
+   * A view of scale `name`, ascending, kept inside its extent
+   * (`interaction.limits`): moved inside, keeping its span, where it fits,
+   * and the extent where it does not; on log axes by ratios, where ends
+   * that are not positive bound nothing.
+   */
+  #limit<View extends readonly [number, number]>(
+    view: View | null,
+    name: ScaleName,
+  ): View | [number, number] | null {
+    const extent = this.#config.interaction?.limits?.[name]?.extent;
+    if (!view || !extent) return view;
+    const log = this.#config[name]?.type === "log";
+    const to = log ? Math.log : Number;
+    const from = log ? Math.exp : Number;
+    const [lo, hi] = extent;
+    const low = lo === null || (log && lo <= 0) ? -Infinity : to(lo);
+    const high = hi === null || (log && hi <= 0) ? Infinity : to(hi);
+    const [a, b] = [to(view[0]), to(view[1])];
+    const span = b - a;
+    if (span >= high - low) return [lo!, hi!];
+    if (a < low) return [lo!, from(low + span)];
+    if (b > high) return [from(high - span), hi!];
+    return view;
   }
 
   /** The visible y ranges, each null when not zoomed. Band y axes ignore them. */
@@ -543,7 +580,10 @@ export class ChartModel {
   /** Shows y ranges; throws for ranges the chart cannot show (see `checkYViewport`). */
   setYViewport(viewport: YViewport): void {
     this.checkYViewport(viewport);
-    this.#yViewport = { y: range(viewport.y), yRight: range(viewport.yRight) };
+    this.#yViewport = {
+      y: this.#limit(range(viewport.y), "y"),
+      yRight: this.#limit(range(viewport.yRight), "yRight"),
+    };
   }
 
   /**
@@ -2350,52 +2390,19 @@ export class ChartModel {
   }
 
   /** The series a panel of the last scene draws; with facets, the parts of series in it. */
+  /** Whether the last scene's inspections name their panel: in charts with facets or subplots. */
+  get namesPanels(): boolean {
+    return this.#namesPanels;
+  }
+
+  /** What panel `panel` of the last scene inspects: its marks, their series, and its frame. */
+  inspectorOf(panel: string): Inspector | undefined {
+    return this.#views.find(({ key }) => key === panel)?.inspector;
+  }
+
   panelSeries(panel: string): Series[] {
     const view = this.#views.find(({ key }) => key === panel);
     return view ? view.inspector.marks.flatMap(({ series }) => series) : [];
-  }
-
-  /**
-   * The series of a panel the keyboard stops at, in order. An inspection
-   * along x (or y) reports every series with a point at exactly that
-   * place, so series inspected along an axis share a stop when they share
-   * their positions along it (several fields of one table); every other
-   * shown series, and each inspected point by point or cell by cell, is a
-   * stop of its own.
-   */
-  keyboardStops(panel: string): Series[] {
-    const view = this.#views.find(({ key }) => key === panel);
-    if (!view) return [];
-    const shared: { axis: "x" | "y"; series: Series }[] = [];
-    return view.inspector.marks.flatMap(({ mark, visible: series }) =>
-      series.filter((s) => {
-        const axis = mark.tooltip;
-        if (axis !== "x" && axis !== "y") return true;
-        if (shared.some((p) => p.axis === axis && samePositions(p.series, s, axis))) return false;
-        shared.push({ axis, series: s });
-        return true;
-      }),
-    );
-  }
-
-  /**
-   * For series the keyboard reads cell by cell (heatmaps): the position of
-   * the cell `columns` to the right and `rows` up from the one at
-   * `position`, as the panel draws them, or undefined when there is none.
-   */
-  stepCell(
-    panel: string,
-    seriesKey: string,
-    position: number,
-    columns: number,
-    rows: number,
-  ): number | undefined {
-    const view = this.#views.find(({ key }) => key === panel);
-    const found = view?.inspector.marks.find(({ series }) =>
-      series.some((s) => s.key === seriesKey),
-    );
-    const s = found?.series.find((part) => part.key === seriesKey);
-    return s && found!.mark.stepCell?.(s, position, columns, rows, view!.inspector.frame);
   }
 
   /** The panel whose plot holds a pixel, if any. */
@@ -2404,16 +2411,6 @@ export class ChartModel {
       ({ plot }) =>
         px >= plot.x && px <= plot.x + plot.width && py >= plot.y && py <= plot.y + plot.height,
     );
-  }
-
-  /**
-   * The axis data is placed along, which a cursor follows: y when marks are
-   * placed along y (horizontal bars), otherwise x.
-   */
-  cursorAxis(): "x" | "y" {
-    return this.#drawn.some(({ mark, series }) => mark.tooltip === "y" && series.length > 0)
-      ? "y"
-      : "x";
   }
 
   /** Tooltip mode of the last scene: the chart's, or one suited to its marks. */
@@ -2499,16 +2496,6 @@ export class ChartModel {
       this.#items?.inspect(px, py, panel) ??
       (view && this.#inPanel(view, view.inspector.inspect(px, py, mode)))
     );
-  }
-
-  /**
-   * Inspects one point of a series by its position in a panel (the first by
-   * default); see `Inspector.inspectPosition`.
-   */
-  inspectPosition(seriesKey: string, position: number, panel?: string): AxisInspection | undefined {
-    const view =
-      panel === undefined ? this.#views[0] : this.#views.find(({ key }) => key === panel);
-    return view && this.#inPanel(view, view.inspector.inspectPosition(seriesKey, position));
   }
 
   /** Layout items and their state, available before the first scene so controls can start loading. */

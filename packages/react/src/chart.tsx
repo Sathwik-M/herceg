@@ -6,6 +6,7 @@ import {
   type ChartUpdate,
   createChart,
   type Chart as HercegChart,
+  type Hydration,
   type Inspection,
   type RenderTooltip,
   tablesOf,
@@ -49,8 +50,18 @@ export interface ChartProps extends Omit<ChartUpdate, "marks" | "renderTooltip">
   style?: CSSProperties;
   /** The underlying chart, for imperative calls such as `setViewport` or `toSVG`. */
   ref?: Ref<HercegChart | null>;
+  /**
+   * The chart rendered on the server (`renderToSnapshot`, or Python's
+   * `to_snapshot`) from the same options, as `hydration(snapshot)`: server
+   * and first client renders show its markup, which the chart then takes
+   * over without drawing it again. Read when the chart mounts; later values
+   * are not.
+   */
+  initial?: Hydration | undefined;
   /** The view changed (zoom, pan, reset, sync): x, y, and right y ranges, each null when not zoomed. */
   onViewport?: ChartListener<"viewport">;
+  /** The view came near an end of what `interaction.limits` allows, as to load more data. */
+  onEdge?: ChartListener<"edge">;
   /** The selection changed (`interaction.brush`): x and y ranges and a lasso's outline, null when cleared. */
   onSelect?: ChartListener<"select">;
   /** The data under the pointer or keyboard cursor changed, as for a tooltip of your own. */
@@ -248,7 +259,9 @@ export function Chart({
   className,
   style,
   ref,
+  initial,
   onViewport,
+  onEdge,
   onSelect,
   onHover,
   onClick,
@@ -262,6 +275,16 @@ export function Chart({
   ...props
 }: ChartProps) {
   const container = useRef<HTMLDivElement>(null);
+  // The server's markup, as the first render found it: shown in a host of
+  // its own until the chart takes it over, which only the first mount does.
+  const [snapshot] = useState(initial);
+  if (snapshot && typeof snapshot.hydrate !== "function")
+    throw new TypeError(
+      "Chart initial: expected hydration(snapshot), from herceg, of what renderToSnapshot wrote; pass the snapshot through it",
+    );
+  const html = useMemo(() => snapshot && { __html: snapshot.snapshot.html }, [snapshot]);
+  const host = useRef<HTMLDivElement>(null);
+  const hydrated = useRef(false);
   const chart = useRef<HercegChart | null>(null);
   /** What the chart shows, to skip updates when a re-render changed nothing. */
   const applied = useRef<Applied | null>(null);
@@ -277,10 +300,13 @@ export function Chart({
   useLayoutEffect(() => {
     // Options given as undefined take their defaults, as if left out.
     const given = Object.entries(options).filter(([, value]) => value !== undefined);
-    const created = createChart(container.current!, {
-      ...(Object.fromEntries(given) as Omit<ChartOptions, "marks">),
-      marks,
-    });
+    const config = { ...(Object.fromEntries(given) as Omit<ChartOptions, "marks">), marks };
+    // A second mount (React's strict mode) finds the markup taken: it mounts afresh.
+    const created =
+      snapshot && !hydrated.current
+        ? snapshot.hydrate(host.current!, config)
+        : createChart(host.current ?? container.current!, config);
+    hydrated.current = true;
     chart.current = created;
     applied.current = { marks, options, key: optionsKey };
     return () => {
@@ -290,6 +316,7 @@ export function Chart({
   }, []);
 
   useChartEvent(chart, "viewport", onViewport);
+  useChartEvent(chart, "edge", onEdge);
   useChartEvent(chart, "select", onSelect);
   useChartEvent(chart, "hover", onHover);
   useChartEvent(chart, "click", onClick);
@@ -335,7 +362,16 @@ export function Chart({
         ref={container}
         className={className}
         style={{ width: options.width ?? "100%", height: options.height ?? 320, ...style }}
-      />
+      >
+        {html && (
+          <div
+            ref={host}
+            style={{ width: "100%", height: "100%" }}
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: herceg's own markup, its text escaped (`initial` comes from renderToSnapshot, never from users)
+            dangerouslySetInnerHTML={html}
+          />
+        )}
+      </div>
       {renderTooltip && <TooltipContent shows={tooltip.shows} render={renderTooltip} />}
     </>
   );

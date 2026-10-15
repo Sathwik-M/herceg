@@ -43,7 +43,8 @@ functions can also be passed as a `marks` prop.
 
 The chart fills its container's width and is 320 px tall unless `width`,
 `height`, or `style` says otherwise; `class` and `style` go to the container
-element. Chart events are callback props: `onviewport`, `onselect`,
+element. Chart events are callback props: `onviewport`, `onedge` (the view
+came near an end of `interaction.limits`, as to load more data), `onselect`,
 `onhover`, `onclick`, `onrowselection` (a channel of the chart's `rowSelection` changed),
 `oncamera` (a 3D chart turned), `ondrill` (a treemap or sunburst drilled into a node),
 `onitemmove` (a network's node moved; with subplots, these and `onviewport` and
@@ -73,8 +74,9 @@ it shows, a highlighted row selection included):
 ```
 
 `<Graph>` uses the same `interaction` prop as maps: `zoom: true` (or
-`"xy"`) pans and zooms with wheel, drag, double-click, Shift+arrows,
-plus/minus/0, and a toolbar. `onviewport` reports x and y ranges in layout
+`"xy"`) pans and zooms with the wheel (Ctrl or ⌘ held, as trackpad pinches send it), drag,
+double-click, Shift+arrows, plus/minus/0, and a toolbar; `pan: true` pans
+without zooming. `onviewport` reports x and y ranges in layout
 coordinates (y increases downwards); node radii stay fixed in pixels.
 `brush: "lasso"` selects visible node centers through a `rowSelection`
 bound to the nodes table, including duplicate node rows, and dims unselected
@@ -105,6 +107,35 @@ alternatives retain their English language.
 as pixel arrays. String patterns scale with `strokeWidth` (the theme's
 line width when omitted on `Line`); arrays stay in CSS pixels. `Custom`
 shape styles accept the same values. See the engine's [dash patterns](../herceg/README.md#marks).
+
+## Server rendering
+
+`initial` takes the chart rendered on the server by `renderToSnapshot` from
+`herceg` (or Python's `to_snapshot`), passed through `hydration(snapshot)`,
+which brings the code that adopts it, so pages that never hydrate carry
+none of it. Server rendering (SvelteKit's, or
+`render` from `svelte/server`) and the first render in the browser write
+its markup, so hydrating finds no mismatch; the chart then takes the markup
+over without drawing it again, and attaches interaction after its first
+frame. Give `renderToSnapshot` the options the component gives the chart
+(marks built with herceg's functions, passed as `marks`, are the simplest
+to share), at the size the chart will have:
+
+```svelte
+<script lang="ts">
+  // latency.ts: export const latencyMarks = (rows) => [line(table(rows), { x: "time", y: "p50" })];
+  // +page.server.ts returns the rows and renderToSnapshot({ title: "Request latency",
+  //   marks: latencyMarks(rows) }, { width: 640, height: 320, idPrefix: "latency" }).
+  let { data } = $props();
+  const marks = latencyMarks(data.rows);
+</script>
+
+<Chart title="Request latency" {marks} width={640} height={320} initial={hydration(data.initial)} />
+```
+
+`initial` is read when the chart mounts; later values are not. See herceg's
+[Server rendering](../herceg/README.md#server-rendering) for what the
+snapshot holds and what hydrating checks.
 
 ## Tooltips
 

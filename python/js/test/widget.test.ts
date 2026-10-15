@@ -463,6 +463,7 @@ describe("notebook widget", () => {
       const rect = figure(host!).getBoundingClientRect();
       figure(host!).dispatchEvent(
         new WheelEvent("wheel", {
+          ctrlKey: true,
           bubbles: true,
           cancelable: true,
           deltaY: -100,
@@ -1004,6 +1005,7 @@ describe("notebook widget", () => {
     const rect = figure(host!).getBoundingClientRect();
     figure(host!).dispatchEvent(
       new WheelEvent("wheel", {
+        ctrlKey: true,
         bubbles: true,
         cancelable: true,
         deltaY: -100,
@@ -1203,6 +1205,7 @@ describe("notebook widget", () => {
       const rect = figure(host!).getBoundingClientRect();
       figure(host!).dispatchEvent(
         new WheelEvent("wheel", {
+          ctrlKey: true,
           bubbles: true,
           cancelable: true,
           deltaY,

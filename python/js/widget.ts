@@ -34,6 +34,7 @@ import {
   DRILLS,
   type DrillPayload,
   drillPayload,
+  edgePayload,
   type ItemPositionsPayload,
   inspectionPayload,
   MOVES,
@@ -133,6 +134,18 @@ type Columns = Record<string, ColumnSpec>;
  * Updates from Python. Columns index the buffers sent with the message. A
  * selection or viewport comes from Python or, with its `origin`, from a browser.
  */
+/**
+ * Python showing or hiding the cursor (`show_cursor`, `hide_cursor`): not
+ * state, so outside the updates' revisions.
+ */
+interface CursorMessage {
+  type: "cursor";
+  position: { x: number | string } | { y: number | string } | null;
+  broadcast: boolean;
+  snap?: "nearest" | "previous" | "next";
+  tooltip?: boolean;
+}
+
 export type Update = { revision: number } & (
   | { type: "append"; table: string; columns: Columns; maxRows?: number }
   | { type: "replace"; table: string; columns: Columns }
@@ -218,7 +231,7 @@ class Widget {
       this.#load(snapshot);
       for (const view of this.#views) this.#mount(view, true);
     });
-    model.on("msg:custom", (message: Update, buffers: DataView[]) =>
+    model.on("msg:custom", (message: Update | CursorMessage, buffers: DataView[]) =>
       this.#receive(message, buffers ?? []),
     );
     // Python sends the whole chart again if this one is out of date.
@@ -481,6 +494,10 @@ class Widget {
       if (!inspection || !this.#listening("click")) return;
       this.#model.send({ type: "click", inspection: inspectionPayload(chart, inspection) });
     });
+    chart.on("edge", (edge) => {
+      if (this.#listening("edge"))
+        this.#model.send({ type: "edge", edge: edgePayload(chart, edge) });
+    });
     // A drag turns the camera every frame: Python hears of it at most once a throttle interval.
     chart.on("camera", ({ camera, panels }) =>
       this.#report("camera", view, camera, panels?.[0] ?? ""),
@@ -688,7 +705,15 @@ class Widget {
     this.#outbox.post("select", { ...report, revision: this.#revision });
   }
 
-  #receive(message: Update, buffers: readonly DataView[]) {
+  #receive(message: Update | CursorMessage, buffers: readonly DataView[]) {
+    if (message.type === "cursor") {
+      const { position, broadcast, snap, tooltip } = message;
+      const shown = { broadcast, ...(snap && { snap }), ...(tooltip !== undefined && { tooltip }) };
+      for (const { chart } of this.#views)
+        if (position) chart?.showCursor(position, shown);
+        else chart?.hideCursor({ broadcast });
+      return;
+    }
     // Already applied: a duplicate.
     if (this.#resyncing || message.revision <= this.#revision) return;
     if (message.revision > this.#revision + 1) {

@@ -23,7 +23,7 @@ import {
 } from "../marks/mark.ts";
 import { type BandPlaces, rowOf, type Series } from "../marks/series.ts";
 import type { Rect } from "../scene/scene.ts";
-import type { ChartSpec, ScaleScope, XAxisSpec } from "../spec/spec.ts";
+import type { ChartSpec, InteractionSpec, ScaleScope, XAxisSpec } from "../spec/spec.ts";
 import type { AxisType } from "./axis.ts";
 import type { MarkSeries } from "./inspect.ts";
 import {
@@ -648,6 +648,31 @@ export function checkLayouts(layouts: readonly LayoutMark[], subplots = false): 
       throw new Error(
         `${spec.type} facet: 3D marks cannot split into facets; use separate marks in subplots`,
       );
+}
+
+/**
+ * What of `interaction` moves the view along y (and, with `brushes`,
+ * brushes along it), which panels of some layouts cannot do yet: its path
+ * under `interaction` and what it does there, or undefined for nothing.
+ * Presets and the chart's own bindings alike.
+ */
+export function alongY(
+  interaction: InteractionSpec = {},
+  brushes = false,
+): [path: string, does: string] | undefined {
+  const y = (axes: unknown) => typeof axes === "string" && axes.includes("y");
+  const { zoom, pan, brush, bindings = [] } = interaction;
+  if (y(zoom)) return ["zoom", "zoom"];
+  if (y(pan)) return ["pan", "pan"];
+  if (brushes && brush && brush !== "x") return ["brush", "brush"];
+  for (const [i, { action }] of bindings.entries()) {
+    const moves = (action.type === "pan" || action.type === "zoom") && y(action.axes);
+    // A brush that zooms moves the view along what it brushes.
+    const brushesY = action.type === "brush" && (action.shape ?? "x") !== "x";
+    if (moves || (brushesY && (brushes || (action.zoom && action.shape !== "lasso"))))
+      return [`bindings[${i}].action`, action.type];
+  }
+  return undefined;
 }
 
 /**

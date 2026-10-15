@@ -186,7 +186,14 @@ describe("view transitions", () => {
 
     chart.setViewport([20_000, 40_000]);
     tick(16);
-    chart.root.dispatchEvent(new WheelEvent("wheel", { ...at, deltaY: -100, cancelable: true }));
+    chart.root.dispatchEvent(
+      new WheelEvent("wheel", {
+        ctrlKey: true,
+        ...at,
+        deltaY: -100,
+        cancelable: true,
+      }),
+    );
     tick(16);
     // The wheel zooms from the view on screen, and shows its zoom at once.
     expect(x(chart)).toEqual([...chart.getViewport().x!]);

@@ -19,6 +19,7 @@ import { loadSpec } from "../../src/spec/load.ts";
 import type { ChartSpec, ViolinSpec } from "../../src/spec/spec.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
 import { legendOf } from "../helpers/guides.ts";
+import { positionOf, stopsOf } from "../helpers/keyboard.ts";
 import legacyViolins from "./fixtures/violin-legacy.json";
 
 const data = () =>
@@ -183,21 +184,21 @@ describe("violin options", () => {
         expect(model.inspect(pixel[0]!, pixel[1]!, mode)!.points.map((p) => p.label)).toEqual([
           "visible",
         ]);
-      expect(model.keyboardStops(panel.key).map((s) => s.label)).toEqual(["visible"]);
+      expect(stopsOf(model, panel.key).map((s) => s.label)).toEqual(["visible"]);
       const undrawn = model.panelSeries(panel.key).find((s) => s.label === "invisible")!;
-      expect(model.inspectPosition(undrawn.key, 0)).toBeUndefined();
+      expect(positionOf(model, undrawn.key, 0)).toBeUndefined();
       const onlyInvisible = build({ marks: [invisible(small)] });
-      expect(onlyInvisible.model.keyboardStops("")).toEqual([]);
+      expect(stopsOf(onlyInvisible.model, "")).toEqual([]);
       expect(
-        onlyInvisible.model.inspectPosition(onlyInvisible.model.panelSeries("")[0]!.key, 0),
+        positionOf(onlyInvisible.model, onlyInvisible.model.panelSeries("")[0]!.key, 0),
       ).toBeUndefined();
       expect(scene.panels[0]!.marks.some((m) => m.key.startsWith(`${undrawn.key}|`))).toBe(false);
       for (const inner of [undefined, "box", "quartiles"] as const) {
         const fallback = build({
           marks: [violin(small, { ...axes, bandwidth: 1e308, ...(inner ? { inner } : {}) })],
         });
-        const stop = fallback.model.keyboardStops("")[0]!;
-        expect(fallback.model.inspectPosition(stop.key, 0)!.points[0]!.value).toBe(1.5);
+        const stop = stopsOf(fallback.model, "")[0]!;
+        expect(positionOf(fallback.model, stop.key, 0)!.points[0]!.value).toBe(1.5);
         if (inner === "quartiles") {
           expect(
             (
@@ -231,14 +232,14 @@ describe("violin options", () => {
           ),
         ],
       });
-      expect(mixed.model.keyboardStops("").map((s) => s.label)).toEqual(["first"]);
+      expect(stopsOf(mixed.model, "").map((s) => s.label)).toEqual(["first"]);
       expect(valueScale(mixed.model).domain[1]).toBeLessThan(1000);
       expect(
         (mixed.scene.panels[0]!.marks.find((m) => m.kind === "segments") as SegmentGeometry).count,
       ).toBe(1);
-      expect(
-        mixed.model.inspectPosition(mixed.model.keyboardStops("")[0]!.key, 0)!.points[0]!.value,
-      ).toBe(2);
+      expect(positionOf(mixed.model, stopsOf(mixed.model, "")[0]!.key, 0)!.points[0]!.value).toBe(
+        2,
+      );
       for (const faceted of [false, true]) {
         const samples = table({
           p: ["P", "P", "P", "P", "P", "P"],
@@ -250,15 +251,16 @@ describe("violin options", () => {
           ...(faceted ? { facet: facet("p") } : {}),
         });
         const panelKey = faceted ? "P" : "";
-        const stop = result.model.keyboardStops(panelKey)[0]!;
+        const stop = stopsOf(result.model, panelKey)[0]!;
         expect(stop.length).toBe(2);
         expect(Array.from(stop.rows!)).toEqual([0, 2]);
         expect(
-          [0, 1].map((k) => result.model.inspectPosition(stop.key, k, panelKey)!.points[0]!.value),
+          [0, 1].map((k) => positionOf(result.model, stop.key, k, panelKey)!.points[0]!.value),
         ).toEqual([2, 3]);
-        expect(
-          [0, 1].map((k) => result.model.inspectPosition(stop.key, k, panelKey)!.label),
-        ).toEqual(["a", "c"]);
+        expect([0, 1].map((k) => positionOf(result.model, stop.key, k, panelKey)!.label)).toEqual([
+          "a",
+          "c",
+        ]);
       }
     },
   );
@@ -299,7 +301,7 @@ describe("violin options", () => {
             const pixel = horizontal ? [across.map(2), inside] : [inside, across.map(2)];
             const pointer = model.inspect(pixel[0]!, pixel[1]!, "nearest")!;
             expect(pointer.points.map((p) => p.label)).toEqual([label]);
-            const keyboard = model.inspectPosition(model.keyboardStops(panel.key)[i]!.key, 0)!;
+            const keyboard = positionOf(model, stopsOf(model, panel.key)[i]!.key, 0)!;
             for (const read of [pointer, keyboard]) {
               expect(read).toMatchObject({
                 axis: horizontal ? "y" : "x",
@@ -644,9 +646,9 @@ describe("violin options", () => {
         ["a", "b"],
         ["c"],
       ]);
-      expect(model.keyboardStops("P").map((s) => s.label)).toEqual(["first", "second"]);
-      expect(model.keyboardStops("Q").map((s) => s.label)).toEqual(["second"]);
-      const read = model.inspectPosition(model.keyboardStops("Q")[0]!.key, 0, "Q")!;
+      expect(stopsOf(model, "P").map((s) => s.label)).toEqual(["first", "second"]);
+      expect(stopsOf(model, "Q").map((s) => s.label)).toEqual(["second"]);
+      const read = positionOf(model, stopsOf(model, "Q")[0]!.key, 0, "Q")!;
       expect(read).toMatchObject({ panel: "Q", label: "c" });
       expect(read.points[0]!.text).toBe(
         "median 6, quartiles 5.5 to 6.5, values from 5 to 7, 2 values",
@@ -683,12 +685,12 @@ describe("violin options", () => {
         const read = model.inspect(center + (i === 0 ? -20 : 20), panel.y.map(value), "nearest")!;
         expect(read.points.map((p) => p.label)).toEqual([label]);
         expect(
-          model
-            .inspectPosition(model.keyboardStops(panel.key)[i]!.key, 0)!
-            .points.some((p) => p.label === label),
+          positionOf(model, stopsOf(model, panel.key)[i]!.key, 0)!.points.some(
+            (p) => p.label === label,
+          ),
         ).toBe(true);
       }
-      expect(model.keyboardStops(panel.key).map((s) => s.label)).toEqual(["first", "second"]);
+      expect(stopsOf(model, panel.key).map((s) => s.label)).toEqual(["first", "second"]);
       expect(describeChart(model)).toContain("first: 2 violins");
       expect(describeChart(model)).toContain("second: 2 violins");
     },

@@ -19,6 +19,7 @@ import type { RectGeometry, Scene } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ScaleScope } from "../../src/spec/spec.ts";
 import { legendOf } from "../helpers/guides.ts";
+import { positionOf, stopsOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -168,14 +169,14 @@ describe("histograms split by facets", () => {
       ["s", "10 – 15: 2", undefined],
     ]);
     // Series sharing bins share a keyboard stop, which reads both.
-    const stops = model.keyboardStops("A");
+    const stops = stopsOf(model, "A");
     expect(stops.map((s) => s.label)).toEqual(["s"]);
-    const read = model.inspectPosition(stops[0]!.key, 0, "A")!;
+    const read = positionOf(model, stops[0]!.key, 0, "A")!;
     expect(read.points.map((p) => [p.label, p.value])).toEqual([
       ["s", 2],
       ["t", 1],
     ]);
-    expect(model.keyboardStops("B").map((s) => s.label)).toEqual(["s"]);
+    expect(stopsOf(model, "B").map((s) => s.label)).toEqual(["s"]);
     // Every panel's counts; the fullest bar of any panel; the bins of both x scales.
     const text = describeChart(model);
     expect(text).toContain(
@@ -358,10 +359,10 @@ describe("box plots and violins split by facets", () => {
       expect(centers(scene, 0)['[0,"v2"]']).toBeUndefined();
       expect(centers(scene, 1)['[0,"v2"]']).toHaveLength(2);
       // The keyboard reads each panel's own places.
-      const stops = model.keyboardStops("S");
+      const stops = stopsOf(model, "S");
       expect(stops.map((s) => s.label)).toEqual(["v1", "v2"]);
       // v2's second box in S is c's, at S's second place.
-      const read = model.inspectPosition(stops[1]!.key, 1, "S")!;
+      const read = positionOf(model, stops[1]!.key, 1, "S")!;
       expect(read).toMatchObject({ panel: "S", value: 1, label: "c" });
       expect(read.points.map((p) => [p.label, p.value, p.row])).toEqual([["v2", 5, undefined]]);
       expect(describeChart(model)).toContain("v1: 3 boxes, medians from 2 (a) to 200 (b).");
@@ -451,8 +452,8 @@ describe("box plots and violins split by facets", () => {
       ["a", "b", "c"],
     ]);
     // Every panel's boxes are the whole table's: b's are 7, 10, 100, 200, and 300.
-    const [boxes] = model.keyboardStops("N");
-    const read = model.inspectPosition(boxes!.key, 1, "N")!;
+    const [boxes] = stopsOf(model, "N");
+    const read = positionOf(model, boxes!.key, 1, "N")!;
     expect(read.points[0]!.text).toMatch(/^median 100,/);
   });
 

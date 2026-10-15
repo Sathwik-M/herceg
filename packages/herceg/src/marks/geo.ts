@@ -61,6 +61,10 @@ const PAN_ZOOM: LayoutControls = {
   kind: "map",
   hint: "Shift with the arrow keys pans it, plus and minus zoom, and 0 shows the whole map.",
 };
+const PAN: LayoutControls = {
+  kind: "map",
+  hint: "Shift with the arrow keys pans it, and 0 shows the whole map.",
+};
 const LASSO: LayoutControls = { kind: "map", hint: "" };
 
 /** One layer of a map. */
@@ -149,8 +153,8 @@ export class GeoMap implements LayoutMark {
   readonly selects = true;
 
   controls(config: ChartConfig): LayoutControls | undefined {
-    const { zoom, brush } = config.interaction ?? {};
-    return zoom ? PAN_ZOOM : brush ? LASSO : undefined;
+    const { zoom, pan, brush, bindings } = config.interaction ?? {};
+    return zoom ? PAN_ZOOM : pan ? PAN : brush || bindings?.length ? LASSO : undefined;
   }
 
   legend(_id: string | number, color: (key: string) => string, theme: Theme): LegendEntry[] {

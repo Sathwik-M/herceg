@@ -268,8 +268,8 @@ createGrid(list, {
 (`"brush"`, `"lasso"`, `"click"`, all by default; `[]` for a chart that only
 highlights), and `effect: "none"` writes without dimming. A brush or lasso
 writes where `interaction.brush` draws one, and a brush that writes rows
-selects rather than zooming (the wheel and dragging with Shift still zoom
-and pan). Marks over tables without a binding neither write nor dim.
+selects rather than zooming (the wheel with Ctrl or ⌘, pinches, and dragging
+with Shift still zoom and pan). Marks over tables without a binding neither write nor dim.
 
 - **Brushes** write a condition on the marks' fields: a row is selected when
   its value along each brushed axis is in the brush's range (for error bars,
@@ -1720,7 +1720,9 @@ the notes), — not yet (refused with an error), · not applicable.
   highlight as the chart shows it.
 - Zoom, pan, and brushes work on number and time axes; subplots zoom and
   brush along x only, and facets with y scales of their own, on either
-  side, do not zoom along y. Maps and networks zoom and pan their plane both ways
+  side, do not zoom along y. `interaction.limits` bounds the views of
+  axes (x, y, and yRight); charts without axes refuse it, and refuse `pan`
+  too, except on maps' and networks' planes. Maps and networks zoom and pan their plane both ways
   (`interaction.zoom` true or "xy") and take a "lasso" brush; treemaps and
   sunbursts drill into nodes with `interaction.zoom: true` (see
   [Drilling into trees](#drilling-into-trees)); networks' nodes move with
@@ -1769,7 +1771,9 @@ the notes), — not yet (refused with an error), · not applicable.
   [Animation](#animation)), in charts of one panel; lines and areas along
   y show their new values at once.
 - Every mark draws in SVG, Canvas, static SVG, and PDF; large point series
-  and 3D charts also draw with WebGL. Every mark has a React, Vue, and
+  and 3D charts also draw with WebGL. Server snapshots (`renderToSnapshot`)
+  draw what static SVG draws, through the browser runtime's own SVG layer,
+  and hydrate; tests hydrate lines, bars, rules, and point clouds. Every mark has a React, Vue, and
   Svelte component, and every mark but custom marks (JavaScript only) a
   Python builder.
 
@@ -2107,9 +2111,10 @@ moves meanwhile, and can be moved with `setItemPosition`. Larger force layouts
 take minutes, and no layout of them is legible in a chart; filter or
 aggregate them first. Like a pie, a network has its chart to itself.
 
-A network pans and zooms with `interaction.zoom: true` (or `"xy"`), using
-map gestures: wheel at the pointer, drag to pan, double-click or `0` to
-reset, Shift+arrows to pan, plus/minus to zoom, and a toolbar. The
+A network pans with `interaction.pan: true` and pans and zooms with
+`interaction.zoom: true` (or `"xy"`), using map gestures: the wheel with
+Ctrl or ⌘ held (as trackpad pinches send it) at the pointer, drag to pan, double-click or
+`0` to reset, Shift+arrows to pan, plus/minus to zoom, and a toolbar. The
 `viewport` event and `setViewport({ x, y })` use the layout's coordinates,
 with y increasing downwards. Node radii, rings, link widths, and arrowheads
 keep their pixel sizes. Resizing refits the layout; navigation keeps its
@@ -2297,8 +2302,9 @@ chart.setViewport({ x: [0.1, 0.4], y: [0.6, 0.8] });
 chart.setViewport(null); // the fitted map
 ```
 
-With `interaction.zoom` (true or "xy"; maps zoom both ways), the wheel zooms
-at the pointer, a drag pans, and double-click shows the whole map again;
+With `interaction.zoom` (true or "xy"; maps zoom both ways), the wheel
+with Ctrl or ⌘ held (as trackpad pinches send it) zooms at the pointer, a drag pans, and
+double-click shows the whole map again (`pan: true` pans without zooming);
 Shift with the arrow keys pans an eighth of the room, plus and minus zoom,
 0 shows the whole map, and a toolbar does all of it for people who cannot
 drag, each change announced. The view is the chart's viewport, x and y
@@ -2397,7 +2403,7 @@ counterclockwise around the z axis from +x seen from above (-60 by default);
 the box; from 0.5 to 10); and `perspective` (false: orthographic, so equal
 lengths look equal wherever they are). The box keeps its size as it turns.
 Dragging turns it (`interaction: { rotate: false }` turns that off), the
-wheel zooms with `interaction: { zoom: true }`, and double-click returns to
+wheel with Ctrl or ⌘ held zooms with `interaction: { zoom: true }`, and double-click returns to
 the configured camera. Buttons in the chart's corner, shown while the
 pointer or focus is in it, turn, tilt, zoom, and reset the view for people
 who cannot drag; Shift with the arrow keys turns it too, and plus and minus
@@ -3126,7 +3132,7 @@ is internal, and charts take only marks the mark functions make.
 | `guides` | `[axis(...), legend(...), colorbar(...)]`: axes beyond or in place of the automatic ones, legends of the scales they name, and colorbars (see Scales and guides). |
 | `tooltip` | `true` (default), `false`, or `{ mode?: "nearest-x" \| "nearest-y" \| "nearest", axisLabels?: true }`; `axisLabels` labels the crosshair on the axes. Marks take `tooltip: { fields }` for data of their rows (see Tooltips). |
 | `renderTooltip` | JavaScript only: the tooltip's content of your own, text or a node, in the built-in box (see Tooltips). |
-| `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom); maps and networks pan and zoom both ways (`true` or `"xy"`), and treemaps and sunbursts drill into nodes (`true`). `drag: true` moves a network's nodes. `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom), unless it selects rows for `rowSelection`. `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. `rotate: false` stops dragging from turning 3D charts, whose `zoom` is `true` or `false`. Maps and networks take a `"lasso"` brush and no other. |
+| `interaction` | What dragging, the wheel, touch, and keys do: the presets `pan`, `zoom`, and `brush` (`"x"`, `"y"`, `"xy"`, and for brushes `"lasso"`), `rotate` and `drag` for 3D charts and networks, `bindings` of gestures to actions, `limits` on the views, and `sync` with other charts (see Panning, zooming, and brushing). Without a modifier, the vertical wheel scrolls the page; Ctrl or ⌘ with it, or a pinch, zooms. |
 | `rowSelection` | `rowSelection({ store, channel, events?, effect? }, ...)`: channels of selection stores, one per table, that brushes, lassos, and clicks write rows to and the chart highlights (see Selected rows). |
 | `animation` | `true` or `{ duration?, values? }`: the axes move gradually to views asked for, and with `values: true`, bars, pie slices, points, small lines and areas, and the axes with them, to changed values (see Animation). Off by default. |
 | `renderer` | `"auto"` (default), `"svg"`, or `"canvas"`. |
@@ -3159,14 +3165,16 @@ for an x range), `selection` and `selectionPanels` (see Small multiples for
 `toPixel`, `fromPixel`, `formatValue`, and `inspect` (see Panels and pixels),
 `getLegend()`, `getHiddenKeys()`, `setHiddenKeys(keys)`, and
 `setVisibility(keys, visible)` (see Hiding series), `on(event, listener)`,
-`render()`, `toSVG(sizing?)` and `toPNG()` (see Export), `destroy()`, and `loading`
-(a promise while the guide compiler loads for a chart that needs it (see Scales and guides), the chart's `fonts` load, the GPU painter for large point series, the animation
+`render()`, `toSVG(sizing?)` and `toPNG()` (see Export), `destroy()`, `showCursor(position)` and `hideCursor()` (see Syncing charts), and `loading`
+(a promise while the interaction controller loads after the first frame, the guide compiler loads for a chart that needs it (see Scales and guides), the chart's `fonts` load, the GPU painter for large point series, the animation
 code, the controls of a 3D chart, a map, a tree, or a network, the brush, a
 navigator's sliders, or what reads tooltip fields and draws
 `renderTooltip`'s content load, otherwise undefined). The brush loads when a chart can brush
 or first shows a selection; selections are kept and reported before it has,
-and a drag that starts before it arrives goes on from where it began. Tests
-that drag right after creating a chart await `chart.loading` first.
+and a drag that starts before it arrives goes on from where it began. Input
+that arrives before the interaction controller is kept and handled once it
+loads, so tests that check what input does right after creating a chart
+await `chart.loading` first.
 
 A `Viewport` is `{ x, y, yRight }`: the visible x range and the left and right
 y axes' ranges, in data values (epoch ms on time axes), each null when that
@@ -3191,6 +3199,241 @@ whole configuration: a prop left out, or `undefined`, takes its default.
 the selected x and y ranges (null along an axis the brush leaves alone; a
 lasso's extent) and a lasso's outline as `[x, y]` pairs. Code written when
 `selection` was the x range reads `chart.selection?.x`.
+
+### Panning, zooming, and brushing
+
+`interaction` says what dragging, the wheel, touch, and keys do. Its presets
+cover the common cases:
+
+| Option | Values | What it does |
+| --- | --- | --- |
+| `pan` | `true` (x), `"x"`, `"y"`, `"xy"`, `false` | Dragging pans those axes, the horizontal wheel (or Shift with the wheel) pans x, and double-click resets. Category axes do not pan. |
+| `zoom` | `true` (x), `"x"`, `"y"`, `"xy"` | The wheel with Ctrl or ⌘ held, a trackpad or touch pinch, and the `+` and `-` keys zoom those axes; `0` and double-click reset. Dragging pans them as with `pan`, unless `pan: false`. Maps and networks zoom both ways (with the wheel and keys, not touch pinches), 3D charts magnify their camera, and treemaps and sunbursts drill into nodes (`true`). |
+| `brush` | `"x"`, `"y"`, `"xy"`, `"lasso"` | Dragging selects a range, a rectangle, or a freehand region, reported as a `select` event; a click clears it. Where `zoom` covers the brush's axes, the brush zooms to what it covers instead (a lasso still selects), and Shift-drag pans. A chart that pans and brushes without zooming brushes on a drag and pans on Shift-drag. |
+| `bindings` | `[{ gesture, action }, ...]` | Gestures of your own, tried before the presets' (see Bindings). |
+| `limits` | `{ x?, y?, yRight? }` | How far each scale's view may go, and when nearing its ends is reported (see View limits). |
+| `sync` | a group's name, or `{ cursor?, viewport?, selection? }` | What the chart shares with other charts (see Syncing charts). |
+| `rotate` | `true` (default), `false` | Dragging turns 3D charts. |
+| `drag` | `true` | Dragging a network's node moves it, and it stays where it is dropped. |
+
+The defaults suit pages that scroll. Without a modifier, the vertical wheel
+scrolls the page wherever the pointer is, so a reader scrolling past a chart
+is never caught by it; a chart takes the wheel only with Ctrl or ⌘ held
+(which trackpads send for a pinch) or sideways. Touch swipes along an axis
+the chart does not pan or brush scroll the page, and pinches zoom the page
+unless the chart zooms, or drags both ways (as maps and networks do, which
+take every touch).
+
+```ts
+// Drag to pan, Ctrl/⌘ with the wheel or a pinch to zoom, double-click to reset.
+createChart(element, { marks, interaction: { zoom: "x" } });
+// Pan without zooming: the wheel never zooms this chart.
+createChart(element, { marks, interaction: { pan: "x" } });
+// Drag to select a range, Shift-drag to pan.
+createChart(element, { marks, interaction: { pan: "x", brush: "x" } });
+// Drag to zoom into a range, Shift-drag to pan.
+createChart(element, { marks, interaction: { zoom: "x", brush: "x" } });
+```
+
+The presets stand for these bindings, tried in this order after the
+chart's own:
+
+| Preset | Gesture | Action |
+| --- | --- | --- |
+| `brush` | drag | brush (zooming where `zoom` covers its axes) |
+| `brush`, in a chart that does not pan | Shift-drag | brush |
+| `drag` | drag starting on a network's node | move the node |
+| `pan`, or `zoom` | drag (with no brush, or a lasso), Shift-drag | pan |
+| `rotate` | drag | turn a 3D chart |
+| `pan` or `zoom` along x | horizontal wheel, Shift with the wheel | pan x |
+| `zoom` | wheel with Ctrl or ⌘, pinch | zoom about the pointer |
+| `zoom` | `+` (or `=`) and `-` | zoom in and out by 1.25 about the plot's middle |
+| `zoom` | `0` | reset |
+| `pan` or `zoom` | double-click | reset |
+
+Escape during a drag ends it: a brush drawn so far is dropped, a pan goes
+back to where it started (unless the view changed otherwise meanwhile), and
+a network's node goes back. Charts load the code that answers input right
+after their first frame (see `loading`); input that arrives earlier is
+kept, its default action prevented where the presets would prevent it,
+and handled in order once the code is there.
+
+#### Bindings
+
+A binding is a gesture and the action it performs. `bindings` are tried in
+order before the presets': the first whose gesture matches the input, and
+whose action applies where the input happens (a pan over a plot, a node's
+move over a node), takes it. A gesture may be bound once; keys the keyboard
+cursor uses (arrows, Home, End, Page Up and Down, Escape, Enter) can be
+bound only with Ctrl, Alt, or Meta held.
+
+```ts
+createChart(element, {
+  marks,
+  interaction: {
+    zoom: "x",
+    bindings: [
+      // The plain wheel zooms while the chart has the keyboard focus.
+      { gesture: { type: "wheel", axis: "y", focused: true }, action: { type: "zoom", axes: "x" } },
+      // Touch scrubs the cursor along the line instead of panning.
+      { gesture: { type: "drag", pointer: "touch" }, action: { type: "cursor" } },
+      // The right button pans y.
+      { gesture: { type: "drag", button: 2 }, action: { type: "pan", axes: "y" } },
+      // Page Down with Alt pans a page to the right.
+      { gesture: { type: "key", key: "PageDown", modifiers: ["alt"] }, action: { type: "pan", step: [1, 0] } },
+    ],
+  },
+});
+```
+
+| Gesture | Options | Actions it can perform |
+| --- | --- | --- |
+| `{ type: "wheel" }` | `axis`: `"x"` or `"y"`, the way it moves most (either by default); `focused`: only while the chart has the keyboard focus | `pan`, `zoom`, `pageScroll` |
+| `{ type: "drag" }` | `button`: `0` (primary, default), `1`, `2`; `pointer`: `"mouse"`, `"touch"`, or `"pen"` (any by default) | `pan`, `brush`, `cursor`, `orbit`, `moveItem`, `pageScroll` |
+| `{ type: "pinch" }` | two fingers moving apart or together (trackpads send the wheel with Ctrl instead) | `zoom`, `pageScroll` |
+| `{ type: "key", key }` | `key` as `KeyboardEvent.key` names it (`"+"`, `"a"`, `"PageDown"`), while the chart has the focus | `pan`, `zoom`, `reset` |
+| `{ type: "doubleClick" }` | | `zoom`, `reset` |
+
+Every gesture but a pinch takes `modifiers`, the keys held, exactly:
+`["shift"]`, `["ctrl"]`, `["alt"]`, `["meta"]`, or several (none by
+default). Shift does not count for keys other than letters, such as `+`,
+which may need it.
+
+| Action | Options | What it does |
+| --- | --- | --- |
+| `{ type: "pan" }` | `axes`: `"x"` (default; a map's or network's plane both ways), `"y"`, `"xy"`; `step` for keys: fractions of the view across and up (`[0.1, 0]` by default) | Moves the view with the drag or the wheel, or by `step` |
+| `{ type: "zoom" }` | `axes` as for `pan`; `factor`, above 1 zooming in: for double clicks (2 by default) and keys (1.25) | Zooms about the pointer, or for keys about the plot's middle |
+| `{ type: "brush" }` | `shape`: `"x"` (default), `"y"`, `"xy"`, `"lasso"`; `zoom: true` zooms to the brushed ranges on release instead of selecting them | Selects what the drag covers |
+| `{ type: "reset" }` | | Goes back to the configured view |
+| `{ type: "cursor" }` | | Moves the cursor and tooltip with the drag, panning nothing |
+| `{ type: "orbit" }` | | Turns a 3D chart |
+| `{ type: "moveItem" }` | | Moves the network node the drag starts on |
+| `{ type: "pageScroll" }` | | Nothing: the page scrolls or zooms as it would, and no later binding is tried |
+
+A brush that zooms cannot select rows for `rowSelection`; such a binding is
+refused when the chart's brushes select rows. `pageScroll` hands a gesture
+back to the page that a preset would take: `{ gesture: { type: "pinch" },
+action: { type: "pageScroll" } }` leaves pinches to the page in a chart that
+zooms.
+
+#### View limits
+
+`limits` sets, per scale (`x`, `y`, `yRight`), how far its view may go and
+when coming near its ends is reported:
+
+| Option | Values | What it does |
+| --- | --- | --- |
+| `extent` | `[from, to]`, either `null` for no end on that side (epoch ms on time axes) | Every view asked for stays inside: by dragging, the wheel, keys, `setViewport`, brushes, and synced charts, and views kept when the limits change. A pan keeps its span and stops at the end; a view wider than the extent shows the extent. A view fitted to the data (the first, or after a reset) shows the data, or the axis' `domain`: give that to start inside. Limits that run backwards are refused when the chart's controller loads, or by `update`. |
+| `edge` | `true`, or `{ threshold?, hysteresis? }` | Reports an `edge` event when the view comes within `threshold` (a fraction of its span, 0.1 by default) of an end of the extent, or, on an x scale every panel shares, of the data where the extent has none (while the view is zoomed or panned), and again only once it has moved `hysteresis` (0.05) farther away, or the end moved. A chart reports the edges its views are near when it attaches its controller, on its first frame after that. |
+
+A chart of recent prices that loads older ones as the reader pans back:
+
+```ts
+const prices = table({ at: time(recent.at), close: recent.close });
+let oldest = recent.at[0];
+const interaction = () => ({
+  pan: "x" as const,
+  limits: { x: { extent: [oldest, null] as const, edge: true } },
+});
+const chart = createChart(element, {
+  marks: [line(prices, { x: "at", y: "close" })],
+  interaction: interaction(),
+});
+chart.on("edge", async ({ side }) => {
+  if (side !== "start") return;
+  const older = await fetchBefore(oldest); // the application's loader: { at, close } arrays
+  oldest = older.at[0];
+  // Older rows go first; the view stays where it is.
+  prices.reset({
+    at: time(Float64Array.from([...older.at, ...prices.numbers("at")])),
+    close: Float64Array.from([...older.close, ...prices.numbers("close")]),
+  });
+  chart.update({ interaction: interaction() });
+});
+```
+
+The view holds while the data grows, so a reader dragging back goes on
+into what has loaded, and the extent widens with it. An edge is reported
+once on coming near; a view that stays near reports nothing more until it
+has moved away, or the end moved (as here, once history loads).
+
+### Syncing charts
+
+`sync` shares the cursor, the view, and the selection with other charts on
+the page. A group's name shares all three along x; the object form sets
+each channel on its own, and channels left out are not shared:
+
+```ts
+// Both charts share cursor, x range, and selection.
+createChart(a, { marks: cpu, interaction: { zoom: "x", sync: "hosts" } });
+createChart(b, { marks: memory, interaction: { zoom: "x", sync: "hosts" } });
+// Only the cursor: zooming one does not zoom the other.
+createChart(c, { marks: errors, interaction: { zoom: "x", sync: { cursor: "hosts" } } });
+// A chart of horizontal bars follows the others' cursor along its y axis.
+createChart(d, { marks: byHour, interaction: { sync: { cursor: { group: "hosts", scale: "y" } } } });
+```
+
+| Channel | Values | What it shares |
+| --- | --- | --- |
+| `cursor` | a group's name, or `{ group, scale?: "x" \| "y", snap?, tooltip? }` | The pointer's or keyboard cursor's position along `scale` (x by default), shown in the other charts as a crosshair and the points there. `snap` and `tooltip` say how this chart shows the cursors it receives (below). |
+| `viewport` | a group's name, or `{ group, scale?: "x" \| "y" }` | The range in view along `scale` |
+| `selection` | a group's name, or `{ group, scale?: "x" \| "y" \| "xy" }` | Brushed ranges: along x or y alone, or (`"xy"`, the default) the whole selection, rectangles and lassos too |
+| `panels` | `true`, `false`, or `{ snap?, tooltip? }` | The cursor across the chart's own panels (facets, subplots): where the pointer or keyboard is in one, the others show a crosshair and their points at the same x. On by default for panels sharing an x scale; `true` or an object also for panels with x scales of their own (the value read on each one's scale); `false` turns it off. |
+
+How a chart shows a cursor that is not its pointer's (one it receives, one
+`showCursor` shows, or one in its other panels):
+
+| Option | Values | What it does |
+| --- | --- | --- |
+| `snap` | `"nearest"` (default), `"previous"`, `"next"` | Which points it reads: the data's x nearest to the cursor's value across the series, and each series' point there, as the pointer reads; each series' last point at or before the value (for readings at other frequencies: a 10:37 cursor shows an hourly chart's 10:00 value, not its 11:00 one); or each series' first at or after it. Series with no point there in view show nothing, and the crosshair goes to the latest (or earliest) point read. Found by binary search, as the pointer's are. "previous" and "next" read along x; a cursor along y (horizontal bars) reads the nearest. |
+| `tooltip` | `true`, `false` (default) | Shows the chart's tooltip there too, at the crosshair: one in a chart that receives a cursor, one per panel across panels. |
+
+A dashboard of charts that show different ranges, at different
+frequencies, sharing only the cursor:
+
+```ts
+const cursor = { group: "ops", snap: "previous", tooltip: true } as const;
+// The last two days, by the minute, and the last month, by the hour.
+createChart(recent, { marks: [line(minutes, { x: "at", y: "load" })], interaction: { zoom: "x", sync: { cursor } } });
+createChart(month, { marks: [line(hours, { x: "at", y: "load" })], interaction: { zoom: "x", sync: { cursor } } });
+```
+
+Hovering 10:37 in the first chart shows the second's 10:00 reading, with
+its tooltip; zooming either leaves the other's view as it is. A time out of
+a chart's view, or in a break its axis leaves out, shows nothing there.
+
+Values travel as data: numbers, times as epoch ms, and categories by name,
+so charts with different categories, or the same ones in another order,
+show the category the other chart is on (and nothing where they lack it).
+A selection of categories arrives as the range from the first to the last
+of those the receiving chart has, in its order, which takes in categories
+between them that the other chart did not select. A chart shows what it
+receives without sharing it again. Groups are the page's: charts sync
+whichever copy of herceg made them (a notebook's widgets each load their
+own), and charts in sandboxed frames of their own (static notebook
+outputs) sync through a relay, loaded only by such charts, that posts what
+sync carries (the group's name, cursor values, view ranges, and selections)
+to the page's other frames running one. Each channel's
+groups are their own: `{ cursor: "all", viewport: "pair" }` shares the cursor
+with every chart of "all" and the view with those of "pair".
+
+`chart.showCursor(position, { snap?, tooltip? })` shows the cursor where
+an application says, as a synced chart's would show (as its cursor channel
+says by default), and `chart.hideCursor()` hides it; both reach the chart's
+cursor channel unless `{ broadcast: false }`. The keyboard's cursor is
+shared on the channel as the pointer's is:
+
+```ts
+// A list of orders beside the chart shows each one's time on it.
+item.addEventListener("pointerenter", () => chart.showCursor({ x: order.time }));
+item.addEventListener("pointerleave", () => chart.hideCursor());
+// Horizontal bars: a category, by name, on this chart only.
+bars.showCursor({ y: "Tuesday" }, { broadcast: false });
+```
+
+The position is along the axis the chart's data is placed on (`x`, or `y`
+for horizontal bars); elsewhere it shows nothing. The pointer's own cursor
+takes over while the pointer is on the chart.
 
 ### Tooltips
 
@@ -3634,6 +3877,7 @@ const stop = chart.on("select", ({ x }) => {
 chart.on("select", ({ x, y, lasso }) => filterRows(x, y, lasso)); // ranges, and a lasso's outline
 chart.on("viewport", ({ x, y, yRight }) => saveView({ x, y, yRight })); // zoom, pan, reset, sync
 chart.on("viewport", ({ x, panels }) => saveView(x, panels)); // panels' own x scales
+chart.on("edge", ({ scale, side, bound }) => loadMore(scale, side, bound)); // near interaction.limits' ends
 chart.on("hover", ({ inspection }) => showOwnTooltip(inspection)); // with tooltip: false
 chart.on("click", ({ inspection }) => {
   const point = inspection?.points[0];
@@ -3658,7 +3902,11 @@ belongs to when they are only some: those of an x scale of their own, or a
 subplot's map, network, or tree (`viewport`, `select`, `drill`, and
 `itemMove` events). `drill` and `itemMove` events follow
 `setDrillRoot` and `setItemPosition` too, as `camera` events follow
-`setCamera`. An
+`setCamera`. `edge` events (see View limits) give the `scale`, the `side`
+(`"start"`, its low values, or `"end"`), the `domain` in view, the `bound`
+it came near, and the `cause` that moved the view there or moved the end:
+`"pointer"`, `"wheel"`, `"keyboard"`, `"api"`, `"sync"`, `"data"`, or
+`"options"`. An
 inspection's `axis` says what it is on: `"x"` or `"y"` for a position along
 that axis (with its `position` in pixels), `"item"` for an item of a layout
 mark (a pie slice, a tree's node, a gauge's dial, a funnel's stage), whose
@@ -3799,7 +4047,9 @@ shown while the pointer or focus is in the chart): Shift with the arrow keys
 turns a 3D chart, pans a map or network, or moves a network's node, plus and minus
 zoom, and 0 resets; Enter and Backspace drill into a tree and out, whose
 path is a navigation landmark of buttons. The chart's description names
-these keys, and each change is announced.
+these keys, and each change is announced. Charts that zoom along axes take
+plus, minus, and 0 too, and `bindings` can add keys of their own (see
+Bindings).
 
 Tests check this in Chrome, Firefox, and WebKit: automated audits (axe-core)
 of every chart family and of grids, and the accessibility tree each engine
@@ -4042,6 +4292,57 @@ incorrect checksums; generated subsets receive fresh checksums.
   paper: a transparent theme with light text gets a dark surface.
 - Optional shipped fonts remain open work. Tagged PDFs provide a chart
   alternative, without separate text-label semantics or PDF/UA conformance.
+
+## Server rendering
+
+`renderToSnapshot(options, env)` renders a chart without a DOM (on a server,
+at build time, in a worker) as the browser runtime would build it: the page
+shows it before any script runs, and `hydrateChart` takes it over in the
+browser without drawing it again, so it neither flashes nor reflows.
+
+```ts
+import { hydrateChart, renderToSnapshot } from "herceg";
+
+// On the server: the same options the browser's chart gets.
+const initial = renderToSnapshot(options, { width: 640, height: 320, idPrefix: "latency" });
+// Send initial.html in the page, and initial itself (it is JSON) for its script.
+
+// In the browser, with initial.html in host:
+const chart = hydrateChart(host, options, initial);
+```
+
+| `env` option | Values | What it does |
+| --- | --- | --- |
+| `width`, `height` | CSS pixels | The size it is laid out at, which the browser's chart keeps until its host's size differs |
+| `idPrefix` | a name, `[A-Za-z][\w-]*` | Starts every id in the markup (clip paths, the description): unique in the page, and the same each time the page is made, so server and browser agree |
+| `fonts` | `prepareFonts(...)` from `herceg/fonts` | Fonts to measure text with; Helvetica estimates by default. The browser's chart must get the same fonts. |
+| `locale`, `timeZone` | as the chart options | Used where the options set none: `"en-US"` and `"UTC"` by default. `"local"` is refused, as the server's zone need not be the reader's. |
+
+The snapshot is plain JSON: `html`, the chart's element; its size, ids,
+locale, time zone, and how it measured text; and `state`, what the runtime
+needs to adopt the nodes. Text in the markup is escaped as the static SVG
+export escapes it; send the snapshot to the browser as other page data
+(frameworks serialize it safely; written into a `<script>` by hand, escape
+its `<` as `\u003c`). The same options and environment give the same
+markup. `hydrateChart(host, options, initial)` finds the element in `host`,
+checks it against the snapshot, and makes it the chart's: nodes that would
+be drawn the same are kept as they are, and only what differs is drawn
+again (a mark given another color, say). It keeps the snapshot's locale and
+time zone where the options set none, and lays out and measures text as the
+snapshot did until the options or the host's size change. Markup the
+snapshot does not describe (edited, or from another herceg version) is
+refused with an error, and left as it is. Interaction attaches as on any
+chart, after the first frame.
+
+Charts drawn on Canvas swap the server's SVG for their canvas in the same
+task, and charts that wait for code first (the GPU painter for large point
+clouds, the guide compiler) keep the server's markup on screen until they
+draw. Charts of specs render with `specToSnapshot(spec, buffers, env)` from
+`herceg/spec` (at the spec's size, or 640 x 320, unless `env` gives one)
+and hydrate with `hydrateChart(host, loadSpec(spec, buffers).config,
+initial)`. The adapters take the snapshot as their `initial` prop, passed
+through `hydration(snapshot)`, which brings the code that adopts it, so
+adapter pages that never hydrate carry none of it (see their READMEs).
 
 ## Charts from specs
 

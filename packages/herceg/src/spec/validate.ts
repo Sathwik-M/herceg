@@ -19,6 +19,7 @@ import { histogramFormError, perAxisBins } from "../marks/histogram-input.ts";
 import { regionFormError } from "../marks/region.ts";
 import { ruleFormError } from "../marks/rule.ts";
 import { treeFormError } from "../marks/tree-data.ts";
+import { Bindings } from "../model/bindings.ts";
 import { GUIDE_KIT } from "../model/guides.ts";
 import { checkBreaks } from "../scale/breaks.ts";
 import type {
@@ -46,6 +47,7 @@ import {
   type ChartSpec,
   type ColorbarSpec,
   type ColumnsSpec,
+  type CursorShowSpec,
   type DerivedSpec,
   type GeometryColumnSpec,
   type GridFacetSpec,
@@ -62,12 +64,14 @@ import {
   type PlotStyle,
   type ProjectionSpec,
   type RowSelectionSpec,
+  type ScaleLimitsSpec,
   type ScaleRef,
   type ScaleSpec,
   type SidePlace,
   SPEC_VERSION,
   type StrokeStyle,
   type StyleRoles,
+  type SyncSpec,
   type TextBox,
   type TextStyle,
   type ThemeSpec,
@@ -78,6 +82,7 @@ import {
   type TimeColumnSpec,
   type TitleSpec,
   type TooltipSpec,
+  type ViewLimitsSpec,
   type WrappedFacetSpec,
   type XAxisSpec,
 } from "./spec.ts";
@@ -282,6 +287,109 @@ function checkProperties(
 ) {
   required(value, path, keys, Object.keys(checks));
   properties(value, path, checks);
+}
+
+/** `pan` and `zoom`: on, off, or the axes they act on. */
+const axesPreset: Check = (v, path) => {
+  if (typeof v !== "boolean" && v !== "x" && v !== "y" && v !== "xy")
+    fail(path, 'true, false, "x", "y", or "xy"', v);
+};
+const modifiers: Check = (v, path) => {
+  if (!Array.isArray(v)) fail(path, "a list of keys held", v);
+  for (const [i, key] of v.entries()) oneOf("shift", "ctrl", "alt", "meta")(key, `${path}[${i}]`);
+};
+
+/** The actions each gesture can perform (see `BindingSpec`). */
+const ACTIONS: Record<string, readonly string[]> = {
+  wheel: ["pan", "zoom", "pageScroll"],
+  drag: ["pan", "brush", "pageScroll", "cursor", "orbit", "moveItem"],
+  pinch: ["zoom", "pageScroll"],
+  key: ["pan", "zoom", "reset"],
+  doubleClick: ["zoom", "reset"],
+};
+
+const binding: Check = (v, path) => {
+  object(v, path);
+  const b = v as Record<string, unknown>;
+  required(b, path, ["gesture", "action"], ["gesture", "action"]);
+  properties(b, path, { gesture: object, action: object });
+  const gesture = b.gesture as Record<string, unknown>;
+  const type = gesture.type as string;
+  const takes = ACTIONS[type];
+  if (!takes) fail(`${path}.gesture.type`, either(Object.keys(ACTIONS).map((t) => `"${t}"`)), type);
+  const checks: Record<string, Record<string, Check>> = {
+    wheel: { axis: oneOf("x", "y"), modifiers, focused: boolean },
+    drag: { button: oneOfNumbers(0, 1, 2), pointer: oneOf("mouse", "touch", "pen"), modifiers },
+    pinch: {},
+    key: { key: string, modifiers },
+    doubleClick: { modifiers },
+  };
+  checkProperties(gesture, `${path}.gesture`, type === "key" ? ["key"] : [], {
+    type: string,
+    ...checks[type],
+  });
+  const action = b.action as Record<string, unknown>;
+  const kind = action.type as string;
+  if (!takes.includes(kind))
+    fail(
+      `${path}.action.type`,
+      `an action a ${type} gesture performs: ${either(takes.map((t) => `"${t}"`))}`,
+      kind,
+    );
+  const step: Check = (s, at) => {
+    if (!Array.isArray(s) || s.length !== 2 || !s.every((x) => Number.isFinite(x)))
+      fail(at, "two fractions of the view, across and up", s);
+  };
+  const actionChecks: Record<string, Record<string, Check>> = {
+    pan: { axes: oneOf("x", "y", "xy"), step },
+    zoom: { axes: oneOf("x", "y", "xy"), factor: positive },
+    brush: { shape: oneOf("x", "y", "xy", "lasso"), zoom: boolean },
+  };
+  properties(action, `${path}.action`, { type: string, ...actionChecks[kind] });
+};
+
+function oneOfNumbers(...values: readonly number[]): Check {
+  return (v, path) => {
+    if (!values.includes(v as number)) fail(path, either(values.map(String)), v);
+  };
+}
+
+const scaleLimits: Check = (v, path) => {
+  object(v, path);
+  properties(v as Record<string, unknown>, path, {
+    extent: (e, at) => {
+      const end = (x: unknown) => x === null || (typeof x === "number" && Number.isFinite(x));
+      if (
+        !Array.isArray(e) ||
+        e.length !== 2 ||
+        !e.every(end) ||
+        (e[0] !== null && e[1] !== null && !(e[0] < e[1]))
+      )
+        fail(at, "two finite numbers, ascending, either of them null for no end", e);
+    },
+    edge: (e, at) => {
+      if (typeof e === "boolean") return;
+      object(e, at);
+      properties(e as Record<string, unknown>, at, { threshold: width, hysteresis: width });
+    },
+  } satisfies ChecksOf<ScaleLimitsSpec>);
+};
+
+const cursorShow = {
+  snap: oneOf("nearest", "previous", "next"),
+  tooltip: boolean,
+} satisfies ChecksOf<CursorShowSpec>;
+
+function syncChannel(cursor: boolean, ...scales: readonly string[]): Check {
+  return (v, path) => {
+    if (typeof v === "string") return;
+    object(v, path);
+    checkProperties(v as Record<string, unknown>, path, ["group"], {
+      group: string,
+      scale: oneOf(...scales),
+      ...(cursor && cursorShow),
+    });
+  };
 }
 
 const curve = oneOf("linear", "step", "step-before", "step-after", "monotone");
@@ -2509,12 +2617,35 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
       interaction: (i, path) => {
         object(i, path);
         properties(i as Record<string, unknown>, path, {
-          zoom: (v, path) => {
-            if (typeof v !== "boolean" && v !== "x" && v !== "y" && v !== "xy")
-              fail(path, 'true, false, "x", "y", or "xy"', v);
-          },
+          pan: axesPreset,
+          zoom: axesPreset,
           brush: oneOf("x", "y", "xy", "lasso"),
-          sync: string,
+          bindings: (v, at) => {
+            if (!Array.isArray(v)) fail(at, "a list of bindings", v);
+            for (const [k, item] of v.entries()) binding(item, `${at}[${k}]`);
+          },
+          limits: (v, at) => {
+            object(v, at);
+            properties(v as Record<string, unknown>, at, {
+              x: scaleLimits,
+              y: scaleLimits,
+              yRight: scaleLimits,
+            } satisfies ChecksOf<ViewLimitsSpec>);
+          },
+          sync: (v, at) => {
+            if (typeof v === "string") return;
+            object(v, at);
+            properties(v as Record<string, unknown>, at, {
+              cursor: syncChannel(true, "x", "y"),
+              viewport: syncChannel(false, "x", "y"),
+              selection: syncChannel(false, "x", "y", "xy"),
+              panels: (p, path) => {
+                if (typeof p === "boolean") return;
+                object(p, path);
+                properties(p as Record<string, unknown>, path, cursorShow);
+              },
+            } satisfies ChecksOf<SyncSpec>);
+          },
           rotate: boolean,
           drag: boolean,
         } satisfies ChecksOf<InteractionSpec>);
@@ -2616,6 +2747,17 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
     !(chart.marks as Record<string, unknown>[]).some(({ type }) => type === "graph")
   )
     fail("spec.interaction.drag", "a spec with a graph mark, whose nodes dragging moves", true);
+  // Gestures bound twice, keys the keyboard cursor takes, and brushes that
+  // zoom where they select rows, as charts refuse them.
+  if (chart.interaction) {
+    const rows = [chart.rowSelection ?? []].flat() as RowSelectionSpec[];
+    const brushesRows = rows.some(({ events }) => !events || events.includes("brush"));
+    try {
+      new Bindings(chart.interaction as InteractionSpec, brushesRows);
+    } catch (error) {
+      throw new TypeError(`spec.${(error as Error).message}`);
+    }
+  }
   // A projection places maps' marks; a chart of other marks has nothing to project.
   if (
     chart.projection !== undefined &&

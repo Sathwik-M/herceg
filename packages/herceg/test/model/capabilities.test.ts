@@ -70,6 +70,7 @@ import {
 } from "../../src/scene/scene.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
 import { legendOf, rampsOf } from "../helpers/guides.ts";
+import { positionOf, stopsOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -825,6 +826,30 @@ describe("capabilities: zoom and pan", () => {
     expect(next.panels[0]!.axes.find((a) => a.side === orient)!.ticks).not.toEqual(before);
   });
 
+  it.each(cartesian)("$name keeps its viewport inside the scale's limits", (c) => {
+    const { model } = build({
+      marks: [c.make()],
+      interaction: { pan: "xy", limits: { x: { extent: [0, 2] }, y: { extent: [0, 10] } } },
+    });
+    const alongY = model.xScale()!.type === "band";
+    // Past an end, the view moves inside with its span.
+    if (alongY) model.setYViewport({ y: [-4, 2], yRight: null });
+    else model.setViewport([-1, 0.5]);
+    model.scene(estimateText);
+    expect(alongY ? model.yScale()!.domain : model.xScale()!.domain).toEqual(
+      alongY ? [0, 6] : [0, 1.5],
+    );
+  });
+
+  it.each(layouts.filter((c) => !c.navigates))("$name refuses pan and limits", (c) => {
+    expect(() => build({ marks: [c.make()], interaction: { pan: true } })).toThrow(
+      `${typeOf(c)} pan: no axes to pan; drop interaction.pan`,
+    );
+    expect(() =>
+      build({ marks: [c.make()], interaction: { limits: { x: { extent: [0, 1] } } } }),
+    ).toThrow(`${typeOf(c)} limits: no axes to limit; drop interaction.limits`);
+  });
+
   it.each([
     { name: "bar", make: bar },
     { name: "point", make: point },
@@ -996,7 +1021,7 @@ describe("capabilities: zoom and pan", () => {
     const { scene } = build({ ...config, interaction: { zoom: "x" } });
     for (const panel of scene.panels) expectGeometry(panel, c.kind);
     expect(() => build({ ...config, interaction: { zoom: "xy" } })).toThrow(
-      "zoom and brush along x only",
+      "zoom, pan, and brush along x only",
     );
   });
 
@@ -1004,6 +1029,20 @@ describe("capabilities: zoom and pan", () => {
     expect(() =>
       build(facetConfig(c, { y: { scope: "panel" }, interaction: { zoom: "y" } })),
     ).toThrow("cannot zoom along y yet");
+    const brush = { type: "brush", shape: "xy", zoom: true } as const;
+    expect(() =>
+      build(
+        facetConfig(c, {
+          y: { scope: "panel" },
+          interaction: { bindings: [{ gesture: { type: "drag" }, action: brush }] },
+        }),
+      ),
+    ).toThrow(
+      "chart interaction.bindings[0].action: panels with y scales of their own cannot brush",
+    );
+    expect(() =>
+      build(facetConfig(c, { y: { scope: "panel" }, interaction: { pan: "xy" } })),
+    ).toThrow("cannot pan along y yet");
     const { scene } = build(facetConfig(c, { y: { scope: "panel" }, interaction: { zoom: "x" } }));
     for (const panel of scene.panels) expectGeometry(panel, c.kind);
   });
@@ -1055,7 +1094,9 @@ describe("capabilities: brushes", () => {
         panels: subplot,
         interaction,
       });
-      expect(() => build(besideLine(c, { interaction }))).toThrow("zoom and brush along x only");
+      expect(() => build(besideLine(c, { interaction }))).toThrow(
+        "zoom, pan, and brush along x only",
+      );
     },
   );
 
@@ -1069,7 +1110,7 @@ describe("capabilities: brushes", () => {
     for (const panel of scene.panels) expectGeometry(panel, c.kind);
     for (const brush of ["y", "xy", "lasso"] as const) {
       expect(() => build({ ...config, interaction: { brush } })).toThrow(
-        "zoom and brush along x only",
+        "zoom, pan, and brush along x only",
       );
     }
   });
@@ -1331,7 +1372,7 @@ describe("capabilities: legend toggle", () => {
     const next = model.scene(estimateText);
     expect(legendOf(next).find((e) => e.key === entry!.key)!.hidden).toBe(true);
     expect(next.panels[0]!.marks.reduce((n, m) => n + m.draw.size(m), 0)).toBeLessThan(before);
-    expect(model.keyboardStops("").some((s) => s.key === entry!.key)).toBe(false);
+    expect(stopsOf(model, "").some((s) => s.key === entry!.key)).toBe(false);
   });
 
   it.each(cartesian.filter((c) => !c.noLegend))(
@@ -1465,9 +1506,9 @@ describe("capabilities: tooltip and keyboard reading", () => {
     "$name has an inspectable keyboard stop and pointer item",
     (c) => {
       const { model } = build({ marks: [c.make()] });
-      const [stop] = model.keyboardStops("");
+      const [stop] = stopsOf(model, "");
       expect(stop).toBeDefined();
-      const inspection = model.inspectPosition(stop!.key, 0)!;
+      const inspection = positionOf(model, stop!.key, 0)!;
       expect(inspection).toBeDefined();
       const [item] = inspection.points;
       expect(item!.text.length).toBeGreaterThan(0);
@@ -1477,8 +1518,8 @@ describe("capabilities: tooltip and keyboard reading", () => {
 
   it.each(annotations)("$name is read in the summary without individual stops", (c) => {
     const { model } = build({ marks: [c.make()] });
-    expect(model.keyboardStops("")).toEqual([]);
-    expect(model.inspectPosition("missing", 0)).toBeUndefined();
+    expect(stopsOf(model, "")).toEqual([]);
+    expect(positionOf(model, "missing", 0)).toBeUndefined();
     expect(model.inspect(model.xScale()!.map(1), model.yScale()!.map(2))).toBeUndefined();
     expect(describeChart(model)).toContain(`Contract ${typeOf(c)}`);
   });
@@ -1517,10 +1558,10 @@ describe("capabilities: tooltip and keyboard reading", () => {
       marks: [c.make(signed, { x: "group", y: "value" })],
       y: { type: "log" },
     });
-    const [series] = model.keyboardStops("");
+    const [series] = stopsOf(model, "");
     expect(series).toBeDefined();
-    expect(model.inspectPosition(series!.key, 0)).toBeUndefined();
-    expect(model.inspectPosition(series!.key, 1)!.points[0]!.text).toContain("median 3");
+    expect(positionOf(model, series!.key, 0)).toBeUndefined();
+    expect(positionOf(model, series!.key, 1)!.points[0]!.text).toContain("median 3");
   });
 
   it("custom shapes without series are summarized but cannot be inspected", () => {
@@ -1537,7 +1578,7 @@ describe("capabilities: tooltip and keyboard reading", () => {
         }),
       ],
     });
-    expect(model.keyboardStops("")).toEqual([]);
+    expect(stopsOf(model, "")).toEqual([]);
     expect(model.inspect(model.xScale()!.map(1), model.yScale()!.map(2))).toBeUndefined();
     expect(describeChart(model)).toBe("Contract custom shapes");
   });
@@ -1606,7 +1647,7 @@ describe("capabilities: tooltip fields", () => {
     model.scene(estimateText);
     const point = c.items
       ? model.inspectItem(model.stepItem(undefined, 1)!)!.points[0]!
-      : model.inspectPosition(model.keyboardStops("")[0]!.key, 0)!.points[0]!;
+      : positionOf(model, stopsOf(model, "")[0]!.key, 0)!.points[0]!;
     const [field] = point.fields!;
     expect(field!.text.length).toBeGreaterThan(0);
     expect(field!.field).toBe(c.items && c.name !== "geopoint" ? "group" : "note");
@@ -1797,7 +1838,7 @@ describe("capabilities: dendrogram", () => {
     const next = model.scene(estimateText).panels[0]!.marks[0] as typeof geometry;
     expect(Array.from(next.coords.subarray(0, next.count * 4))).toEqual(before);
     expect(legendOf(scene)).toEqual([]);
-    expect(model.keyboardStops("")).toEqual([]);
+    expect(stopsOf(model, "")).toEqual([]);
     expect(model.inspect(100, 100)).toBeUndefined();
     expect(describeChart(model)).toContain(
       "Contract dendrogram: 3 leaves, 2 merges. Merge heights 1 to 2.",
@@ -1849,7 +1890,7 @@ describe("category-colored bars", () => {
         expect(g.rects[offset + 2]).toBeCloseTo(band.bandwidth!, 3);
         expect(g.rects[offset]! + g.rects[offset + 2]! / 2).toBeCloseTo(band.map(i), 3);
         const s = model.series()[i]!;
-        expect(model.inspectPosition(s.key, 0)!.points[0]!.label).toBe(s.label);
+        expect(positionOf(model, s.key, 0)!.points[0]!.label).toBe(s.label);
       });
       expect(legendOf(scene).map((entry) => entry.label)).toEqual(["A", "B", "C"]);
       expect(legendOf(scene).map((entry) => ("color" in entry ? entry.color : undefined))).toEqual(

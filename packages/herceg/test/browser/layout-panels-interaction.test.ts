@@ -46,7 +46,9 @@ async function mouse(
   deltaY = 0,
 ) {
   const at = pageOrigin(chart.root);
-  await realMouse({ type, x: at.x + x, y: at.y + y, clickCount: 1, deltaY, shift: false });
+  // The wheel zooms with Control held.
+  const ctrl = type === "wheel";
+  await realMouse({ type, x: at.x + x, y: at.y + y, clickCount: 1, deltaY, shift: false, ctrl });
 }
 
 async function click(chart: Chart, x: number, y: number) {

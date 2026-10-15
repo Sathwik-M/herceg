@@ -15,6 +15,7 @@ import type { MarkSeries } from "./inspect.ts";
 import {
   type AnnotatedPanel,
   across,
+  alongY,
   annotations,
   checkBands,
   checkFit,
@@ -228,16 +229,12 @@ export class Panels implements PanelLayout {
           `${type} panel: a ${held.get(panel)} mark has panel "${panel}" to itself; name another`,
         );
     }
-    const { zoom, brush } = options.interaction ?? {};
-    // Panels with axes zoom and brush along x; maps and networks with panels to themselves, their plane.
-    if (
-      held.size < this.list.length &&
-      ((typeof zoom === "string" && zoom.includes("y")) ||
-        brush === "y" ||
-        brush === "xy" ||
-        brush === "lasso")
-    )
-      throw new Error('chart interaction: charts with panels zoom and brush along x only; use "x"');
+    // Panels with axes zoom, pan, and brush along x; maps and networks with panels to themselves, their plane.
+    const along = held.size < this.list.length && alongY(options.interaction, true);
+    if (along)
+      throw new Error(
+        `chart interaction.${along[0]}: charts with panels zoom, pan, and brush along x only; use "x"`,
+      );
     const scopes = this.scopes(options);
     this.#agree("x", marks, scopes.x, options.x, held);
     this.#agree("y", marks, scopes.y, options.y, held);

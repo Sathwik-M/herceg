@@ -139,7 +139,7 @@ function press(root: ParentNode, type: string, fraction: number, down = 0.5) {
   };
   target.dispatchEvent(
     type === "wheel"
-      ? new WheelEvent(type, { ...at, deltaY: -200 })
+      ? new WheelEvent(type, { ctrlKey: true, ...at, deltaY: -200 })
       : new PointerEvent(type, { ...at, pointerId: MOUSE }),
   );
 }

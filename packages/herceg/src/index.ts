@@ -79,17 +79,20 @@ export type {
 export { fromRows, Table, table } from "./data/table.ts";
 export type { Selection } from "./dom/brushed.ts";
 export { type ChartOptions, type ChartUpdate, createChart } from "./dom/chart.ts";
-export type { ChartEvents, ChartListener, PanelTarget } from "./dom/events.ts";
+export type { ChartEvents, ChartListener, PanelTarget, ViewCause } from "./dom/events.ts";
 export type {
   Axis,
   AxisInfo,
   AxisTarget,
   Chart,
+  CursorOptions,
+  CursorPosition,
   InspectOptions,
   ItemPositions,
   LegendEntry,
   PanelInfo,
 } from "./dom/handle.ts";
+export { type Hydration, hydrateChart, hydration } from "./dom/hydrate.ts";
 export type { RenderTooltip } from "./dom/tooltip.ts";
 export type { SymbolName } from "./draw/symbols.ts";
 export {
@@ -199,6 +202,11 @@ export {
   rowSelection,
   type SelectionBinding,
 } from "./model/row-selection.ts";
+export {
+  type ChartSnapshot,
+  renderToSnapshot,
+  type SnapshotOptions,
+} from "./render/snapshot.ts";
 export { renderToSVG, type StaticOptions } from "./render/static.ts";
 export type { SvgAlign, SvgSizing } from "./render/svg.ts";
 export { type TimeBreaks, timeBreaks } from "./scale/breaks.ts";

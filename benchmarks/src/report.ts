@@ -45,6 +45,7 @@ interface SizeResults {
     gzip: number;
     brotli: number;
     css: { gzip: number } | null;
+    deferred?: { gzip: number } | null;
     lazy?: { gzip: number } | null;
   }[];
 }
@@ -165,6 +166,7 @@ function sizeTable(): string {
       "Gzip KiB",
       "Brotli KiB",
       "Required CSS, gzip KiB",
+      "After the first frame, gzip KiB",
       "Optional chunks, gzip KiB",
     ],
     size.results.map((r) => [
@@ -174,6 +176,7 @@ function sizeTable(): string {
       kib(r.gzip),
       kib(r.brotli),
       r.css ? kib(r.css.gzip) : "-",
+      r.deferred ? kib(r.deferred.gzip) : "-",
       r.lazy ? kib(r.lazy.gzip) : "-",
     ]),
   );

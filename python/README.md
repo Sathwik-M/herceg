@@ -123,7 +123,7 @@ category's rows, in order, one path, broken where a row has no value), and
 `.surface(...)` surfaces in one box (they share a chart with each other
 only), seen from `camera=hg.Camera(azimuth=-60,
 elevation=25, zoom=1, perspective=False)` (or a dict of those) and turned by
-dragging (`rotate=False` stops that), the wheel with `zoom=True`, the
+dragging (`rotate=False` stops that), the wheel with Ctrl or ⌘ held and `zoom=True`, the
 keyboard, and buttons in the chart's corner. `z=hg.AxisOptions(...)` sets the
 vertical axis, `box_aspect=(2, 2, 1)` the box's proportions. A surface from a
 matrix travels as a matrix (`hg.matrix`), its coordinates once each; rows
@@ -156,7 +156,7 @@ and the description names each panel. 3D facets are refused: use subplot
 marks instead.
 
 Maps, trees, and networks take the shared interaction options. `zoom=True`
-or `zoom="xy"` pans and zooms maps and networks with the wheel, dragging,
+or `zoom="xy"` pans and zooms maps and networks with the wheel (Ctrl or ⌘ held, as trackpad pinches send it), dragging,
 Shift+arrows, plus/minus, double-click or 0 to reset, and a toolbar. A map's
 `viewport` uses its projection's plane; a network's uses layout coordinates,
 with y increasing downwards. Nodes keep their pixel radii while zooming.
@@ -318,13 +318,9 @@ and widths of the columns) for subplots, whose marks
 name their panel with `panel="latency"` (or `"*"` for all),
 `legend`, `tooltip` (`True`, `False`, `"nearest-x"`, `"nearest-y"`, `"nearest"`, or
 `hg.Tooltip(mode=..., axis_labels=True)`, which also labels the crosshair on
-the axes; tooltip fields, below, are marks'), `zoom`
-(`True` or `"x"`, `"y"`, `"xy"`: wheel zoom and drag pan along those axes),
-`brush` (`"x"`, `"y"`: drag to select a range; `"xy"`: a rectangle; `"lasso"`: a
-freehand region; along zoomed axes, drag to zoom instead),
-`sync` (charts with the same name on one HTML page share cursor and zoom;
-notebook outputs are separate iframes, so `sync` does not reach across
-cells), `animation` (`True`, milliseconds, or `hg.Animation(duration=250,
+the axes; tooltip fields, below, are marks'), `pan`, `zoom`, `brush`,
+`bindings`, `limits`, and `sync` (see Panning, zooming, and syncing,
+below), `animation` (`True`, milliseconds, or `hg.Animation(duration=250,
 values=True)`: zooming to a brush and double-click reset move the axes
 gradually in HTML output, and with `values`, bars, pie slices, and lines and
 areas whose x values stay move to the data a live chart's `replace` sends,
@@ -446,6 +442,92 @@ inside a plot (`hg.Place(inside=..., inset=..., scope=..., panel=...)`);
 inside, it takes no room from the plots. Without `padding`, spacing is
 automatic; with it (pixels, or a dict of sides; `0` included), it is the
 whitespace around everything the chart draws.
+
+### Panning, zooming, and syncing
+
+`pan`, `zoom`, and `brush` say what dragging, the wheel, touch, and keys do,
+as in the JavaScript engine (see its
+[Panning, zooming, and brushing](https://github.com/op55-org/herceg/blob/main/packages/herceg/README.md#panning-zooming-and-brushing)):
+
+| Option | Values | What it does |
+| --- | --- | --- |
+| `pan` | `True` (x), `"x"`, `"y"`, `"xy"`, `False` | Dragging pans those axes, the horizontal wheel (or Shift with the wheel) pans x, and double-click resets |
+| `zoom` | `True` (x), `"x"`, `"y"`, `"xy"` | The wheel with Ctrl or ⌘ held, a pinch, and `+` and `-` zoom those axes; `0` and double-click reset; dragging pans unless `pan=False` |
+| `brush` | `"x"`, `"y"`, `"xy"`, `"lasso"` | Dragging selects a range, a rectangle, or a freehand region; where `zoom` covers its axes, it zooms instead, and Shift-drag pans |
+| `bindings` | a list of `hg.Binding` | Gestures bound to actions, tried before the presets' |
+| `limits` | `{"x": hg.ViewLimits(...), "y": ..., "y_right": ...}` | How far each view may go, and when nearing its ends is reported |
+| `sync` | a group's name, or `hg.Sync(...)` | What the chart shares with other charts on the page |
+
+Without a modifier, the vertical wheel scrolls the page, so a notebook or
+an article scrolls past charts without being caught by them.
+
+```python
+hg.Chart(df, zoom="x")            # drag to pan, Ctrl/⌘ with the wheel or a pinch to zoom
+hg.Chart(df, pan="x")             # pan only: the wheel never zooms
+hg.Chart(df, pan="x", brush="x")  # drag to select, Shift-drag to pan
+
+# Bindings of your own: the plain wheel zooms while the chart has the focus,
+# and a touch scrubs the cursor along the line instead of panning.
+hg.Chart(df, zoom="x", bindings=[
+    hg.Binding(hg.WheelGesture(axis="y", focused=True), hg.ZoomAction(axes="x")),
+    hg.Binding(hg.DragGesture(pointer="touch"), hg.CursorAction()),
+])
+```
+
+| Gesture | Options | Actions |
+| --- | --- | --- |
+| `hg.WheelGesture` | `axis` (`"x"`, `"y"`), `modifiers`, `focused` | `hg.PanAction`, `hg.ZoomAction`, `hg.PageScrollAction` |
+| `hg.DragGesture` | `button` (0, 1, 2), `pointer` (`"mouse"`, `"touch"`, `"pen"`), `modifiers` | `hg.PanAction`, `hg.BrushAction`, `hg.CursorAction`, `hg.OrbitAction`, `hg.MoveItemAction`, `hg.PageScrollAction` |
+| `hg.PinchGesture` | | `hg.ZoomAction`, `hg.PageScrollAction` |
+| `hg.KeyGesture` | `key` (`"+"`, `"a"`, `"PageDown"`), `modifiers` | `hg.PanAction`, `hg.ZoomAction`, `hg.ResetAction` |
+| `hg.DoubleClickGesture` | `modifiers` | `hg.ZoomAction`, `hg.ResetAction` |
+
+`modifiers` lists the keys held, exactly: `["shift"]`, `["ctrl"]`, `["alt"]`,
+`["meta"]`. `hg.PanAction(axes=, step=)` pans (keys by `step`, fractions of
+the view across and up), `hg.ZoomAction(axes=, factor=)` zooms (keys by
+`factor`, 1.25 by default, double clicks 2), `hg.BrushAction(shape=,
+zoom=True)` brushes or zooms to the brushed range, and `hg.PageScrollAction()`
+leaves the gesture to the page. A gesture may be bound once, and the keys
+the keyboard cursor uses (arrows, Home, End, Page Up and Down, Escape,
+Enter) only with ctrl, alt, or meta.
+
+`hg.ViewLimits(extent=(start, None), edge=True)` keeps every change of the
+view inside `extent` (numbers, or datetimes on time axes; `None` for no end),
+however it is made, and reports coming near an end, to a live chart's
+`on_edge` (below): within `hg.Edge(threshold=0.1)` of the view's span, and
+again once it moved `hysteresis` (0.05) away, or the end moved.
+
+```python
+live = hg.Chart(recent, pan="x", limits={"x": hg.ViewLimits(extent=(first, None), edge=True)})
+```
+
+`sync="ops"` shares the cursor, the x range in view, and the selection with
+the charts of the group "ops" on the same page; `hg.Sync(cursor="ops")`
+shares only the cursor, and `hg.SyncChannel("ops", scale="y")` carries a
+channel on the y scale (a chart of horizontal bars following the others'
+cursor). Values travel as data, categories by name. The cursor's channel
+says how the chart shows the cursors it receives: `snap="previous"` reads
+each series' last point at or before the shared time (a 10:37 cursor shows
+an hourly chart's 10:00 reading; "next" the first after; "nearest" by
+default), and `tooltip=True` shows the chart's tooltip there too.
+`hg.Sync(panels=...)` shares the cursor across the chart's own panels: on
+by default for panels sharing an x scale, `False` off, and `True` or
+`hg.SyncChannel(snap=..., tooltip=...)` (without a group) for panels with x
+scales of their own too.
+
+```python
+# Two days by the minute beside a month by the hour, sharing the cursor alone.
+cursor = hg.SyncChannel("ops", snap="previous", tooltip=True)
+recent = hg.Chart(minutes, zoom="x", sync=hg.Sync(cursor=cursor)).line("at", "load")
+month = hg.Chart(hours, zoom="x", sync=hg.Sync(cursor=cursor)).line("at", "load")
+```
+
+Charts on one page sync whichever way they are shown: static notebook
+outputs, each in a sandboxed frame of its own, link through a relay that
+posts what sync carries (cursor values, view ranges, selections, and the
+group's name) to the other outputs' frames that run one; live widgets,
+which each load their own copy of the engine, share one registry of groups
+on the page; and so do Streamlit components and HTML pages.
 
 ### Scales and guides
 
@@ -1302,12 +1384,26 @@ chart.save("chart.png")    # PNG at twice the chart size (scale=...)
 chart.save("chart.pdf")    # one-page vector PDF (chart.to_pdf() returns the bytes)
 hg.save(chart, "chart.png", scale=3)  # the same format dispatch as chart.save
 chart.to_spec()            # (spec dict, list of binary buffers)
+chart.to_snapshot(id_prefix="latency")  # server-rendered markup for a web page to hydrate
 chart.widget()             # a live notebook chart (see below)
 ```
 
 HTML output and notebook display embed the herceg bundle (about 142 KiB,
 52 KiB gzipped), so they work offline. Notebooks show each chart in an
 isolated iframe.
+
+`to_snapshot(id_prefix="latency")` renders the chart for a web page, as
+herceg's browser runtime would build it, in a dict of JSON values: put its
+`html` in the page, which then shows the chart before any script runs, and
+give the dict to the JavaScript chart of the same spec
+(`<Chart initial={hydration(snapshot)}>` in React, Vue, and Svelte, or
+`hydrateChart` in TypeScript), which takes the markup over without drawing
+it again.
+`id_prefix` starts the element's ids, so it must be unique in the page;
+`width` and `height` (the chart's, or 640 x 320), `locale` and `time_zone`
+(where the chart sets none: "en-US" and "UTC"; not "local"), and `fonts`
+(which the browser's chart must get too) are those it is laid out with. Like
+SVG export, it needs the `export` extra.
 
 An SVG is the chart's size by default. `to_svg(sizing="fluid")` (and
 `save(path, sizing="fluid")` for `.svg` paths) leaves out its width and
@@ -1508,7 +1604,35 @@ live.on_hover(lambda inspection: print(inspection))   # None when the pointer le
 live.on_click(lambda inspection: print(df.iloc[inspection.points[0].row]))
 live.on_click(callback, remove=True)     # stop calling it
 live.on_camera(lambda camera: print(camera.azimuth, camera.elevation))  # standalone 3D
+live.on_edge(lambda edge: print(edge.side, edge.bound))  # the view neared an end of `limits`
+live.show_cursor(x=when)                 # a crosshair and the points at a time; hide_cursor() hides it
 ```
+
+`on_edge` receives an `hg.ViewEdge`: the `scale`, the `side` (`"start"`,
+its low values, or `"end"`), the `domain` in view, the `bound` it came near
+(datetimes on time axes), the `panels` showing the scale, and the `cause`
+(`"pointer"`, `"wheel"`, `"keyboard"`, `"api"`, `"sync"`, `"data"`, or
+`"options"`). To load history as the reader pans back, replace the rows
+with older ones first and widen the extent; the view stays where it is:
+
+```python
+def load_older(edge):
+    global first
+    if edge.side != "start":
+        return
+    older = fetch_before(first)                        # the application's loader
+    first = older["time"].min()
+    live.replace(pd.concat([older, shown_rows]))       # older rows first
+    live.update(limits={"x": hg.ViewLimits(extent=(first, None), edge=True)})
+
+live.on_edge(load_older)
+```
+
+`show_cursor(x=...)` or `show_cursor(y=...)` (a datetime on time axes, a
+category's name on category axes) shows the cursor in every browser showing
+the widget, as a synced chart's shows (`snap=` and `tooltip=` as the cursor
+channel's by default), and shares it with the chart's cursor channel unless
+`broadcast=False`; `hide_cursor()` hides it.
 
 Trees and networks report their state with the same property and callback
 pattern. `drill_root` is an `hg.DrillRoot`: a tuple of item keys from the top
@@ -1784,10 +1908,9 @@ npm run test:python    # build, then run pytest in a uv environment
 - Live charts need a running kernel. Where widgets are not rendered (GitHub,
   nbviewer, notebooks saved without widget state) they show nothing; display
   the chart itself for a static copy.
-- `sync` does not link separate widgets, since each loads its own copy of
-  the engine, and nor does a row selection's channel. Link them from Python
-  instead:
-  `a.on_viewport(lambda view: setattr(b, "viewport", dataclasses.replace(b.viewport, x=view.x)))`,
+- A row selection's channel does not link separate widgets, since each
+  loads its own copy of the engine (`sync` does: its groups are the
+  page's). Link row selections from Python instead:
   `a.on_row_selection(lambda picked: setattr(b, "row_selection", picked))`
   (for charts of the same data; `b`'s binding names in `fields=` the
   columns `a`'s brushes test that `b` does not draw). Row selections of a derived table's rows

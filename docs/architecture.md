@@ -4345,9 +4345,7 @@ An explicit mode applies to every mark except heatmaps and 2D histograms,
 which always report the cell under the pointer, and contours, which report
 the band region under it or the line nearest it, at the pointer; when cells
 overlap, the mark drawn last wins.
-With zoom enabled along x (`true` or "x"), y ("y"), or both ("xy"), the
-wheel zooms those axes around the pointer, dragging pans them, and
-double-click resets both; all work in pixel space through the scales, so
+Pans and zooms (see Bindings) work in pixel space through the scales, so
 they behave the same on log axes. Category axes do not zoom. Viewports are
 kept ascending and shown the way the axis' configured domain runs, so
 reversed axes stay reversed. The y viewport is kept as domains for the left
@@ -4359,9 +4357,9 @@ each draws at the cursor's x, except where a mark pairs rows of its series
 has several rows, the stack's other layers are read at the same one of
 theirs, in row order, and left out where they have fewer.
 
-A press on the plot becomes one of three gestures once it moves 3 px: a
-brush (with `interaction.brush`), a pan (with zoom only, or Shift with
-both), or nothing; a press that does not move is a click. Gestures, these
+A press on the plot becomes the gesture its drag binding names once it
+moves 3 px (a brush, a pan, the cursor following it, or nothing); a press
+that does not move is a click. Gestures, these
 and the layout controls' below, capture their pointer at the chart's root,
 which meanwhile cancels the browser's `dragstart`: a page selection spanning
 the drawing pressed is not dragged instead, which in Chrome would cancel
@@ -4377,9 +4375,8 @@ none of it, and a press made before it arrives drags once it has. When zoom
 is on along every axis a selection has a range on, releasing the brush (or
 Enter, for a selection made with the keyboard or received from a synced
 chart) sets the viewport instead; lassos never zoom. Synced charts share
-selections as data values (category indices on category axes), each drawing
-them on its own scales, so charts sharing a selection should have the same
-axis types and category order. Shift with the arrow keys selects a range
+selections as data values, categories by name (see Sync channels), each
+drawing them on its own scales. Shift with the arrow keys selects a range
 from where the keyboard cursor started, along the axis it steps along (x for
 lines and vertical bars, y for horizontal bars): with brushes along that
 axis, and with rectangle and lasso brushes, which only the pointer draws.
@@ -4392,7 +4389,10 @@ axes: the inspected value on the axis it follows, and for the pointer, its
 position on the other axes (both y axes when there are two) across a dashed
 line. The labels live in `dom/axis-labels.ts`, loaded the first time a
 chart asks for them, which imports no code of its own so that loading it
-moves nothing out of a chart's bundle.
+moves nothing out of a chart's bundle. They are HTML boxes placed by CSS: a
+label's text is set, and a transform centers its box on its value and keeps
+it inside the chart (`clamp()` and `calc()` over the box's own size), so
+moving the cursor measures no text and lays nothing out in script.
 
 Tooltips write values with their axis' `tooltipFormat`, else its
 `format`, the formatter `formatValue` and the keyboard read too. A mark's
@@ -4416,7 +4416,7 @@ call: React through a portal from a component of its own state, Vue
 through a teleport, Svelte into an element of its markup, each rendering
 only the tooltip's content.
 
-Charts emit `viewport`, `select`, `hover`, `click`, `camera`, `drill`,
+Charts emit `viewport`, `edge`, `select`, `hover`, `click`, `camera`, `drill`,
 `itemMove`, `visibility`, and `render` events. Each reports changes only (hover compares the inspected
 values; `render` follows frames that draw the data, not those that only move
 the cursor), and a listener that throws is reported without stopping the
@@ -4432,11 +4432,207 @@ changed, with all three ranges, after the change is complete. Listeners may
 change the view again; their change reports itself, and the outer call skips
 x scales whose view a listener's change already reported. An `update` that
 gives panels y scales of their own reports the y viewport it lets go of.
-Only changes that set x share the final x range with synced charts; y
-ranges are not synced.
+Changes share the final range of the scale the chart's viewport channel
+carries (x, or y with `scale: "y"`) with synced charts, which apply it as a
+change caused by sync and share it no further.
 `setViewport` checks a whole change (an x range without a panel where
 panels have x scales of their own, y ranges where panels have y scales of
 their own) before it changes anything.
+
+### The interaction controller
+
+What answers input is one module, `dom/interaction.ts`, which every chart
+loads right after its first frame (a dynamic `import()` an animation frame
+and a task after the chart draws, at once in a hidden page) or at its first
+input, whichever comes first: the pointer's inspection and its hover
+events, the tooltip's DOM, the crosshairs, dots, and outlines in the
+overlay, the keyboard cursor and its announcements, the wheel, drags,
+pinches, and keys, edge reports, and the cursor synced charts show. What a
+chart is stays in `dom/chart.ts`, synchronous from creation: its options and
+state, `inspect`, pixel mapping, formatting, the viewport, visibility, and
+selection methods and their events, the description, the legend, and the
+highlighting of a selection. The controller changes the chart through a host
+(`InteractionHost`: the model, the overlay, the scene, a redraw, a change of
+view, a selection, the cursor channel) and takes the chart's few shared
+functions (SVG element creation, positions' rows, the surface color) as a
+kit, so it imports nothing a chart's initial chunks hold and bundlers split
+no shared chunk out of them.
+
+Until it is attached, a small gate on the chart's root keeps input for it
+(`#hold`): the latest of consecutive pointer moves (all of them while a
+press is held, up to 256), keys in order, presses, releases, wheels, double
+clicks, and blurs. It decides in the original event what must be decided
+there: a press in a chart that pans, zooms, brushes, or has bindings
+captures its pointer (touches are captured where they land), and the
+browser's `dragstart` is prevented while a press is kept; a wheel a preset
+takes (sideways in a chart that pans x, with Ctrl or ⌘ in one that zooms),
+the keyboard cursor's keys, and in a chart that zooms `+`, `-`, `=`, and `0`
+have their defaults prevented. Bindings of a chart's own are compiled
+with the controller: a wheel one of them would take is kept too, and acted
+on once the controller is there, while the page has scrolled for it. Until
+then, touches drag along x and scroll the page along y in a chart with a
+preset (`touch-action: pan-y`); the controller sets the policy its
+bindings call for. The controller plays what was kept through its own
+handlers once attached, so an early drag goes on from where it began and an
+early hover shows its tooltip; presses, wheels, and double clicks on a
+layout mark's panels are its controls', which load apart, and are dropped.
+A chart mounted after the module loaded attaches at once. `chart.loading`
+includes the import and what attaching starts to load (crosshair labels,
+tooltip content). If the import fails, or the controller refuses the
+options (bindings it cannot compile), the chart reports it (and `loading`
+rejects), releases the presses it captured, drops what it kept, and takes
+no input, while drawing and answering its methods as before; `update`
+checks bindings with an attached controller before changing anything.
+Python's single-file bundles inline the controller (`python/js/build.mjs`
+bundles without splitting), so they fetch nothing.
+
+The controller's chunk holds the gesture bindings (`model/bindings.ts`) and
+the keyboard's stepping (`model/keyboard.ts`); layout controls get the
+bindings' class from it rather than through a chunk of their own, which
+would be one more round trip before the first input. The line entry's
+initial chunks went from 56,275 to 53,875 B gzip with the controller
+deferred (-2,400 B), after adding bindings, limits, sync channels with
+snapping and the page-wide registry and the frame relay's loader, the
+cursor API, and the hydration seams (about 290 B), 600 B short of the 3 KB
+reduction aimed for; the controller's chunk is 10,704 B gzip (26,806 B
+minified), loaded after the first frame (`npm run bench:size` reports it
+apart), and the frame relay 0.9 KB, loaded only by charts that sync in a
+sandboxed frame. The React, Vue, and Svelte line entries fell 2.2 KB (to
+55,473, 55,746, and 56,000 B).
+
+`npm run bench:first-hover` measures what this costs a first hover
+(`benchmarks/results/first-hover.json`; Chrome, headless, Apple M6, 15
+fresh page loads a case, p50, from `createChart` returning): a pointer move
+at once shows its tooltip 4.4 ms later (2.1 ms with the chunk cached; 2.0
+to 2.9 ms before deferral), one 10 ms later 10.5 ms later (7.6 cached; the
+chunk is then loading, and the tooltip waits for it and the next frame),
+and from 25 ms on 1.5 to 1.6 ms, as before; a dashboard of ten charts the
+same. With 100 ms of network latency per request, a hover at once waits
+about 105 ms for the chunk (2.8 ms before), 80 ms at 25 ms, 54 ms at 50 ms,
+and 4 ms at 100 ms. Once attached, the controller handles input as the
+chart did before (`npm run bench` pointer and tooltip scenarios), and moving
+the cursor measures no text: crosshair labels are placed by CSS (below).
+
+### Bindings
+
+Input means what the chart's bindings say (`model/bindings.ts`): a list of
+a gesture (the wheel along an axis, a drag by button and kind of pointer, a
+pinch, a key, a double click, each with the keys held, matched exactly) and
+an action (pan, zoom, brush, reset, cursor, orbit, moveItem, pageScroll).
+`interaction.bindings` come first, in order, then those the presets stand
+for: `pan`, `zoom`, `brush`, `rotate`, and `drag` compile to bindings once
+per configuration (`new Bindings(interaction)`), so the presets are short
+forms of the general form, portable in specs and Python alike. Matching
+takes the first binding whose gesture fits and whose action applies where
+the input happens (`match(type, event, applies)`): over a plot, pans and
+brushes apply; over a 3D panel, orbits; on a node, moves. `pageScroll`
+matches and does nothing, so later bindings are not tried and the page
+keeps the input. The compiler refuses a gesture bound twice, the keyboard
+cursor's keys without Ctrl, Alt, or Meta, and a brush that zooms where
+brushes select rows; specs report these at their path, as the validator
+compiles the same bindings. The defaults leave the vertical wheel to the
+page (zoom takes it with Ctrl or ⌘, which trackpads send for pinches), and
+the touch policy (`touch-action` on the root) follows the bindings: the
+axis a touch drag moves along is the chart's, the other the page's, and
+pinches the page's unless a binding zooms with them, or the chart drags
+both ways (a map, a network), whose touches are all its own unless a
+`pageScroll` binding gives pinches back. The axis charts'
+controller, the maps', 3D charts', and networks' controls, and the input
+gate all match the same list, so `interaction.zoom` means the same in every
+chart.
+
+A press becomes its drag binding's action once it moves 3 px; Escape ends
+a drag, putting a pan back where it started if nothing else moved the view
+meanwhile. Wheel steps, pinch moves, and key presses between frames add up
+without drawing: each acts on the view the one before asked for, read
+through the pixels of the scales last drawn (`#shown`: a view's ends mapped
+by the drawn scale, then scaled across the plot), which holds on log and
+broken time axes too; only a view reset since its frame (whose fitted range
+drawing finds) draws first. A pinch zooms by the ratio of its fingers'
+distances and moves what was under their middle to where it is now.
+
+### View limits and edges
+
+`interaction.limits` keeps each scale's view inside its `extent`
+(`ChartModel.#limit`, in the model's `setViewport` and `setYViewport`, and
+for views kept by `update`), so every way of asking for a view (the
+pointer, keys, the API, brushes, synced charts) is limited the same: a view
+past an end moves inside with its span, and a view wider than the extent
+shows the extent; log axes compare ratios, where ends that are not
+positive bound nothing. A fitted view (no viewport) shows the data or the
+configured domain: limiting it would need the fitted domain, which only
+planning the scene finds. Charts made in code have their limits checked
+where bindings compile, so specs and code refuse the same. Edges are reported by the controller after each frame drawn
+(`#reportEdges`): per scale instance and side, a latch set on coming within
+`threshold` of the span from the end (the extent's, or the data's while the
+view is zoomed, since a fitted view is at the data's ends) and cleared once
+the view is `threshold + hysteresis` away, so a view held near an end
+reports once, and again after the end moves (as when history loads and the
+extent widens): the latch keeps the bound it was set at. Ends of the data
+bound only an x scale every panel shares; y scales and panels' own x scales
+are bounded by their extents alone. A chart reports the edges its views are
+near once its controller attaches, on its next frame, so listeners added
+after `createChart` returns hear them. The latch is set before listeners
+run, which may load data and draw at once. Each `edge` event says what moved the view there: the
+chart records the cause of the latest change of view or data (`ViewCause`).
+
+### Sync channels
+
+`interaction.sync` names a group per channel (`dom/sync.ts`): the cursor's
+position, the view's range, and the selection, each carried on one of the
+chart's scales (x by default; selections whole, "xy"). A group's name alone
+is every channel on x. Members of a channel's group receive what one shares
+(`SyncMember.receive`) and apply it without sharing it again (a change of
+view caused by sync broadcasts nothing, along x or y); a broadcast
+that a receiver's listener supersedes with a newer one stops, so no member
+ends on the older value. Values travel as data: numbers and times as they
+are, categories by name, so charts with other categories, or the same ones
+in another order, show the same category (`#encode` and `#decode` in
+`dom/chart.ts` map names to band indices, and a selection to the range from
+the first to the last of the names a chart has, which takes in categories
+between them it did not receive: selections are ranges). `showCursor` and `hideCursor` set the shown cursor
+as a received one is set, and share it unless told not to; the controller
+draws it in every panel whose scale holds the value, while the pointer's
+own cursor takes precedence on the chart it is over. A shown cursor carries
+how it shows (`ShownCursor`: the receiving channel's `snap` and `tooltip`,
+or `showCursor`'s): "nearest" inspects each panel's nearest x as the pointer
+does; "previous" and "next" read each series' last point at or before the
+value, or first at or after it, in view (`model/snap.ts`, by binary search
+over sorted series, stepping over undrawn points and break-hidden ones as
+the nearest search does), and the crosshair goes to the latest (earliest)
+of them. With `tooltip`, the first panel with points shows the chart's
+tooltip at the crosshair. The keyboard's cursor is shared on the channel
+as the pointer's is, once per move, and cleared as it leaves.
+
+Within a chart, the pointer's or keyboard's cursor shows in the other
+panels too (`sync.panels`, `#across`): at the hovered panel's x in panels
+sharing its x scale by default, and with `panels` on, in panels with x
+scales of their own, the value read on each one's scale with the same
+snapping; out of a panel's view, or in its break, it shows nothing there.
+The hovered panel keeps the one tooltip; with `panels.tooltip`, each other
+panel shows one too (tooltips made as needed, with the built-in content).
+Crosshair labels on the axes stay the hovered panel's.
+
+Groups are the page's, not a module's: the registry (`dom/sync.ts`: each
+group's members and its broadcasts' revisions) lives on the global object
+under `Symbol.for("herceg.sync/1")`, so charts that separate copies of the
+engine made (a notebook's widgets, each importing its own) join the same
+groups; members meet only through `receive` and plain values. Charts in a
+frame of opaque origin (a sandboxed `srcdoc` frame, as static notebook
+outputs are) load a relay (`dom/relay.ts`, so other charts carry none of
+it) that joins their groups for the page's other frames: one per frame
+(its state under a key of its own), it says hello to every frame of the
+page's tree, walked from `top` through cross-origin frames' `length` and
+indexes, and keeps the frames that answer as peers; what its frame's
+charts share it posts to them, tagged "herceg.sync/1" with the channel, the
+group, and the value as sync carries it; what it hears from them it checks
+whole (numbers, names of at most 1,000 characters, ranges, selections of at
+most 100,000 names or lasso points) and broadcasts in its frame as their
+member, so it never hears its own broadcast, and charts there share
+nothing again. It runs in Chrome, Firefox, and WebKit with frames side by
+side and nested (tests, and Python's notebook outputs on a page); the
+notebook apps themselves (JupyterLab, Notebook 7, VS Code, Colab) were not
+tried yet.
 
 ### Layout controls
 
@@ -4462,7 +4658,10 @@ named with the subplot's title), and breadcrumbs over each tree's path (of
 trees sharing a root, the first panel's take the Tab key and screen
 readers, the others the pointer only). The optional `ItemViews` runtime owns the active controls,
 their pending import, and their latest scene through a portable lifecycle
-interface; it contains no browser imports. Controls of another kind, or of
+interface; it contains no browser imports. Their wheel, drag, and
+double-click handling match the chart's bindings (`ControlsHost.bindings()`,
+compiled with the class the controller's module brings), so a map's wheel
+zooms with Ctrl or ⌘ as an axis chart's does. Controls of another kind, or of
 a chart destroyed or changed while they loaded, are disposed. Promise
 identity rejects obsolete imports even through a switch back to the same
 family. Layout item state is available before the first scene, so option
@@ -4805,10 +5004,11 @@ is a deliberate list: options, viewports, selections, the camera, panels and
 pixel mapping, inspection, legend visibility, events, rendering, and export.
 The React, Vue, and Svelte adapters hand out the same interface. The chart's
 model, its entry in the shared frame loop (an object with `flush` and
-`visible`), and its member of a sync group (an object with `syncCursor`,
-`syncViewport`, and `syncSelection`, which also names it as the sender of its
-broadcasts) are private; what synced charts send is applied without being
-sent again, as before.
+`visible`), and its member of its sync channels' groups (an object with
+`receive`, which also names it as the sender of its broadcasts) are
+private; what synced charts send is applied without being sent again.
+`showCursor` and `hideCursor` show and hide the cursor as a synced chart's
+is shown, sharing it with the cursor channel unless `broadcast` is false.
 
 `getPanels()` gives snapshots of the last scene's panels: plot rectangles and,
 per axis, its type, domain, range, categories, band width, the group of
@@ -4862,6 +5062,53 @@ needs (custom picking, packed geometry, layouts) with its own lifecycle and
 export contract. The adapters reconcile marks with what is public: specs,
 constructors, and `tablesOf` and `viewOf`.
 
+## Server rendering
+
+`renderToSnapshot` (`render/snapshot.ts`) renders a chart where there is no
+DOM by running the browser runtime's own SVG layer and legend over a small
+DOM of plain objects (`ShimDocument`: elements with attributes, styles,
+children, and markup, written out as HTML), so the server's nodes are the
+ones a mounted chart would make, not a second writer's. Its model is the
+static exports' (`staticCompilers()`, the compilers imported synchronously),
+laid out at the given size and measured with the given fonts or Helvetica
+estimates, in the given locale and time zone ("local" is refused: the
+server's zone need not be the reader's). Ids start with `idPrefix`, never a
+counter, so the same options give the same markup on every server and in
+every render. The snapshot (`render/snapshot-format.ts`) is JSON: the markup,
+its size, ids, locale, time zone, and measurement (`"estimate"` or the
+fonts' fingerprint, a hash of their families, weights, and bytes), and the
+state adoption needs: per panel, each geometry's key, kind, and element
+count (or its group's markup hash for geometry drawn as one string), the
+hashes of what is drawn under the data and of the guides, whether the
+chart's own clip path exists, and the legend's entry ids and the keys each
+hides.
+
+`hydrateChart` (`dom/hydrate.ts`) adopts that markup before it constructs
+the chart (`dom/adopt.ts`): it finds the element by `data-herceg`, walks it
+in the order the layers wrote it, and checks every part against the state,
+throwing, with nothing changed, at the first that differs. The adopted parts
+go into the constructors as optional arguments (`MountedChart`'s `adopted`,
+`SvgLayer`'s parts, the `Legend`'s element and entries), which take the
+nodes over instead of making them: each retained geometry keeps its nodes,
+attributes, and hash, so the first frame redraws only geometry whose
+drawing differs, and markup under the data and guides only when its hash
+does. The chart keeps the snapshot's measurement and size until its options
+or its host's size change, so its first frame lays out as the server did;
+then it measures and lays out as any chart. A chart that waits for code
+before it can draw (the compilers, the GPU painter) draws nothing until it
+has it, leaving the server's markup up, and a Canvas chart replaces the
+server's SVG data with its canvas in the frame that draws it. The adapters
+write `initial.html` into a host element in their first render, on the
+server and in the browser alike, so frameworks hydrate their own markup
+without a mismatch, and hydrate the chart from that host when they mount
+(React's strict mode, mounting twice, mounts afresh the second time). The
+adapters take `hydration(snapshot)`, an object that brings `hydrateChart`
+with it, rather than the snapshot, so the adoption code (adopt.ts, the
+snapshot format, and hydrate.ts: about 1.6 KB gzip) is in the bundles of
+pages that hydrate only, as `timeBreaks` and `rowSelection` bring theirs;
+charts made with `createChart` carry the constructors' seams for adopted
+parts alone (about 290 B gzip).
+
 ## Spec and API
 
 `ChartSpec` (in `src/spec/spec.ts`) is plain JSON: field names, constants,
@@ -4914,7 +5161,7 @@ int32 buffers of offsets (and of codes, when rows do not hold geometry i in
 row i). A table with `matrix: { x, y }` is a matrix table, its coordinate
 columns sent once each rather than once per grid point. Binary columns become typed-array views of the delivered
 bytes, copied only when misaligned, so large data never passes through JSON
-number lists. `chartFromSpec`, `specToSVG`, and `specToPDF` render a loaded spec.
+number lists. `chartFromSpec`, `specToSVG`, `specToPDF`, and `specToSnapshot` render a loaded spec.
 A spec's bindings name tables, not stores: `loadSpec` makes a store per
 bound table, or takes the stores (and the tables, so that specs loaded apart
 share rows) in its options. `projection` only applies to map marks (a spec
