@@ -19,6 +19,7 @@ import {
   toNumber,
 } from "./column.ts";
 import type { GeometryInput, GeometrySet } from "./geometry.ts";
+import { setOrigin } from "./origin.ts";
 
 /** Field name to storage kind. */
 export type Schema = Record<string, FieldKind>;
@@ -143,6 +144,14 @@ export interface TableOptions {
   /** Name used when the table is referenced from a serialized spec. */
   name?: string;
   /**
+   * The table these rows were made from (statistics or a fit computed
+   * elsewhere): the fields both tables have stand for the same things, so
+   * their values take one color and one legend entry in both, as a
+   * derived table's (`derive`) do.
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: a table of any schema, read by field name.
+  origin?: Table<any>;
+  /**
    * Keep at most this many rows: appends drop the oldest rows. Use it for
    * rolling windows over streaming data. A positive integer.
    */
@@ -203,6 +212,8 @@ export class Table<S extends Schema = Schema> {
 
   constructor(columns: Record<string, ColumnInput>, options: TableOptions = {}) {
     this.name = options.name;
+    const { origin } = options;
+    if (origin) setOrigin(this as unknown as Table, origin, (field) => origin.has(field));
     this.maxRows = options.maxRows ?? Number.POSITIVE_INFINITY;
     if (
       !(

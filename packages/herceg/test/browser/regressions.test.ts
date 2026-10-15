@@ -182,12 +182,13 @@ describe("runtime regressions", () => {
     chart.destroy();
   });
 
-  it("cleans up when construction fails", () => {
+  it("cleans up when construction fails, made to throw", () => {
     const data = table({ x: [0, 1], y: [0, 1] });
     expect(() =>
       createChart(host, {
         marks: [line(data, { x: "x", y: "y" })],
         y: { type: "log", domain: [0, 10] },
+        errorMode: "throw",
       }),
     ).toThrow();
     expect(host.childElementCount).toBe(0);

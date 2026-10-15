@@ -68,7 +68,9 @@ import {
   type SegmentGeometry,
   type TextGeometry,
 } from "../../src/scene/scene.ts";
+import { loadSpec } from "../../src/spec/load.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
+import { LIGHT } from "../../src/theme.ts";
 import { legendOf, rampsOf } from "../helpers/guides.ts";
 import { positionOf, stopsOf } from "../helpers/keyboard.ts";
 
@@ -1372,7 +1374,7 @@ describe("capabilities: legend toggle", () => {
     const next = model.scene(estimateText);
     expect(legendOf(next).find((e) => e.key === entry!.key)!.hidden).toBe(true);
     expect(next.panels[0]!.marks.reduce((n, m) => n + m.draw.size(m), 0)).toBeLessThan(before);
-    expect(stopsOf(model, "").some((s) => s.key === entry!.key)).toBe(false);
+    expect(stopsOf(model, "").some((s) => model.hidden.has(s.key))).toBe(false);
   });
 
   it.each(cartesian.filter((c) => !c.noLegend))(
@@ -1865,6 +1867,211 @@ it("capabilities: every built-in mark exports as a PDF document page", () => {
   const pdf = new TextDecoder("latin1").decode(bytes);
   expect(pdf).toContain(`/Count ${cases.length}`);
   expect(pdf.match(/\/S \/Figure\b/g)).toHaveLength(cases.length);
+});
+
+describe("capabilities: color identity", () => {
+  const rows = table({ x: [0, 1, 0, 1], y: [1, 2, 3, 4], site: ["a", "a", "b", "b"] });
+
+  it("splits lines, areas, and bars into series by a category color", () => {
+    for (const make of [line, area, bar] as const) {
+      const { model } = build({ marks: [make(rows, { x: "x", y: "y", color: "site" })] });
+      expect(model.series().map((s) => s.label)).toEqual(["a", "b"]);
+    }
+  });
+
+  it("lists a value once, in one color, and hides it in every mark", () => {
+    const marks = [
+      line(rows, { x: "x", y: "y", color: "site" }),
+      area(rows, { x: "x", y: "y", series: "site" }),
+      bar(rows, { x: "x", y: "y", series: "site" }),
+    ];
+    const { model, scene } = build({ marks, legend: true });
+    const entries = legendOf(scene);
+    expect(entries.map((e) => e.label)).toEqual(["a", "b"]);
+    const colors = (label: string) =>
+      new Set(model.series().flatMap((s) => (s.label === label ? [s.color] : [])));
+    expect(colors("a").size).toBe(1);
+    expect(colors("a")).not.toEqual(colors("b"));
+    model.hidden.add(entries[0]!.key);
+    model.scene(estimateText);
+    expect(
+      model
+        .series()
+        .filter((s) => model.hidden.has(s.key))
+        .map((s) => s.label),
+    ).toEqual(["a", "a", "a"]);
+  });
+});
+
+describe("capabilities: color identity in every family", () => {
+  const square = (x: number) => [
+    [x, 0],
+    [x + 1, 0],
+    [x + 1, 1],
+    [x, 1],
+    [x, 0],
+  ];
+  const rows = () =>
+    table({
+      t: [0, 1, 0, 1],
+      v: [1, 2, 3, 4],
+      day: ["a", "b", "a", "b"],
+      region: ["eu", "eu", "us", "us"],
+      city: ["p", "q", "r", "s"],
+      lon: [0, 10, 20, 30],
+      lat: [0, 10, 20, 30],
+    });
+  // Each family's mark colored by `region` of a table of its own.
+  const families: [string, (data: ReturnType<typeof rows>) => ChartMark][] = [
+    ["point", (d) => point(d, { x: "t", y: "v", color: "region", panel: "other" })],
+    ["area", (d) => area(d, { x: "t", y: "v", color: "region", panel: "other" })],
+    ["bar", (d) => bar(d, { x: "day", y: "v", color: "region", panel: "other" })],
+    ["histogram", (d) => histogram(d, { x: "v", color: "region", panel: "other" })],
+    ["boxplot", (d) => boxplot(d, { x: "day", y: "v", color: "region", panel: "other" })],
+    ["boxen", (d) => boxen(d, { x: "day", y: "v", color: "region", panel: "other" })],
+    ["violin", (d) => violin(d, { x: "day", y: "v", color: "region", panel: "other" })],
+    [
+      "errorbar",
+      (d) => errorBar(d, { x: "day", y1: "v", y2: "v", color: "region", panel: "other" }),
+    ],
+    ["rug", (d) => rug(d, { x: "v", color: "region", panel: "other" })],
+    ["pie", (d) => pie(d, { category: "region", value: "v", panel: "other" })],
+    ["radar", (d) => radar(d, { category: "city", value: "v", series: "region", panel: "other" })],
+    ["treemap", (d) => treemap(d, { path: ["region", "city"], value: "v", panel: "other" })],
+    ["sunburst", (d) => sunburst(d, { path: ["region", "city"], value: "v", panel: "other" })],
+    [
+      "geopoint",
+      (d) => geopoint(d, { longitude: "lon", latitude: "lat", color: "region", panel: "other" }),
+    ],
+    [
+      "graph",
+      (d) =>
+        graph(table({ source: ["p", "q"], target: ["r", "s"] }), {
+          source: "source",
+          target: "target",
+          nodes: d,
+          node: "city",
+          color: "region",
+          panel: "other",
+        }),
+    ],
+    ["point3d", (d) => point3d(d, { x: "t", y: "v", z: "lat", color: "region", panel: "other" })],
+    ["line3d", (d) => line3d(d, { x: "t", y: "v", z: "lat", series: "region", panel: "other" })],
+  ];
+
+  it("geoshape regions of a category color share them with a line of the map's table", () => {
+    const map = fromGeoJSON({
+      type: "FeatureCollection",
+      features: ["eu", "us"].map((region, i) => ({
+        type: "Feature" as const,
+        properties: { region, t: i, v: i },
+        geometry: { type: "Polygon" as const, coordinates: [square(i * 2)] },
+      })),
+    });
+    const model = new ChartModel(
+      {
+        legend: true,
+        panels: panels([{ id: "line" }, { id: "map" }]),
+        marks: [
+          line(map, { x: "t", y: "v", color: "region", panel: "line" }),
+          geoshape(map, { color: "region", panel: "map" }),
+        ],
+      },
+      undefined,
+      ...staticCompilers(),
+    );
+    model.setSize(800, 400, 1);
+    model.scene(estimateText);
+    expect(model.legendEntries().map(({ label }) => label)).toEqual(["eu", "us"]);
+  });
+
+  it("pies follow a declared color scale, as every mark does", () => {
+    const data = rows();
+    const model = new ChartModel(
+      {
+        legend: true,
+        scales: { color: { type: "ordinal", map: { eu: "#0000ff" } } },
+        panels: panels([{ id: "line" }, { id: "pie" }]),
+        marks: [
+          line(data, { x: "t", y: "v", color: "region", panel: "line" }),
+          pie(data, { category: "region", value: "v", panel: "pie" }),
+        ],
+      },
+      undefined,
+      ...staticCompilers(),
+    );
+    model.setSize(800, 400, 1);
+    model.scene(estimateText);
+    expect(model.legendEntries().map(({ label, color }) => [label, color])).toEqual([
+      ["eu", "#0000ff"],
+      ["us", LIGHT.palette[1]],
+    ]);
+  });
+
+  it.each([
+    ["radar", { type: "radar", category: "day", value: "v" }, "give series"],
+    ["funnel", { type: "funnel", category: "day" }, "chooses its colors itself"],
+    ["gauge", { type: "gauge", value: "v" }, "chooses its colors itself"],
+    ["sankey", { type: "sankey", source: "day", target: "region" }, "chooses its colors itself"],
+    [
+      "candlestick",
+      { type: "candlestick", x: "t", open: "v", high: "v", low: "v", close: "v" },
+      "chooses its colors itself",
+    ],
+    ["2D histogram", { type: "histogram", x: "t", y: "v" }, "a 2D histogram of both takes none"],
+  ])("%s refuses a color, naming what to give instead", (_, mark, fix) => {
+    const spec = {
+      data: { data: { columns: { t: [0, 1], v: [1, 2], day: ["a", "b"], region: ["eu", "us"] } } },
+      marks: [{ ...mark, color: "region" }],
+    };
+    expect(() => loadSpec(spec as never)).toThrow(fix);
+  });
+
+  it("refuses, made from mark functions without types, colors marks do not take", () => {
+    const data = rows();
+    expect(() => funnel(data, { category: "day", color: "region" } as never)).toThrow(
+      "funnel color: the mark chooses its colors itself",
+    );
+    expect(() => radar(data, { category: "city", value: "v", color: "region" } as never)).toThrow(
+      "radar color: the mark colors by series; give series",
+    );
+    // A string neither a field nor a color, in static output as in the browser.
+    const model = () =>
+      new ChartModel(
+        { marks: [histogram(data, { x: "v", color: "stie" as never })] },
+        undefined,
+        ...staticCompilers(),
+      );
+    expect(model).toThrow('histogram (mark 0) color: "stie" is neither a field nor a color');
+  });
+
+  it.each(families)(
+    "%s gives a value one color and legend entry with a line of the table",
+    (_, make) => {
+      const data = rows();
+      const banded = ["bar", "boxplot", "boxen", "violin", "errorbar"].includes(_);
+      const model = new ChartModel(
+        {
+          locale: "en-US",
+          timeZone: "UTC",
+          legend: true,
+          panels: panels([{ id: "line" }, { id: "other" }]),
+          marks: [
+            line(data, { x: banded ? "day" : "t", y: "v", color: "region", panel: "line" }),
+            make(data),
+          ],
+        },
+        undefined,
+        ...staticCompilers(),
+      );
+      model.setSize(800, 400, 1);
+      model.scene(estimateText);
+      const entries = model.legendEntries();
+      expect(entries.map(({ label }) => label)).toEqual(["eu", "us"]);
+      const lines = model.series().filter((s) => s.key.startsWith("[0,"));
+      expect(entries.map(({ color }) => color)).toEqual(lines.map((s) => s.color));
+    },
+  );
 });
 
 describe("category-colored bars", () => {

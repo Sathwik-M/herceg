@@ -16,7 +16,6 @@ from .._data import Column
 from . import _numerics as numerics
 from . import _swarm
 from ._common import (
-    SERIES_GROUP,
     Source,
     Statistics,
     by,
@@ -58,6 +57,7 @@ def stripplot(
     x: str,
     y: str,
     series: str | None = None,
+    color: str | None = None,
     order: Sequence[Any] | None = None,
     series_order: Sequence[Any] | None = None,
     orient: Orient | None = None,
@@ -98,7 +98,6 @@ def stripplot(
         jitter=spread,
         radius=radius,
         label=None if series else layout.value,
-        legend_group=SERIES_GROUP,
     )
     used_seed = spread.seed if spread is not None else None
     return record(
@@ -116,6 +115,7 @@ def swarmplot(
     x: str,
     y: str,
     series: str | None = None,
+    color: str | None = None,
     order: Sequence[Any] | None = None,
     series_order: Sequence[Any] | None = None,
     orient: Orient | None = None,
@@ -164,7 +164,6 @@ def swarmplot(
         swarm=True,
         radius=float(radius),
         label=None if series else layout.value,
-        legend_group=SERIES_GROUP,
     )
     _warn_unplaced(layout, options, series, spread, float(radius), float(warn_thresh))
     return record(
@@ -324,6 +323,7 @@ def boxplot(
     x: str,
     y: str,
     series: str | None = None,
+    color: str | None = None,
     order: Sequence[Any] | None = None,
     series_order: Sequence[Any] | None = None,
     orient: Orient | None = None,
@@ -366,7 +366,6 @@ def boxplot(
         notch=notch or None,
         outliers=None if outliers else False,
         label=None if series else layout.value,
-        legend_group=SERIES_GROUP,
     )
     return record(
         chart, Statistics("boxplot", sentence, {"boxes": readable(boxes)}, None, layout.dropped)
@@ -380,6 +379,7 @@ def boxenplot(
     x: str,
     y: str,
     series: str | None = None,
+    color: str | None = None,
     order: Sequence[Any] | None = None,
     series_order: Sequence[Any] | None = None,
     orient: Orient | None = None,
@@ -451,7 +451,6 @@ def boxenplot(
         width_method=None if width_method == "exponential" else width_method,
         outliers=None if outliers else False,
         label=None if series else layout.value,
-        legend_group=SERIES_GROUP,
     )
     return record(chart, Statistics("boxenplot", sentence, letters, None, layout.dropped))
 
@@ -529,6 +528,7 @@ def violinplot(
     x: str,
     y: str,
     series: str | None = None,
+    color: str | None = None,
     order: Sequence[Any] | None = None,
     series_order: Sequence[Any] | None = None,
     orient: Orient | None = None,
@@ -586,7 +586,6 @@ def violinplot(
         split=split or None,
         inner=None if inner == "box" else inner,
         label=None if series else layout.value,
-        legend_group=SERIES_GROUP,
     )
     boxes, _ = _box_statistics(layout, 1.5)
     return record(

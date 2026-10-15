@@ -49,12 +49,14 @@ import {
   type Scene,
   tickLabelGap,
 } from "../scene/scene.ts";
+import { type ChartError, type ChartErrorPhase, chartError } from "../spec/errors.ts";
 import type { CameraSpec } from "../spec/spec.ts";
 import { surface, themeReadsPage } from "../theme.ts";
 import type { Camera } from "../three/camera.ts";
 import type { AdoptedChart } from "./adopt.ts";
 import type { Brush } from "./brush.ts";
 import { ascending, DRAG_THRESHOLD, normalize, type Selection } from "./brushed.ts";
+import { showFailure } from "./errors.ts";
 import {
   type ChartEvents,
   type ChartListener,
@@ -106,6 +108,20 @@ export interface ChartOptions extends ChartConfig {
    * tooltip is at changes.
    */
   renderTooltip?: RenderTooltip | undefined;
+  /**
+   * How the chart shows what keeps it from drawing (a `ChartError`):
+   * "inline" (the default) draws it in the chart's place, a box of the
+   * chart's size, or over the last frame where that is still right (an
+   * update it refused), a banner, and neither making the chart nor
+   * `update` throws for its options; "throw" draws nothing for it, and
+   * making the chart and `update` throw what they refuse. `onError` and
+   * "error" listeners hear of what is not thrown (with "throw", what fails
+   * later: a frame of new data, code that loads), and `ready` rejects with
+   * a first frame's.
+   */
+  errorMode?: "inline" | "throw" | undefined;
+  /** Called with what keeps the chart from drawing, as "error" listeners are. */
+  onError?: ((error: ChartError) => void) | undefined;
 }
 
 /**
@@ -263,6 +279,7 @@ const HIDDEN_TEXT =
 /** The chart behind a `Chart` handle: what `createChart` mounts. */
 export class MountedChart implements Chart, ExportsScene {
   readonly root: HTMLDivElement;
+  readonly ready: Promise<void>;
   readonly #model: ChartModel;
   #options: ChartOptions;
   readonly #container: HTMLElement;
@@ -302,7 +319,8 @@ export class MountedChart implements Chart, ExportsScene {
   #cloudsLoading: Promise<void> | undefined;
   /** The compilers' loading while the configuration waits for them. */
   #compiling: Promise<void> | undefined;
-  #compileFailed = false;
+  /** Why the compilers did not load or take the configuration, until an update tries again. */
+  #compileFailure: ChartError | undefined;
   /** The fonts measured with, as the page uses them, how, and their faces' loading while pending. */
   #fonts: Fonts | undefined;
   #page: PageFonts | undefined;
@@ -404,6 +422,20 @@ export class MountedChart implements Chart, ExportsScene {
   #unwatchPage: (() => void) | undefined;
   /** The page changed since its theme was last read; read again on the next frame. */
   #pageChanged = false;
+  /** Settles `ready`: with the first frame drawn, or the failure of the first. */
+  #settleReady: [() => void, (error: ChartError) => void] | undefined;
+  /** A frame of the chart's options and data is on screen. */
+  #drawn = false;
+  /**
+   * Why the chart draws nothing until an update: the model does not hold
+   * the options, refused when the chart was made, or the controller refused them.
+   */
+  #refusal: ChartError | undefined;
+  /** What the chart shows in place of a frame, or over the last one, while it cannot draw. */
+  #failure: HTMLElement | undefined;
+  /** Counts changes of options and data; a failure is reported once per count. */
+  #revision = 0;
+  #reportedFailure = -1;
 
   /**
    * Mounts a chart in `container`, or with `adopted`, takes over the element
@@ -414,7 +446,22 @@ export class MountedChart implements Chart, ExportsScene {
     const document = container.ownerDocument;
     this.#container = container;
     this.#options = options;
-    this.#model = readPage(container, (page) => new ChartModel(options, page, ...compilers));
+    this.ready = new Promise((resolve, reject) => {
+      this.#settleReady = [resolve, reject];
+    });
+    // Rejected for listeners that ask; unread, it is no unhandled rejection.
+    this.ready.catch(() => {});
+    let refused: unknown;
+    const model = (config: ChartOptions) =>
+      readPage(container, (page) => new ChartModel(config, page, ...compilers));
+    try {
+      this.#model = model(options);
+    } catch (error) {
+      // Options refused show where the chart goes, which an update may fix.
+      if (options.errorMode === "throw") throw chartError(error, "validate");
+      refused = error;
+      this.#model = model({ marks: [] });
+    }
     this.#id = adopted?.id ?? `herceg-${++nextId}`;
     this.#snapshotMeasure = adopted?.measure;
     this.#containerSize = adopted?.size;
@@ -466,10 +513,19 @@ export class MountedChart implements Chart, ExportsScene {
           this.#invalidate();
         }),
       );
-      this.#useFonts(options.fonts);
       this.#gate();
-      this.#applyOptions();
-      this.#loadCompilers();
+      try {
+        this.#useFonts(options.fonts);
+        this.#applyOptions();
+        this.#loadCompilers();
+      } catch (error) {
+        refused ??= error;
+      }
+      if (refused !== undefined) {
+        if (options.errorMode === "throw") throw chartError(refused, "validate");
+        this.#refusal = chartError(refused, "validate");
+        this.#fail(this.#refusal, "validate");
+      }
       this.#cleanup.push(observeVisibility(this.root, (visible) => this.#setVisible(visible)));
       this.#cleanup.push(() => this.#leaveSync?.());
       if (typeof ResizeObserver !== "undefined") {
@@ -486,7 +542,7 @@ export class MountedChart implements Chart, ExportsScene {
         this.#cleanup.push(() => observer.disconnect());
       }
       // The first frame renders synchronously so the chart is never blank.
-      this.#flush();
+      this.#flush(true);
       // Its interaction follows: at once where a chart on the page loaded
       // it, else once that frame is on screen, or at the first input.
       if (controllers) {
@@ -527,11 +583,9 @@ export class MountedChart implements Chart, ExportsScene {
   update(options: ChartUpdate): void {
     const next: Record<string, unknown> = { ...this.#options, ...options };
     for (const [key, value] of Object.entries(options)) if (value === undefined) delete next[key];
-    // Bindings the controller refuses leave the chart as it was.
-    this.#controller?.check(next as unknown as ChartOptions);
-    // Fonts the page refuses leave the chart as it was.
-    this.#useFonts(next.fonts);
-    this.#options = next as unknown as ChartOptions;
+    const previous = this.#options;
+    // The fonts last taken: the options kept may hold fonts refused when the chart was made.
+    const fonts = this.#fonts;
     const y = this.#model.yViewport;
     // The x views by scale (named by its first panel), which limits that changed may move.
     const x = this.#xScales().map((first) => ({
@@ -539,8 +593,35 @@ export class MountedChart implements Chart, ExportsScene {
       view: this.#model.viewportOf(first?.key),
       first,
     }));
+    this.#revision++;
+    try {
+      // Bindings the controller refuses, fonts the page refuses, and options
+      // the model refuses leave the chart as it was.
+      this.#controller?.check(next as unknown as ChartOptions);
+      this.#useFonts(next.fonts);
+      this.#options = next as unknown as ChartOptions;
+      readPage(this.#container, (page) => this.#model.update(this.#options, page));
+    } catch (error) {
+      this.#options = previous;
+      this.#useFonts(fonts);
+      if (next.errorMode === "throw") throw chartError(error, "validate");
+      // The last frame stays right: it is of the options kept.
+      if (this.#refusal) this.#refusal = chartError(error, "validate");
+      this.#fail(error, "validate", this.#drawn && !(this.#refusal ?? this.#compileFailure));
+      return;
+    }
+    this.#refusal = undefined;
+    // A controller that refused the options, or failed to load, tries again with these.
+    if (!this.#controller && this.#held === null) {
+      this.#held = [];
+      this.#attaching = undefined;
+      const loading: Promise<void> = this.#loadController().then(() => {
+        if (this.#controllerLoading === loading) this.#controllerLoading = undefined;
+      });
+      loading.catch(() => {});
+      this.#controllerLoading = loading;
+    }
     this.#snapshotMeasure = undefined;
-    readPage(this.#container, (page) => this.#model.update(this.#options, page));
     // The page was just read; a change it had is in the theme now.
     this.#pageChanged = false;
     this.#cause = "options";
@@ -549,12 +630,12 @@ export class MountedChart implements Chart, ExportsScene {
     this.#loadCompilers();
     this.#invalidate();
     // Hidden keys go with their marks' identities: their ids, or their
-    // indexes, which other marks may take; a legend group's entries, with
-    // the group.
+    // indexes, which other marks may take; what series stand for, while
+    // some mark's series stand for values of its kind (its scope).
     const marks = this.#options.marks;
     const owners = new Set(marks.map((mark, i) => mark.spec.id ?? i));
-    const groups = new Set(marks.map((mark) => mark.spec.legendGroup));
-    const kept = [...this.#model.hidden].filter((key) => keepsKey(key, owners, groups));
+    const scopes = this.#model.scopes();
+    const kept = [...this.#model.hidden].filter((key) => keepsKey(key, owners, scopes));
     this.#hide(kept);
     // Panels given y scales of their own let go of the y viewport, and
     // limits that changed move views inside them. Which x scales there are
@@ -1003,17 +1084,30 @@ export class MountedChart implements Chart, ExportsScene {
     // An export shows the latest state at the container's current size: what
     // is pending is drawn first, and no frame is drawn when nothing is, so
     // render listeners may export.
+    // A chart drawing nothing of its options exports nothing in their place.
+    const refusal = this.#refusal ?? this.#compileFailure;
+    if (refusal) throw refusal;
     if (this.#compiling) throw new Error("chart: its code has not loaded; await chart.loading");
     this.#remember();
     this.#settle();
     const { width, height } = this.#size();
     if (width !== this.#model.width || height !== this.#model.height) this.#dirty = true;
-    const drawn = this.#drawPending();
-    const result = use(this.#model.scene(this.#measure()), this.#model);
-    // Listeners hear of the frame once the export is made: what they
-    // change then is drawn on the next frame, as after any other.
-    if (drawn) this.#finishFrame(true);
-    return result;
+    let drawn: boolean;
+    try {
+      drawn = this.#drawPending();
+    } catch (error) {
+      // Shown and told as a frame failing is; the export fails with it.
+      this.#fail(error, "render");
+      throw error;
+    }
+    if (drawn) this.#succeed();
+    try {
+      return use(this.#model.scene(this.#measure()), this.#model);
+    } finally {
+      // Listeners hear of the frame once the export is made (or failed):
+      // what they change then is drawn on the next frame, as after any other.
+      if (drawn) this.#finishFrame(true);
+    }
   }
 
   destroy(): void {
@@ -1041,16 +1135,84 @@ export class MountedChart implements Chart, ExportsScene {
     this.root.remove();
   }
 
-  /** Draws what changed: the scheduler calls this once a frame, the chart itself when it must draw at once. */
-  #flush(): void {
+  /**
+   * Draws what changed: the scheduler calls this once a frame, the chart
+   * itself when it must draw at once. A frame that fails shows why; the
+   * first frame of a chart made to throw (`rethrow`) throws instead.
+   */
+  #flush(rethrow = false): void {
     if (this.#destroyed) return;
-    this.#finishFrame(this.#drawPending());
+    let drawn: boolean;
+    try {
+      drawn = this.#drawPending();
+    } catch (error) {
+      if (rethrow && this.#options.errorMode === "throw") throw chartError(error, "render");
+      this.#fail(error, "render");
+      return;
+    }
+    if (drawn) this.#succeed();
+    this.#finishFrame(drawn);
+  }
+
+  /**
+   * Shows and reports what keeps the chart from drawing (see
+   * `ChartOptions.errorMode`): over the last frame where it is still right
+   * (`kept`), else in its place. Each change of options or data is
+   * reported once, whatever frames fail again for it; the next change tries again.
+   */
+  #fail(error: unknown, phase: ChartErrorPhase, kept = false): void {
+    if (this.#destroyed) return;
+    const failure = chartError(error, phase);
+    const reported = this.#reportedFailure === this.#revision;
+    this.#reportedFailure = this.#revision;
+    if (this.#options.errorMode !== "throw" && !(reported && this.#failure)) {
+      this.#failure?.remove();
+      // The chart keeps its size, its drawing hidden under a box saying why.
+      if (!kept) {
+        const { width, height } = this.#size();
+        Object.assign(this.root.style, {
+          width: `${width}px`,
+          height: `${height}px`,
+          visibility: "hidden",
+        });
+      }
+      this.#failure = showFailure(this.root, failure, kept);
+    }
+    if (!reported) this.#report(failure);
+  }
+
+  /** Tells of `failure`: rejects `ready` if no frame drew, then `onError`, "error" listeners, or the console. */
+  #report(failure: ChartError): void {
+    // A chart destroyed (a component unmounted) tells no one of what it no longer draws.
+    if (this.#destroyed) return;
+    this.#settleReady?.[1](failure);
+    this.#settleReady = undefined;
+    const { onError } = this.#options;
+    try {
+      onError?.(failure);
+    } catch (thrown) {
+      report(thrown);
+    }
+    this.#events.emit("error", { error: failure });
+    if (!onError && !this.#events.has("error")) console.error(failure);
+  }
+
+  /** A frame is on screen: what showed it could not draw goes. */
+  #succeed(): void {
+    this.#drawn = true;
+    this.#settleReady?.[0]();
+    this.#settleReady = undefined;
+    if (!this.#failure) return;
+    this.#failure.remove();
+    this.#failure = undefined;
+    this.root.style.visibility = "";
   }
 
   /** Draws pending changes, the page's theme among them; whether there were any. */
   #drawPending(): boolean {
-    // A configuration waiting for a compiler keeps the last frame, or none.
-    if (this.#destroyed || this.#compiling) return false;
+    // A configuration waiting for a compiler keeps the last frame, or none;
+    // a chart whose options were refused draws nothing until an update.
+    if (this.#destroyed || this.#compiling || this.#refusal) return false;
     if (this.#pageChanged) {
       this.#pageChanged = false;
       if (readPage(this.#container, (page) => this.#model.refreshTheme(page))) {
@@ -1234,13 +1396,18 @@ export class MountedChart implements Chart, ExportsScene {
   #loadCompilers(): void {
     const lacks = this.#model.lacks();
     if (!lacks.includes(true)) {
-      this.#compiling = undefined;
+      this.#compiling = this.#compileFailure = undefined;
       return;
     }
-    if (this.#compiling && !this.#compileFailed) return;
-    this.#compileFailed = false;
-    const fail = (error: unknown) => {
-      this.#compileFailed = true;
+    if (this.#compiling && !this.#compileFailure) return;
+    this.#compileFailure = undefined;
+    // A load an update made needless since (`#compiling` moved on) leaves the chart as it is.
+    let compiling: Promise<void> | undefined;
+    const fail = (phase: ChartErrorPhase) => (error: unknown) => {
+      if (this.#compiling === compiling) {
+        this.#compileFailure = chartError(error, phase);
+        this.#fail(this.#compileFailure, phase);
+      }
       throw error;
     };
     for (const [i, lack] of lacks.entries())
@@ -1256,12 +1423,13 @@ export class MountedChart implements Chart, ExportsScene {
             throw error;
           },
         );
-    this.#compiling = Promise.all(lacks.map((lack, i) => lack && imports[i])).then(() => {
+    compiling = Promise.all(lacks.map((lack, i) => lack && imports[i])).then(() => {
+      if (this.#compiling !== compiling) return;
       try {
         readPage(this.#container, (page) => this.#model.use(compilers[0], compilers[1], page));
       } catch (error) {
         // A compiler refuses the configuration: nothing is drawn until an update.
-        fail(error);
+        fail("compile")(error);
       }
       this.#compiling = undefined;
       // An update while they loaded may need another.
@@ -1269,7 +1437,10 @@ export class MountedChart implements Chart, ExportsScene {
       if (this.#compiling) return this.#compiling;
       this.#invalidate();
       this.#flush();
-    }, fail);
+    }, fail("load"));
+    // Reported as it fails; `loading` rejects for those who ask.
+    compiling.catch(() => {});
+    this.#compiling = compiling;
   }
 
   /**
@@ -1330,6 +1501,7 @@ export class MountedChart implements Chart, ExportsScene {
             );
             this.#animation?.settle();
             this.#cause = "data";
+            this.#revision++;
             this.#invalidate();
           }),
         );
@@ -1659,10 +1831,15 @@ export class MountedChart implements Chart, ExportsScene {
         await this.#brushLoading;
         if (!this.#destroyed && !this.#controller) this.#attach(module);
         // What attaching started to load (crosshair labels, tooltip content) is part of it.
-        await Promise.all(this.#controller?.loading ?? []);
+        await Promise.all(this.#controller?.loading ?? []).catch((error: unknown) => {
+          this.#report(chartError(error, "load"));
+          throw error;
+        });
       },
       (error: unknown) => {
+        // The chart still draws and answers, without input: said, not shown.
         this.#stopHolding();
+        this.#report(chartError(error, "load"));
         throw error;
       },
     );
@@ -1690,8 +1867,10 @@ export class MountedChart implements Chart, ExportsScene {
     try {
       controller = new Interaction(this.#host(), KIT);
     } catch (error) {
+      // Options it refuses (their bindings) are the chart's: it draws none of them.
       this.#stopHolding();
-      report(error);
+      this.#refusal = chartError(error, "validate");
+      this.#fail(this.#refusal, "validate");
       throw error;
     }
     this.#controller = controller;
@@ -1714,6 +1893,7 @@ export class MountedChart implements Chart, ExportsScene {
       options: () => this.#options,
       scene: () => this.#scene,
       schedule: () => schedule(this.#scheduled),
+      report: (error) => this.#report(chartError(error, "load")),
       invalidate: () => this.#invalidate(false),
       finishFrame: () => this.#finishFrame(false),
       stale: () => this.#panelsChanged,

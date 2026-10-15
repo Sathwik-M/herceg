@@ -315,8 +315,21 @@ void [
 ];
 
 const tips = table({ day: ["thu"], sex: ["f"], tip: [1], low: [0], high: [2] });
-bar(tips, { x: "day", y: "tip", series: "sex", legendGroup: "sex" });
-errorBar(tips, { x: "day", y1: "low", y2: "high", series: "sex", dodge: true, legendGroup: "sex" });
+bar(tips, { x: "day", y: "tip", series: "sex" });
+errorBar(tips, { x: "day", y1: "low", y2: "high", series: "sex", dodge: true });
+// A color field splits bars, lines, and areas into series; false splits by neither.
+bar(tips, { x: "day", y: "tip", color: "sex" });
+bar(tips, { x: "day", y: "tip", color: "sex", series: false });
+line(tips, { x: "day", y: "tip", color: "sex", series: false });
+area(tips, { x: "day", y1: "low", y2: "high", series: "sex" });
+// @ts-expect-error series is a category field or false
+bar(tips, { x: "day", y: "tip", series: true });
+// @ts-expect-error series is a category field
+line(tips, { x: "day", y: "tip", series: "tip" });
+// Series named through a scale join marks of other tables.
+line(tips, { x: "day", y: "tip", encode: { color: { series: true, scale: "fit" } } });
+// @ts-expect-error the series' names go through a named scale
+line(tips, { x: "day", y: "tip", encode: { color: { series: true } } });
 point(tips, { x: "day", y: "tip", series: "sex", dodge: true, jitter: { width: 0.4, seed: 2 } });
 point(tips, { x: "day", y: "tip", jitter: { width: 0.4 } });
 // @ts-expect-error jitter takes a width
@@ -329,7 +342,7 @@ point(tips, { x: "day", y: "tip", series: "sex", dodge: true, swarm: true });
 point(tips, { x: "day", y: "tip", swarm: 0.5 });
 
 // Lines and areas over categories (dodged like bars) and along y.
-line(tips, { x: "day", y: "tip", series: "sex", dodge: true, legendGroup: "sex" });
+line(tips, { x: "day", y: "tip", series: "sex", dodge: true });
 line(tips, { x: "tip", y: "day" });
 line(tips, { x: ["low", "high"], y: "tip", orient: "y" });
 area(tips, { x: "tip", y: "low", orient: "y" });
@@ -345,10 +358,6 @@ line(tips, { x: "day", y: "tip", orient: "y" });
 area(tips, { y: "tip", x1: "low", x2: "high", x: "low" });
 // @ts-expect-error lines along y use the left axis
 line(tips, { x: "tip", y: "low", orient: "y", axis: "right" });
-// @ts-expect-error a legend group is a name
-line(tips, { x: "tip", y: "tip", legendGroup: 1 });
-// @ts-expect-error annotations have no series to group
-rule(tips, { y: "tip", legendGroup: "sex" });
 
 // Histogram position and layout forms exclude each other.
 histogram(readings, {

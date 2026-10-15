@@ -20,9 +20,12 @@ import {
   type MARK,
   type Mark,
   type MarkKey,
+  type MarkSources,
+  ownColor,
   type Palette,
   requireField,
   SeriesSplitter,
+  seriesOf,
   valueKind,
 } from "./mark.ts";
 import {
@@ -49,8 +52,11 @@ interface LineStyle<S extends Schema> {
   clip?: Clip;
   /** With the chart's `panel`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
-  /** Category field: one line per value. */
-  series?: CategoryField<S>;
+  /**
+   * Category field: one line per value. Without it, a category field as
+   * `color` splits the rows too; `false` keeps one line per value field.
+   */
+  series?: CategoryField<S> | false;
   /**
    * On a category position axis, with `series`: each series' line through
    * its share of the bands, as grouped bars and dodged points stand.
@@ -66,9 +72,10 @@ interface LineStyle<S extends Schema> {
   /** From 0 to 1: the lines' strokes'. */
   strokeOpacity?: number;
   /**
-   * The lines' color: a category field (constant within each series)
-   * through the chart's "color" scale, or a color. The short form of
-   * `encode.color`; `stroke` wins over it.
+   * The lines' color: a category field (which splits the rows into a line
+   * per value unless `series` says otherwise, and is then constant within
+   * each series), or a color. The short form of `encode.color`; `stroke`
+   * wins over it.
    */
   color?: CategoryField<S> | CssColor;
   /** Channels, each constant within a series: color, stroke, dash, strokeWidth, opacity. */
@@ -87,11 +94,6 @@ interface LineStyle<S extends Schema> {
   curve?: Curve;
   /** Name of a single line in legends and tooltips. Defaults to the value field. */
   label?: string;
-  /**
-   * Marks naming the same group share series by name: series of the same
-   * name share a color, one legend entry, and visibility.
-   */
-  legendGroup?: string;
   /** `false` leaves the mark out of the chart's legends. */
   legend?: false;
   /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
@@ -151,6 +153,7 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
   readonly table: Table<Schema>;
   readonly tooltip: "x" | "y";
   readonly featured: boolean;
+  readonly identity: MarkSources;
   readonly #roles: Roles;
   readonly #split: SeriesSplitter;
   readonly #indexes = new IndexUse();
@@ -163,23 +166,33 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     this.table = table;
-    this.featured = asksFeatures(spec, FEATURES, table);
-    const roles = rolesOf(table, "line", spec.x, spec.y, spec.orient, spec.series);
+    if (typeof spec.series === "string") requireField(table, spec.series, CATEGORY, "line series");
+    const series = seriesOf(spec, table, "stroke");
+    this.featured = asksFeatures(spec, FEATURES, table, series);
+    const roles = rolesOf(
+      table,
+      "line",
+      spec.x,
+      spec.y,
+      spec.orient,
+      series,
+      spec.series === undefined,
+    );
     this.#roles = roles;
     this.tooltip = roles.orient;
-    if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "line series");
+    this.identity = { field: series, values: roles.values };
     if (spec.dodge) {
       if (!roles.banded)
         throw new Error(
           `line dodge: places series side by side in the bands of a category ${roles.orient}; give a category field as ${roles.orient}, or drop dodge`,
         );
-      if (spec.series === undefined)
+      if (series === undefined)
         throw new Error("line dodge: places series side by side; give a series field");
       this.#shares = new BandShares();
     }
     // Lines over categories run in band order, which their series sort by.
     const position = roles.banded ? undefined : roles.position;
-    this.#split = new SeriesSplitter(table, position, roles.values, spec.series, spec.label);
+    this.#split = new SeriesSplitter(table, position, roles.values, series, spec.label);
   }
 
   channelKind(axis: "x" | "y") {
@@ -206,7 +219,7 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
       key,
       palette,
       // A color in CSS syntax the mark draws itself; the feature compiler, others.
-      this.spec.stroke ?? (this.featured ? undefined : this.spec.color),
+      this.spec.stroke ?? (this.featured ? undefined : ownColor(this.spec.color, table)),
     );
     for (const s of series) {
       if (banded) {
@@ -252,7 +265,7 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
     const out: Geometry[] = [];
     this.#indexes.drew(frame.owner, frame.scene, this.table);
     // Parts of series (a highlight's selected rows) stand in their wholes' slots.
-    if (!series.every((s) => s.whole)) this.#shares?.split(series, frame, spec.legendGroup, true);
+    if (!series.every((s) => s.whole)) this.#shares?.split(series, frame, true);
     const strokeWidth = spec.strokeWidth ?? frame.theme.style.line.strokeWidth;
     const dash = dashPattern(spec.dash, strokeWidth);
     for (const s of series) {
@@ -341,7 +354,6 @@ export function line<S extends Schema>(
       "dash",
       "curve",
       "label",
-      "legendGroup",
       "legend",
       "id",
       "axis",

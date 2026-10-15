@@ -68,9 +68,10 @@ describe("pies in facet panels", () => {
   it("give a category one key, one color, and one legend entry in every panel", () => {
     const { model, scene } = build({ marks: [shares()], facet: facet("region") });
     expect(legendOf(scene).map(({ label }) => label)).toEqual(["a", "b", "c"]);
-    const colors = new Map(legendOf(scene).map(({ key, color }) => [key, color]));
+    // Items keep their keys; the legend lists the category's values they stand for.
+    const colors = new Map(legendOf(scene).map(({ label, color }) => [label, color]));
     for (const panel of ["North", "South"])
-      for (const { key, color } of items(model, panel)) expect(color).toBe(colors.get(key));
+      for (const { label, color } of items(model, panel)) expect(color).toBe(colors.get(label));
     expect(new Set(colors.values()).size).toBe(3);
   });
 

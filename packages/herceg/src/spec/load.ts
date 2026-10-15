@@ -6,6 +6,7 @@ import { type ColumnInput, encodedCategory, type NumericArray, time } from "../d
 import { deriveTable } from "../data/derive.ts";
 import { geometry } from "../data/geometry.ts";
 import { fromMatrix } from "../data/matrix.ts";
+import { setOrigin } from "../data/origin.ts";
 import { RowSet } from "../data/row-set.ts";
 import {
   type DataSelection,
@@ -56,6 +57,7 @@ import { Panels } from "../model/panels.ts";
 import { type RowSelection, rowSelection } from "../model/row-selection.ts";
 import { timeBreaks } from "../scale/breaks.ts";
 import { scheme } from "../scale/schemes.ts";
+import { within } from "./errors.ts";
 import type {
   AnnotationPosition,
   BinaryType,
@@ -302,6 +304,28 @@ function loadTables(
     if (!("source" in entry)) {
       const loaded = loadTable(name, entry, buffers);
       tables.set(name, loaded);
+      const { origin } = entry;
+      if (origin !== undefined) {
+        if (!Object.hasOwn(data, origin))
+          throw new Error(
+            `spec.data.${name}.origin: no table "${origin}" in spec.data; name one of ${names(data)}`,
+          );
+        // Tables are made from others, through origins and sources, never from themselves.
+        const from = (at: string) => {
+          const of = data[at];
+          return of && ("source" in of ? of.source : of.origin);
+        };
+        const seen = new Set([name]);
+        for (let at: string | undefined = origin; at !== undefined; at = from(at)) {
+          if (seen.has(at))
+            throw new Error(
+              `spec.data.${name}.origin: the table is made from itself; name a table it is made from`,
+            );
+          seen.add(at);
+        }
+        const source = load(origin);
+        setOrigin(loaded, source, (field) => source.has(field));
+      }
       return loaded;
     }
     if (loading.has(name))
@@ -596,16 +620,8 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
         );
     }
   } catch (error) {
-    throw within(`marks[${index}]`, error);
+    throw within(`marks[${index}]`, error, spec.id ?? index);
   }
-}
-
-/** An error of the same kind (TypeError, RangeError, Error) whose message starts at `location`. */
-function within(location: string, error: unknown): Error {
-  const message = `${location}: ${(error as Error).message}`;
-  if (error instanceof RangeError) return new RangeError(message);
-  if (error instanceof TypeError) return new TypeError(message);
-  return new Error(message);
 }
 
 /** A list of tables' names, as an error suggests them. */

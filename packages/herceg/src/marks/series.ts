@@ -16,6 +16,18 @@ import type { SeriesFeatures } from "../model/features.ts";
 export interface Series {
   /** Unique within a chart; used for legend state and geometry identity. */
   key: string;
+  /**
+   * The identity key of what the series stands for (see model/identity.ts),
+   * which its color and legend entry follow; the model sets it.
+   */
+  entry?: string | undefined;
+  /** What its legend entry says, where not its `label`: a series colored by another field, that field's value. */
+  entryLabel?: string | undefined;
+  /**
+   * The identity key of the value of the field splitting the mark's rows
+   * that the series is, which marks dodging by that field place by.
+   */
+  partition?: string | undefined;
   /** Geometric rank in an inside-out stack, independent of legend order. */
   stackIndex?: number;
   label: string;

@@ -4,20 +4,19 @@ import { selectionStore, selectRows } from "../../src/data/selection.ts";
 import { type Table, table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { bar } from "../../src/marks/bar.ts";
-import { legendKey } from "../../src/marks/mark.ts";
 import { point } from "../../src/marks/point.ts";
 import { Highlighter } from "../../src/model/highlight.ts";
 import { ChartModel } from "../../src/model/model.ts";
 import type { PointGeometry, RectGeometry } from "../../src/scene/scene.ts";
 
-it("keeps hidden legend groups' placement when selection splits their series", () => {
+it("keeps the placement of hidden values' series when a selection splits them", () => {
   const source = table({ day: ["thu", "thu"], sex: ["f", "m"], value: [1, 2] }) as unknown as Table;
   const store = selectionStore(source);
   const highlighter = new Highlighter([{ table: source, store, channel: "focus" }]);
   const model = new ChartModel({
     marks: [
-      bar(source, { x: "day", y: "value", series: "sex", legendGroup: "sex" }),
-      point(source, { x: "day", y: "value", series: "sex", dodge: true, legendGroup: "sex" }),
+      bar(source, { x: "day", y: "value", series: "sex" }),
+      point(source, { x: "day", y: "value", series: "sex", dodge: true }),
     ],
     locale: "en-US",
     timeZone: "UTC",
@@ -38,7 +37,8 @@ it("keeps hidden legend groups' placement when selection splits their series", (
         ),
       ];
     });
-  model.hidden.add(legendKey("sex", "f"));
+  model.scene(estimateText);
+  model.hidden.add(model.legendEntries()[0]!.key);
   const before = positions();
   expect(before).toHaveLength(2);
   store.set("focus", selectRows(new RowSet(source).add(1)));

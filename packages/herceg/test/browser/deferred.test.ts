@@ -8,6 +8,7 @@ import { table } from "../../src/data/table.ts";
 import { type Chart, createChart, forgetInteraction } from "../../src/dom/chart.ts";
 import { line } from "../../src/marks/line.ts";
 import { point3d } from "../../src/marks/point3d.ts";
+import type { ChartError } from "../../src/spec/errors.ts";
 
 let host: HTMLDivElement;
 
@@ -218,37 +219,61 @@ describe("the interaction controller", () => {
 
   it("reports bindings it refuses, and leaves the chart without input, as loaded or not", async () => {
     const reported: unknown[] = [];
-    const reportError = globalThis.reportError;
-    globalThis.reportError = (error) => reported.push(error);
-    try {
-      const twice = { gesture: { type: "pinch" }, action: { type: "zoom" } } as const;
-      const options = {
-        interaction: { bindings: [twice, twice] },
-        marks: [line(data(), { x: "t", y: "v" })],
-      };
-      const cold = createChart(host, options);
-      pointer(cold, "pointermove", 300, 150);
-      await expect(cold.loading).rejects.toThrow("duplicates binding 0");
-      expect(tooltipOf(cold)).toBeUndefined();
-      cold.destroy();
-      // Another chart loads the controller; this one attaches it at once, and fails alike.
-      const other = createChart(host, { marks: [line(data(), { x: "t", y: "v" })] });
-      await other.loading;
-      const cached = createChart(host, options);
-      await expect(cached.loading).rejects.toThrow("duplicates binding 0");
-      expect(tooltipOf(cached)).toBeUndefined();
-      expect(reported).toHaveLength(2);
-      cached.destroy();
-      other.destroy();
-    } finally {
-      globalThis.reportError = reportError;
-    }
+    const twice = { gesture: { type: "pinch" }, action: { type: "zoom" } } as const;
+    const options = {
+      interaction: { bindings: [twice, twice] },
+      marks: [line(data(), { x: "t", y: "v" })],
+      onError: (error: unknown) => reported.push(error),
+    };
+    const cold = createChart(host, options);
+    pointer(cold, "pointermove", 300, 150);
+    await expect(cold.loading).rejects.toThrow("duplicates binding 0");
+    expect(tooltipOf(cold)).toBeUndefined();
+    // The chart says so in its place, as of options it refuses.
+    expect(cold.root.querySelector('[role="alert"]')?.textContent).toContain(
+      "duplicates binding 0",
+    );
+    cold.destroy();
+    // Another chart loads the controller; this one attaches it at once, and fails alike.
+    const other = createChart(host, { marks: [line(data(), { x: "t", y: "v" })] });
+    await other.loading;
+    const cached = createChart(host, options);
+    await expect(cached.loading).rejects.toThrow("duplicates binding 0");
+    expect(tooltipOf(cached)).toBeUndefined();
+    expect(reported).toHaveLength(2);
+    cached.destroy();
+    other.destroy();
+  });
+
+  it("tells no one of code that fails to load once the chart is destroyed", async () => {
+    let fail = (_: Error) => {};
+    forgetInteraction(() => new Promise((_, reject) => (fail = reject)));
+    const errors: ChartError[] = [];
+    const chart = createChart(host, {
+      marks: [line(data(), { x: "t", y: "v" })],
+      onError: (error) => errors.push(error),
+    });
+    const loading = chart.loading!;
+    loading.catch(() => {});
+    // The controller loads after the first frame is on screen.
+    await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve)));
+    chart.destroy();
+    fail(new Error("offline"));
+    await expect(loading).rejects.toThrow("offline");
+    expect(errors).toEqual([]);
   });
 
   it("rejects loading when it cannot load, and takes no more input", async () => {
     forgetInteraction(() => Promise.reject(new Error("offline")));
-    const chart = createChart(host, { marks: [line(data(), { x: "t", y: "v" })] });
+    const errors: ChartError[] = [];
+    const chart = createChart(host, {
+      marks: [line(data(), { x: "t", y: "v" })],
+      onError: (error) => errors.push(error),
+    });
     await expect(chart.loading).rejects.toThrow("offline");
+    // Reported as code that failed to load; the chart, drawn, stays in sight.
+    expect(errors.map((e) => [e.code, e.phase])).toEqual([["load-failed", "load"]]);
+    expect(chart.root.querySelector('[role="alert"]')).toBeNull();
     chart.root.focus();
     const key = new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true });
     chart.root.dispatchEvent(key);

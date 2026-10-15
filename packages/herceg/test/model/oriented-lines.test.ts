@@ -94,11 +94,11 @@ describe("lines over category axes", () => {
     expect(describeChart(model)).toContain("v: 4 points, from 1 to 4");
   });
 
-  it("dodge with grouped bars and dodged points of their legend group", () => {
+  it("dodge with grouped bars and dodged points splitting rows by one field", () => {
     const marks = [
-      bar(months, { x: "month", y: "sales", series: "region", legendGroup: "g" }),
-      point(months, { x: "month", y: "sales", series: "region", dodge: true, legendGroup: "g" }),
-      line(months, { x: "month", y: "sales", series: "region", dodge: true, legendGroup: "g" }),
+      bar(months, { x: "month", y: "sales", series: "region" }),
+      point(months, { x: "month", y: "sales", series: "region", dodge: true }),
+      line(months, { x: "month", y: "sales", series: "region", dodge: true }),
     ];
     const { model, scene } = build({ marks });
     const bars = of<RectGeometry>(scene, "rect");

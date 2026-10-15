@@ -128,7 +128,7 @@ describe("limits", () => {
     expect(views.map(({ x }) => x)).toEqual([[30, 50]]);
     expect(peer.getViewport().x).toEqual([30, 50]);
     // Limits that run backwards are refused, changing nothing.
-    expect(() => chart.update(options([100, 0]))).toThrow(
+    expect(() => chart.update({ ...options([100, 0]), errorMode: "throw" })).toThrow(
       "interaction.limits.x.extent: expected two finite numbers, ascending",
     );
     expect(chart.getViewport().x).toEqual([30, 50]);

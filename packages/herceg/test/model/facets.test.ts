@@ -516,7 +516,12 @@ describe("row and column facets", () => {
         facet: facet({ row: "region", column: "product" }),
       }),
     ).toThrow(
-      "90000 panels in 300 rows of 300 do not fit a 600×400 chart; make it larger or facet by fields with fewer values",
+      expect.objectContaining({
+        code: "layout-failed",
+        phase: "layout",
+        message:
+          "chart size: 90000 panels in 300 rows of 300 do not fit a 600×400 chart; make it larger or facet by fields with fewer values",
+      }),
     );
   });
 

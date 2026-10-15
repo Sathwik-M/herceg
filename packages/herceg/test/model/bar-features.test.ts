@@ -63,19 +63,22 @@ describe("bar placement", () => {
     expect(stacked[0]!.rects[0]).toBe(stacked[1]!.rects[0]);
   });
 
-  it("share a legend group's slots with other marks as one series, colored by a field or not", () => {
-    // The group places marks side by side; a field's colors place nothing.
+  it("share slots with other marks naming their series through one scale", () => {
+    // The scale places marks side by side, by their series' names.
     const days = table({ day: ["a", "b"], v: [1, 2], w: [2, 3], site: ["x", "y"] });
+    const named = { color: { series: true, scale: "g" } } as const;
     const grouped = rects(
       build({
+        scales: { g: { type: "ordinal" } },
         marks: [
-          bar(days, { x: "day", y: "v", color: "site", label: "A", legendGroup: "g" }),
-          bar(days, { x: "day", y: "w", label: "B", legendGroup: "g" }),
+          bar(days, { x: "day", y: "v", label: "A", encode: named }),
+          bar(days, { x: "day", y: "w", label: "B", encode: named }),
         ],
       }).scene,
     );
     const [alone] = rects(build({ marks: [bar(days, { x: "day", y: "v" })] }).scene);
     for (const g of grouped) expect(widthsOf(g)[0]).toBeLessThan(widthsOf(alone!)[0]! / 1.5);
+    expect(grouped[0]!.rects[0]).toBeLessThan(grouped[1]!.rects[0]!);
   });
 
   it("refuses dodge with stack", () => {
@@ -100,7 +103,7 @@ describe("bar placement", () => {
 });
 
 describe("bar colors", () => {
-  it("color each bar by a field through the color scale, without placing bars apart", () => {
+  it("color bars by a field through the color scale: as series, or with series: false, each bar", () => {
     const { scene } = build({
       scales: { color: { type: "ordinal", map: { South: "#00ab41" } } },
       marks: [bar(zones, { x: "zone", y: "gain", color: "zone" })],
@@ -113,11 +116,16 @@ describe("bar colors", () => {
     ]);
     const [whole] = rects(build({ marks: [bar(zones, { x: "zone", y: "gain" })] }).scene);
     expect(widthsOf(drawn[0]!)[0]).toBeCloseTo(widthsOf(whole!)[0]!, 6);
-    // Rows of one position colored apart still take the whole band: color makes no series.
-    const colored = rects(
+    // A color field is the series field, so bars of one position stand side by side,
+    const [band] = rects(build({ marks: [bar(sales, { x: "month", y: "v" })] }).scene);
+    const grouped = rects(
       build({ marks: [bar(sales, { x: "month", y: "v", color: "region" })] }).scene,
     );
-    const [band] = rects(build({ marks: [bar(sales, { x: "month", y: "v" })] }).scene);
+    for (const g of grouped) expect(widthsOf(g)[0]).toBeLessThan(widthsOf(band!)[0]! / 1.5);
+    // unless series: false, with which rows of one position take the whole band.
+    const colored = rects(
+      build({ marks: [bar(sales, { x: "month", y: "v", color: "region", series: false })] }).scene,
+    );
     expect(colored.map((g) => widthsOf(g)[0])).toEqual(colored.map(() => widthsOf(band!)[0]));
   });
 
@@ -183,6 +191,43 @@ describe("bar colors", () => {
 });
 
 describe("bar edges", () => {
+  it("take series' outlines by their names, with looks per row too", () => {
+    const flagged = table({ zone: ["a", "b"], v: [1, 2], kind: ["x", "y"] });
+    const scales = {
+      outlines: { type: "ordinal", map: { v: "#123456", Custom: "#abcdef" } },
+    } as const;
+    const outline = { stroke: { series: true, scale: "outlines" } } as const;
+    const edges = (encode: object) =>
+      rects(
+        build({
+          scales,
+          marks: [bar(flagged, { x: "zone", y: "v", label: "Custom", encode: encode as never })],
+        }).scene,
+      ).map((g) => [g.count, g.edge?.stroke, g.fillOpacity]);
+    // A series is named by its label.
+    expect(edges(outline)).toEqual([[2, "#abcdef", 1]]);
+    // Rows' own looks keep the series' outline.
+    const opacity = { field: "kind", scale: "fade" };
+    expect(
+      rects(
+        build({
+          scales: { ...scales, fade: { type: "ordinal", map: { x: 0.5, y: 1 } } },
+          marks: [
+            bar(flagged, {
+              x: "zone",
+              y: "v",
+              label: "Custom",
+              encode: { ...outline, opacity } as never,
+            }),
+          ],
+        }).scene,
+      ).map((g) => [g.count, g.edge?.stroke]),
+    ).toEqual([
+      [1, "#abcdef"],
+      [1, "#abcdef"],
+    ]);
+  });
+
   it("take constant channels and channels of their series field without looks per row", () => {
     const [bars] = rects(
       build({

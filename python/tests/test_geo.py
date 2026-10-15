@@ -144,7 +144,7 @@ def test_shapes_that_are_not_polygons_or_degrees_are_refused():
     ):
         hg.Chart({"shape": [{"type": "Polygon", "coordinates": [[[0, "a"]]]}]}).geoshape("shape")
     with pytest.raises(
-        TypeError, match="geoshape geometry: column 'v' holds number values; expected geometry"
+        hg.ChartError, match="geoshape geometry: column 'v' holds number values; expected geometry"
     ):
         hg.Chart({"v": [1.0]}).geoshape("v")
     with pytest.raises(ValueError, match='geoshape geometry: the data has no "geometry" column'):

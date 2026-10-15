@@ -50,8 +50,8 @@ came near an end of `interaction.limits`, as to load more data), `onselect`,
 `onitemmove` (a network's node moved; with subplots, these and `onviewport` and
 `onselect` events of a subplot's tree, map, or network name it in `panels`),
 `onvisibility` (series hidden or
-shown), and `onrender` (a frame of the data drawn, for overlays, the first one as the
-chart mounts). A `rowSelection` binding made again is the same while it binds the same
+shown), `onrender` (a frame of the data drawn, for overlays, the first one as the
+chart mounts), and `onerror` (see When a chart cannot draw). A `rowSelection` binding made again is the same while it binds the same
 stores and channels. The chart listens only
 while a handler is given and calls the current one, so passing a new function does not
 resubscribe. `bind:chart` gives the underlying chart, herceg's `Chart` (null until
@@ -107,6 +107,26 @@ alternatives retain their English language.
 as pixel arrays. String patterns scale with `strokeWidth` (the theme's
 line width when omitted on `Line`); arrays stay in CSS pixels. `Custom`
 shape styles accept the same values. See the engine's [dash patterns](../herceg/README.md#marks).
+
+## When a chart cannot draw
+
+A mark component or prop the engine refuses (a field its table lacks, a
+line whose color changes within a series), code that fails to load, and a
+frame that fails on new data show in the chart's place, as the engine shows
+them (see [When a chart cannot draw](../herceg/README.md#when-a-chart-cannot-draw)):
+a box of the chart's size, or over the last frame still right, a banner;
+`onerror` hears of each, a `ChartError` with its `code` and `path`. With
+`errorMode="throw"`, the chart shows nothing and throws the error from its
+template, whenever it came, for a `<svelte:boundary>`:
+
+```svelte
+<svelte:boundary>
+  <Chart errorMode="throw" onerror={(error) => report(error.code, error.path)}>
+    <Line data={metrics} x="time" y="p99" color="region" />
+  </Chart>
+  {#snippet failed(error)}<p>Latency is unavailable</p>{/snippet}
+</svelte:boundary>
+```
 
 ## Server rendering
 

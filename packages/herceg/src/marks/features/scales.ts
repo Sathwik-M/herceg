@@ -1,11 +1,25 @@
 // Categorical scales with fixed outputs: the chart's `scales` of type
-// "ordinal", and the default "color" scale an unnamed color field reads.
-// A value's place in the domain is kept for the chart's life, so a value
-// keeps its color as data streams, leaves, and comes back, in every mark
-// and panel reading the scale.
+// "ordinal", and the default ones an unnamed field reads ("symbol",
+// "dash", and "color" where the chart declares it). A value's place in the
+// domain is kept for the chart's life, so a value keeps its output as data
+// streams, leaves, and comes back, in every mark and panel reading the
+// scale. Without a declared "color", a field's values take the chart's
+// colors of what they stand for (`IdentityColors`).
 
 import type { Table } from "../../data/table.ts";
 import type { OrdinalScaleSpec } from "../../spec/encoding.ts";
+
+/** What channels read a field's values through: a scale of the chart's, or its colors by identity. */
+export interface CategoryScale {
+  readonly name: string;
+  readonly spec: OrdinalScaleSpec | undefined;
+  /** Reads `field` of `table` into the domain from now on. */
+  read(table: Table, field: string): void;
+  /** A value's place in the domain; undefined outside an explicit domain. */
+  place(value: string): number | undefined;
+  /** A value's output, as `OrdinalScale.output`. */
+  output<V>(value: string, defaults: readonly V[], fallback: V): V;
+}
 
 /** A field of a mark's table a scale reads its values from. */
 interface Source {
@@ -15,7 +29,7 @@ interface Source {
   version: number;
 }
 
-export class OrdinalScale {
+export class OrdinalScale implements CategoryScale {
   readonly name: string;
   readonly spec: OrdinalScaleSpec | undefined;
   /** Each value's place in the domain, in order: sticky once given. */
@@ -82,5 +96,49 @@ export class OrdinalScale {
     const place = this.place(value);
     if (place !== undefined && defaults.length > 0) return defaults[place % defaults.length]!;
     return (this.spec?.unknown as V | undefined) ?? fallback;
+  }
+}
+
+/**
+ * A field's values' colors where the chart declares no "color" scale: the
+ * chart's colors of what each value stands for (see model/identity.ts), by
+ * the identity keys `prefix` starts, so a bar or point colored by a field
+ * has the color the series of that value have: the colors at the chart's
+ * palette slots for those keys, which the compilation hands over before
+ * each scene.
+ */
+export class IdentityColors implements CategoryScale {
+  readonly name = "color";
+  readonly spec = undefined;
+  readonly #prefix: string;
+  readonly #chart: { slot: ((key: string) => number) | undefined };
+  /** Values in the order first colored, which keys of colors list them in. */
+  readonly #places = new Map<string, number>();
+
+  constructor(prefix: string, chart: { slot: ((key: string) => number) | undefined }) {
+    this.#prefix = prefix;
+    this.#chart = chart;
+  }
+
+  read(): void {}
+
+  place(value: string): number {
+    let place = this.#places.get(value);
+    if (place === undefined) {
+      place = this.#places.size;
+      this.#places.set(value, place);
+    }
+    return place;
+  }
+
+  /** The identity key of a value. */
+  key(value: string): string {
+    return `${this.#prefix}${JSON.stringify(value)}}`;
+  }
+
+  output<V>(value: string, defaults: readonly V[], fallback: V): V {
+    this.place(value);
+    const slot = this.#chart.slot?.(this.key(value));
+    return slot !== undefined && defaults.length > 0 ? defaults[slot % defaults.length]! : fallback;
   }
 }

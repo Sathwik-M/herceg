@@ -90,20 +90,21 @@ describe("legends with settings in the browser", () => {
   const buttons = () => [...host.querySelectorAll<HTMLButtonElement>("button")];
 
   it("toggle every series an entry stands for", async () => {
-    const first = table({ t: [0, 1], site: ["North", "South"], v: [1, 2] });
-    const second = table({ t: [0, 1], site: ["North", "South"], v: [3, 4] });
+    const first = table({ t: [0, 1], site: ["North", "South"], v: [1, 2] }, { name: "sites" });
+    const second = table({ t: [0, 1], site: ["North", "South"], v: [3, 4] }, { origin: first });
     const chart = createChart(host, {
       panels: panels([{ id: "a" }, { id: "b" }], { columns: 2 }),
       marks: [
         line(first, { x: "t", y: "v", series: "site", panel: "a" }),
         line(second, { x: "t", y: "v", series: "site", panel: "b" }),
       ],
-      legend: { merge: "semantic", place: { side: "bottom" } },
+      legend: { place: { side: "bottom" } },
     });
     await chart.loading;
     expect(buttons().map((b) => b.textContent)).toEqual(["North", "South"]);
     buttons()[0]!.click();
-    expect(chart.getHiddenKeys()).toHaveLength(2);
+    expect(chart.getHiddenKeys()).toEqual(['{"table":"sites","field":"site","value":"North"}']);
+    expect(host.querySelectorAll("svg path[stroke]").length).toBeGreaterThan(0);
     buttons()[0]!.click();
     expect(chart.getHiddenKeys()).toHaveLength(0);
     chart.destroy();
@@ -135,7 +136,8 @@ describe("legends with settings in the browser", () => {
     await chart.loading;
     expect(buttons().map((b) => b.textContent)).toEqual(["a", "b"]);
     buttons()[1]!.click();
-    expect(chart.getHiddenKeys()).toEqual([JSON.stringify(["b", "b"])]);
+    expect(chart.getHiddenKeys()).toHaveLength(1);
+    expect(JSON.parse(chart.getHiddenKeys()[0]!)).toMatchObject({ value: "b" });
     chart.destroy();
   });
 });

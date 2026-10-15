@@ -618,8 +618,9 @@ shape styles are JavaScript only.
 ```ts
 // One line per y field, sharing x.
 line(metrics, { x: "time", y: ["p50", "p99"] });
-// Long format: one line per category value.
+// Long format: one line per category value, in its color.
 line(requests, { x: "time", y: "latency", series: "service" });
+line(requests, { x: "time", y: "latency", color: "service" }); // the same
 // Options: stroke, strokeWidth, dash, curve, label. `curve` is "linear", "step",
 // "step-before", "step-after", or "monotone": smooth, through every point, and
 // never past a point's value between two points; points under 2 pixels apart
@@ -654,11 +655,38 @@ area(casts, { y: "depth", x1: "low", x2: "high" }); // a band along y
 `color` is a mark's primary paint: a line's stroke, a bar's, area's, or
 point's fill. It names a category field, whose values color the marks
 through the chart's `"color"` scale, or gives a CSS color; `stroke` and
-`fill` set those paints themselves and win over it. A value has one color in
-every mark and panel of the chart, panels showing subsets and hidden series
-included, and keeps it while the data streams, so lines, areas, bars, and
-points colored by `"site"` agree. Fix colors by value with a scale of
-categories:
+`fill` set those paints themselves and win over it. On every mark that
+draws series, a category field's colors are series too: `color: "service"`
+draws a line per service, as `series: "service"` does, unless the mark gives
+`series` (another field, or `false` for none) or its own `stroke` (a line)
+or `fill` (an area, bar, or point). That holds for lines, areas, bars,
+points (along axes, on maps, and in 3D), and the marks summarizing or
+marking observations: histograms, box plots, boxen plots, violins, error
+bars, and rugs, whose `color` is a category field naming their series
+(`series`, if also given, must name the same field) or a color, their
+`fill` (an error bar's or rug's `stroke`). A line or area has one color per
+series, so its color field must not change within one: one that does is
+refused with a `ChartError` naming the series (see When a chart cannot
+draw); bars and points with `series: false` take each row's color, bars
+keeping their whole band. Marks without `color` choose their colors
+themselves (radars by `series`, pies by `category`, a network's nodes by its
+nodes' `color` field) and refuse it with what to give instead.
+
+A series stands for a value, and the value has one color and one legend
+entry in every mark and panel of the chart, panels showing subsets and
+hidden series included, keeping its color while the data streams: lines,
+areas, bars, and points colored by the same table's `"site"` agree, and the
+items of layout marks of it do too: a pie's slices, a treemap's or
+sunburst's top-level branches (its first `path` field), a radar's series, a
+map's regions and points, a network's node groups, and 3D points and lines. Tables made from that table
+(derived tables, row views, and spec tables naming it as their `origin`)
+are the same table for this (two other tables of one `name` in a chart are
+refused); an unrelated table's `"site"` is another
+field, with colors and entries of its own, unless both marks read their
+colors through one named scale (below). Value fields (`y: ["p50", "p99"]`)
+stand for their labels, as a band labelled `"p50"` does, so a line of p50
+and a band labelled p50 share an entry. Fix colors by value with a scale
+of categories:
 
 ```ts
 const scales = {
@@ -690,14 +718,22 @@ bar(sites, {
 | Channel form | Means |
 | --- | --- |
 | `{ field, scale? }` | A category field's values through the chart's scale `scale` (colors read `"color"`, dashes `"dash"`, shapes `"symbol"` by default). |
+| `{ series: true, scale }` | The series' names through the chart's scale `scale` (required), for marks whose series are not a field's values (value fields, labelled bands). |
 | `{ value }` | A constant. |
 | `{ condition: { when, then, otherwise } }` | `then` on rows where the expression `when` holds, `otherwise` elsewhere. |
+
+A named scale joins marks by value whatever tables they read: every mark
+whose colors go through `"sites"` gives a site one color and one legend
+entry, so a summary table's bars and a raw table's points agree. Declaring
+`scales.color` does the same for every mark, layout marks' items included,
+whose colors all go through it.
 
 Lines take `color`, `stroke`, `dash`, `strokeWidth`, and `opacity`
 channels; bars `color`, `fill`, `stroke`, `strokeWidth`, and `opacity`;
 areas `color`, `fill`, `stroke`, and `opacity`. A line or area has one look
 per series, so its channels read values constant within each series (a
-series field, or a field that follows it), and refuse others. Bars read
+series field, or a field that follows it), and refuse others, also when
+streamed rows change them (the check reads only the new rows). Bars read
 each row's. Points take `color` (a category or number field), `symbol`,
 `size`, and `fillOpacity` as options of their own. The flat options
 (`stroke`, `fill`, `strokeWidth`, `dash`, `opacity`, `fillOpacity`,
@@ -796,7 +832,7 @@ them; only the default for `dodge` is the mark's own.
 | Option | Means | Default |
 | --- | --- | --- |
 | `series` | A category field: a series per value. Several value fields (`y: ["q1", "q2"]`) are series too. | One series |
-| `color` | Each bar's paint: a field through the "color" scale, or a color. It makes no series, so it never places bars apart: each keeps its whole band (marks of one `legendGroup` still share it, a series each). | The series' palette color |
+| `color` | Each bar's paint: a category field through the "color" scale, which splits series as `series` does unless `series` is given (with `series: false`, each bar takes its row's color and keeps its whole band), or a color. | The series' palette color |
 | `dodge` | Series side by side in each position, sharing its band; `false` overlaps them. Where `series` is the band field, each bar takes the whole band. | Bars: `true` unless stacked. Points, lines, areas, and error bars: `false` |
 | `stack` | Series piled up at each position (`dodge: true` with it is refused). | `false` |
 
@@ -1104,24 +1140,19 @@ refuses it and `sampling: "pixel"`. Laying out 10,000 points in one band
 takes about 2 ms, 100,000 about 21 ms (Node, Apple M6).
 
 ```ts
-bar(stats, { x: "day", y: "mean", series: "sex", legendGroup: "sex" });
-errorBar(stats, { x: "day", y1: "low", y2: "high", series: "sex", dodge: true, legendGroup: "sex" });
+bar(stats, { x: "day", y: "mean", series: "sex" });
+errorBar(stats, { x: "day", y1: "low", y2: "high", series: "sex", dodge: true });
 ```
 
-`legendGroup` names a group of marks that share their series by name: in
-one chart, series of the same name (their `series` value, or a single-series
-mark's `label`) in marks of the same group take one palette color, one legend
-entry, and one visibility, so a bar and its error bars, a line and its band,
-or points and their fit hide and show together. Explicit `fill` and `stroke`
-colors still apply (the legend entry shows the first member's color).
-Side-by-side marks of a group (grouped bars, box plots, violins, dodged
-histograms, points, and error bars) take their slots from the group's
-visible names, so an interval stands on its bar even when one mark lacks
-some of the group's series. Tooltips, the keyboard, and summaries still
-read each mark's own series. A group's entry has a key of its own, which
-`getLegend`, `setVisibility`, and `visibility` events use (a member series'
-own key acts on its group's entry); it stays hidden across updates while a
-mark names the group.
+Marks whose series stand for the same values (see Colors and channels)
+share them: one palette color, one legend entry, and one visibility, so a
+bar and its error bars, a line and its band, or points and their fit hide
+and show together, and the legend entry's swatch shows every mark it
+stands for. Explicit `fill` and `stroke` colors still apply. Side-by-side
+marks of one field (grouped bars, box plots, violins, dodged histograms,
+points, and error bars) take their slots from that field's visible values,
+so an interval stands on its bar even when one mark lacks some of them.
+Tooltips, the keyboard, and summaries still read each mark's own series.
 
 Heatmaps over number and time fields place their cells along number and
 time axes, which zoom, pan, and brush as other marks' do, and other marks
@@ -1203,8 +1234,9 @@ scale, with a color legend, or a category field whose values take the
 chart's `"color"` scale (see [Colors and channels](#colors-and-channels): its
 fixed map, else the theme's palette in the field's order, cycling through at
 most its first 254 colors), keeping their colors as the data streams, with
-a key of colors below the legend; series then appear in the legend in a
-neutral color (a `color` naming the `series` field colors the series so). Marks with the same color scale, or the same key of sizes,
+a key of colors below the legend when the points' series are another
+field's or `series: false` (series then appear in the legend in a neutral
+color); otherwise a category `color` names the series, colored by value. Marks with the same color scale, or the same key of sizes,
 shapes, or colors, share one legend.
 `symbol` is one shape (`"circle"`, `"square"`, `"triangle"`, `"diamond"`,
 `"cross"` (a plus), `"star"`, `"wye"`, `"triangle-down"`, `"x"`) or a category
@@ -1453,7 +1485,8 @@ geometry in SVG, Canvas, static SVG, and PDF. On log axes, only parts with
 finite mapped coordinates draw; the notch fill is omitted if any vertex
 cannot be placed, while drawable outline segments remain.
 
-`series` puts boxes side by side in each category, in their own colors.
+`series` (or a category `color`) puts boxes side by side in each category,
+in their own colors.
 Tooltips, keyboard reading, and summaries report the supplied statistics as
 they do computed statistics. Statistics refresh when the table changes:
 raw input costs a full pass and sorting each group's observations; precomputed
@@ -1648,31 +1681,44 @@ Charts share their behaviors unevenly so far: the marks along x and y axes
 take part in everything, the others in less. ✓ supported, ◐ partly (see
 the notes), — not yet (refused with an error), · not applicable.
 
-| Marks | Facets | Subplots | Panel scales | Right axis | Zoom and pan | Brushes | Synced selection | Selected rows | Highlight | Legend toggle | Tooltip and keyboard | Tooltip fields | Value animation |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| line, area, bar (including normalized stacks and area stream offsets) | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ |
-| point | ◐ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| histogram, boxplot, boxen, violin | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ◐ | · | — |
-| rug | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | — |
-| errorbar, candlestick | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| dendrogram | ◐ | ✓ | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | — |
-| heatmap | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | ✓ | · | ✓ | ✓ | — |
-| 2D histogram | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | ✓ | · | ✓ | · | — |
-| contour | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | · | · | · | ✓ | · | — |
-| rule, region, text | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · | · | · | ◐ | · | ◐ |
-| custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ◐ | ◐ | ◐ | — |
-| pie | ✓ | ✓ | · | · | — | — | — | ✓ | ✓ | ✓ | ✓ | · | ✓ |
-| treemap, sunburst | ✓ | ✓ | · | · | drilling | — | — | ✓ | ✓ | ✓ | ✓ | · | — |
-| radar | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | ✓ | · | — |
-| funnel, sankey | ✓ | ✓ | · | · | — | — | — | ✓ | ✓ | · | ✓ | · | — |
-| gauge | ✓ | ✓ | · | · | — | — | — | — | — | · | ✓ | · | — |
-| graph (force, circular, layered) | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ◐ | ✓ | — | — |
-| geoshape, geopoint | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| point3d, line3d | — | ✓ | · | · | turning | — | — | — | — | ✓ | ✓ | ✓ | — |
-| surface | — | ✓ | · | · | turning | — | — | — | — | · | ✓ | · | — |
+| Marks | Facets | Subplots | Panel scales | Right axis | Zoom and pan | Brushes | Synced selection | Selected rows | Highlight | Legend toggle | Series from color | Colors by identity | Tooltip and keyboard | Tooltip fields | Value animation |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| line, area, bar (including normalized stacks and area stream offsets) | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ |
+| point | ◐ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| histogram, boxplot, boxen, violin | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ◐ | · | — |
+| rug | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| errorbar, candlestick | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | ◐ | ✓ | ✓ | — |
+| dendrogram | ◐ | ✓ | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | · | · | — |
+| heatmap | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | ✓ | · | · | · | ✓ | ✓ | — |
+| 2D histogram | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | ✓ | · | · | · | ✓ | · | — |
+| contour | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | ✓ | · | — |
+| rule, region, text | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · | · | · | · | · | ◐ | · | ◐ |
+| custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ◐ | · | ✓ | ◐ | ◐ | — |
+| pie | ✓ | ✓ | · | · | — | — | — | ✓ | ✓ | ✓ | · | ✓ | ✓ | · | ✓ |
+| treemap, sunburst | ✓ | ✓ | · | · | drilling | — | — | ✓ | ✓ | ✓ | · | ✓ | ✓ | · | — |
+| radar | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | · | ✓ | ✓ | · | — |
+| funnel, sankey | ✓ | ✓ | · | · | — | — | — | ✓ | ✓ | · | · | · | ✓ | · | — |
+| gauge | ✓ | ✓ | · | · | — | — | — | — | — | · | · | · | ✓ | · | — |
+| graph (force, circular, layered) | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ◐ | · | ✓ | ✓ | — | — |
+| geoshape, geopoint | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | — |
+| point3d, line3d | — | ✓ | · | · | turning | — | — | — | — | ✓ | ◐ | ✓ | ✓ | ✓ | — |
+| surface | — | ✓ | · | · | turning | — | — | — | — | · | · | · | ✓ | · | — |
 
 - Lines, rules, and custom shapes support all four dash strings on SVG,
   Canvas (for data marks), and static SVG/PDF export.
+- Series from color: a category `color` names the series, as `series`
+  does, on lines, areas, bars, points, histograms, box plots, boxen plots,
+  violins, error bars, rugs, map points, and 3D points; candlesticks color by
+  rise and fall, maps' regions by their category, and line3d takes `series`
+  only. Points along axes and bars take each row's color with `series:
+  false`; map and 3D points refuse that, coloring by their series alone.
+  Marks without `color` refuse it, naming what to give instead.
+- Colors by identity: a value of a field has one color and one legend
+  entry, which hides it, in every mark and panel of the chart, layout marks'
+  items included (pie slices, top-level tree branches, radar series, map
+  regions and points, network node groups, 3D points and lines), and so do
+  custom marks' series. Candlesticks color by rise and fall, a funnel draws
+  one color, and a Sankey diagram colors its nodes by name within itself.
 - Lines, areas, and bars take channels (`color`, `encode`), scales of
   categories, and looks by value (`style.by`); lines and areas take
   `continuity` and `where`, and lines markers, on every renderer and export.
@@ -2244,7 +2290,8 @@ names the field when the table has several. `geopoint` places points at the
 or sized by area with a `size` field (`radiusRange`, 2 to 16 px by default; a
 size key joins the legend), colored by a
 `series` category or by `color` (a number field on a continuous scale, or a
-category field as for `point`), at 0.8 opacity, each ringed in
+category field, which names their series; map points refuse one coloring
+them row by row, with `series: false` or another series field), at 0.8 opacity, each ringed in
 the background color (`stroke`, `strokeWidth`), and largest first, across
 series, so smaller points stay on top. Points missing a value they encode
 are left out. `labelField` (a category field) labels regions and points in
@@ -2357,8 +2404,8 @@ createChart(element, {
 `point3d` draws points at the number or time fields `x`, `y`, and `z` (z is
 vertical): one color and legend entry per category of `series`, or colored
 by a number field `color` (`colors`, `colorDomain`, and `colorMidpoint` as
-for heatmaps), with a color legend, or by a category field `color` as `point`
-marks are; `radius` is the radius (3.5 px), `fill` and
+for heatmaps), with a color legend, or by a category field `color`, which
+names their series (one coloring them row by row is refused); `radius` is the radius (3.5 px), `fill` and
 `fillOpacity` the color without them, and `labelField` labels points in tooltips.
 `line3d` draws lines through the number or time fields `x`, `y`, and `z`:
 each category of `series` is one path (one color and legend entry; without
@@ -3127,7 +3174,7 @@ is internal, and charts take only marks the mark functions make.
 | `facet` | `facet(field, { columns? })`: a panel per value of a category field, wrapped; or `facet({ row?, column? })`: a grid by two fields (see Small multiples). |
 | `panels` | `panels([{ id, title?, x?, y?, style? }, ...], { columns?, rowHeights?, columnWidths? })`: subplots whose marks name them in `panel` (see Subplots); a subplot's `title` is a string or `{ text, style? }`, and its `style` sets its own roles (`plot`, `panelTitle`, and the axes' roles). |
 | `navigator` | `rangeNavigator({ height?, marks? })`: a strip under the plot (under every panel, with facets or subplots) over the whole x axis, whose window shows and moves the x range in view (see Range navigator). |
-| `legend` | Shown by default for two or more series; `true` or an object shows it for one, `false` hides it. Entries toggle series. `place` puts it on a side or inside a plot (see Titles, legends, and padding); `columns`, `rows`, `order`, `title`, `entries`, `merge`, and `swatches` lay it out (see Legends); `style` sets its `legendLabel`, `legendTitle`, and `tickLabel` styles. |
+| `legend` | Shown by default for two or more series; `true` or an object shows it for one, `false` hides it. Entries toggle series. `place` puts it on a side or inside a plot (see Titles, legends, and padding); `columns`, `rows`, `order`, `title`, `entries`, and `swatches` lay it out (see Legends); `style` sets its `legendLabel`, `legendTitle`, and `tickLabel` styles. |
 | `scales` | `{ x?, y?, yRight? }`: the position scales' settings (`type`, `domain`, `nice`, `zero`, `scope`, `tooltipFormat`) over the short forms' (see Scales and guides). |
 | `guides` | `[axis(...), legend(...), colorbar(...)]`: axes beyond or in place of the automatic ones, legends of the scales they name, and colorbars (see Scales and guides). |
 | `tooltip` | `true` (default), `false`, or `{ mode?: "nearest-x" \| "nearest-y" \| "nearest", axisLabels?: true }`; `axisLabels` labels the crosshair on the axes. Marks take `tooltip: { fields }` for data of their rows (see Tooltips). |
@@ -3140,6 +3187,7 @@ is internal, and charts take only marks the mark functions make.
 | `fonts` | JavaScript only: fonts from `prepareFonts` (`herceg/fonts`) to measure text with and draw it in, in the browser and every export (see Fonts). |
 | `locale`, `timeZone` | Label locale and time zone (`"local"`, `"UTC"`, or an IANA name). |
 | `projection` | How maps are projected: a projection's name or `{ type, centralMeridian?, parallels?, fit? }` (see Maps). |
+| `errorMode`, `onError` | What the chart does with what keeps it from drawing: `"inline"` (default) shows it in the chart's place, `"throw"` throws it from `createChart` and `update`; `onError(error)` hears of each (see When a chart cannot draw). |
 | `z`, `camera`, `boxAspect` | 3D charts' vertical axis (options as for `x` and `y`), where they are seen from at first (`{ azimuth?, elevation?, zoom?, perspective? }`), and their box's side lengths (see 3D charts). |
 
 Time axes try coarser calendar tick intervals when `format` repeats labels,
@@ -3165,7 +3213,8 @@ for an x range), `selection` and `selectionPanels` (see Small multiples for
 `toPixel`, `fromPixel`, `formatValue`, and `inspect` (see Panels and pixels),
 `getLegend()`, `getHiddenKeys()`, `setHiddenKeys(keys)`, and
 `setVisibility(keys, visible)` (see Hiding series), `on(event, listener)`,
-`render()`, `toSVG(sizing?)` and `toPNG()` (see Export), `destroy()`, `showCursor(position)` and `hideCursor()` (see Syncing charts), and `loading`
+`render()`, `toSVG(sizing?)` and `toPNG()` (see Export), `destroy()`, `showCursor(position)` and `hideCursor()` (see Syncing charts), `ready`
+(a promise of the first frame, rejected with what keeps it from drawing; see When a chart cannot draw), and `loading`
 (a promise while the interaction controller loads after the first frame, the guide compiler loads for a chart that needs it (see Scales and guides), the chart's `fonts` load, the GPU painter for large point series, the animation
 code, the controls of a 3D chart, a map, a tree, or a network, the brush, a
 navigator's sliders, or what reads tooltip fields and draws
@@ -3199,6 +3248,46 @@ whole configuration: a prop left out, or `undefined`, takes its default.
 the selected x and y ranges (null along an axis the brush leaves alone; a
 lasso's extent) and a lasso's outline as `[x, y]` pairs. Code written when
 `selection` was the x range reads `chart.selection?.x`.
+
+### When a chart cannot draw
+
+Options a chart refuses, a field its data lacks, a line whose color changes
+within a series, code that fails to load, and a frame that fails to draw are
+`ChartError`s: an `Error` with `code` (`"invalid-option"`,
+`"unknown-field"`, `"field-type"`, `"series-varies"`,
+`"series-with-values"`, `"unknown-reference"`, `"layout-failed"`,
+`"load-failed"`, or `"render-failed"`), `phase` (`"validate"`,
+`"compile"`, `"load"`, `"layout"`, or `"render"`), and where known `path`
+(`"marks[1].color"`), `mark` (its `id`, else its index), and `panel`.
+Messages read "location: problem; correction". Mark functions throw them
+for their own options (`line(table, { y: "p90" })` with no such field),
+with a path within those options.
+
+By default (`errorMode: "inline"`) neither `createChart` nor `update` throws
+for what the chart refuses. A chart that has drawn nothing shows a box of
+its size saying "Chart could not be rendered" and why; an update it refuses
+keeps the last frame, still right for the options it keeps, under a banner
+saying "Chart update failed; showing previous data."; a frame that fails
+on new data shows the box until data or options that draw arrive. Either
+is an alert, read out as it appears, with the message as text. Each
+failure is reported once: to `onError`, to `"error"` listeners, and with
+neither, to the console; `ready` rejects with a first frame's. An export
+(`toSVG`, `toPNG`) throws what keeps a frame from drawing; a chart showing
+the box for options it refused, or for code that failed to load, throws
+why, and one keeping a last frame exports that frame's options.
+
+```ts
+const chart = createChart(element, { marks, onError: (error) => report(error.code, error.path) });
+await chart.ready; // the first frame is on screen, or the error that kept it off
+const strict = createChart(other, { marks, errorMode: "throw" }); // throws what it refuses
+```
+
+With `errorMode: "throw"`, nothing is shown: making the chart and `update`
+throw what they refuse, and later failures (new data, a compiler that fails
+to load) go to `onError` and listeners. `errorInfo(error)` gives an error as
+JSON-safe `ChartErrorInfo`, the shape Python's `herceg.ChartError` and the
+adapters take, and `showFailure(element, error)` draws the box for errors of
+your own.
 
 ### Panning, zooming, and brushing
 
@@ -3810,20 +3899,25 @@ The short form `legend` and `legend({ ... })` take:
 | `order` | `"row"` fills row by row (the default with `columns`), `"column"` down each column (the default with `rows`). |
 | `title` | A string, or `{ text, style? }`, above the entries. |
 | `entries` | Entries of your own in place of the series': `[{ key, label, swatch? \| sample?: { mark }, targets?: [{ mark }] }]`. A `swatch` is `{ type: "line", stroke, strokeWidth?, dash? }`, `{ type: "rect", fill, stroke? }`, `{ type: "circle", fill, stroke?, size? }` (lines, boxes, and circles take `opacity`), or `{ type: "composite", parts }`, drawn over one another and centered; `sample` draws a mark's look, its symbol for points; entries with `targets` hide and show those marks, others explain. |
-| `merge` | `"semantic"`: one entry for the series several marks (across panels too) show of the same value of the same field, or with the same name, toggling them together. |
 | `swatches` | `"mark"`: swatches that look like the marks: a line of a line's width and dash, with its markers, a box of an area's or bar's fill (a bar's outline and opacity too), a point's symbol. |
 | `style` | `legendLabel`, `legendTitle`, `tickLabel`. |
 | `scales` | (`legend()` only) The scales it lists, `[{ mark, channel }]` with a mark's `id` and `"series"`, `"color"`, `"size"`, or `"symbol"`; every one by default, in place of the automatic legend. |
 | `id`, `show` | (`legend()` only) A name of its own; `false` draws none. |
 
-A mark's `legend: false` leaves its series, ramps, and keys out of the
-legends.
+An entry stands for a value (see Colors and channels): the series of every
+mark, in every panel, that stand for it, and the pie slices of it, which it
+hides and shows together. Entries never merge by label alone: an unrelated
+table's `"eu"` is an entry of its own unless both marks read their colors
+through one named scale. With `swatches: "mark"`, an entry that marks draw
+differently shows each one's look, a line over a bar's box. Entries of your
+own (`entries`) group anything else. A mark's `legend: false` leaves its
+series, ramps, and keys out of the legends.
 
 ```ts
 createChart(element, {
   panels: panels(sites, { columns: 3 }),
   marks: [/* a line per site in each panel, and a dashed average */],
-  legend: { place: { side: "bottom", align: "center" }, columns: 3, merge: "semantic", swatches: "mark" },
+  legend: { place: { side: "bottom", align: "center" }, columns: 3, swatches: "mark" },
 });
 ```
 
@@ -3892,6 +3986,7 @@ chart.on("itemMove", ({ key, position }) => savePlace(key, position)); // a netw
 chart.on("drill", ({ key, panels }) => saveDrill(panels?.[0], key)); // a subplot's tree
 chart.on("visibility", ({ hiddenKeys }) => saveHidden(hiddenKeys)); // legend, setVisibility
 chart.on("render", () => placeOverlay(chart.getPanels())); // a frame of the data was drawn
+chart.on("error", ({ error }) => report(error)); // a ChartError, once per change that failed
 ```
 
 Events report changes only: a re-inspected point or an unchanged view does
@@ -4005,14 +4100,17 @@ const hidden = chart.getHiddenKeys(); // keep them, and restore them with setHid
 chart.setHiddenKeys([]); // show everything
 ```
 
-Keys are opaque and are the keys inspections name points by. Hidden series
-are not drawn, inspected, or visited by the keyboard, and value axes fitted
-to the data leave them out; each change reports one `visibility` event, the
-legend's buttons and these methods alike. Keys of series not drawn now (a stream
-moved past them) stay hidden for when they return. A mark's keys go with its
-identity, its `id` or else its index in `marks`: an update without the mark
-drops them, and a mark that takes its index keeps them, so give marks ids
-when their order changes.
+Keys are opaque. The legend's name what series stand for (see Legends), so
+hiding one hides it in every mark and panel; the key an inspection names a
+point's series by acts on its legend entry. Hidden series are not drawn,
+inspected, or visited by the keyboard, and value axes fitted to the data
+leave them out; each change reports one `visibility` event, the legend's
+buttons and these methods alike. Keys of series not drawn now (a stream
+moved past them) stay hidden for when they return. A legend key stays while
+a mark draws series of its field (or its table's value fields, or its
+scale); keys of a mark's own go with the mark, its `id` or else its index
+in `marks`: an update without the mark drops them, and a mark that takes
+its index keeps them, so give marks ids when their order changes.
 
 ## Accessibility
 

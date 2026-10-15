@@ -20,7 +20,15 @@ import type { Frozen, Line3DSpec } from "../spec/spec.ts";
 import type { View } from "../three/camera.ts";
 import { cutSegment } from "../three/clip.ts";
 import { ScreenGrid } from "../three/hit.ts";
-import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
+import {
+  type ItemSources,
+  type LayoutFrame,
+  type LayoutItem,
+  type LayoutMark,
+  type LayoutResult,
+  memberOf,
+  ownOr,
+} from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
 import {
   type ChartMark,
@@ -126,6 +134,7 @@ export class Line3DMark implements Layer3D {
   readonly spec: Frozen<Line3DSpec>;
   readonly table: Table;
   readonly measure: string;
+  readonly identity: ItemSources | undefined;
   readonly #fields: readonly [string, string, string];
   #held: { version: number; groups: readonly Group[] } | undefined;
 
@@ -147,6 +156,11 @@ export class Line3DMark implements Layer3D {
     this.table = table;
     this.#fields = [spec.x, spec.y, spec.z];
     this.measure = spec.label ?? "Line";
+    // Groups of a series field stand for its values, as series of it do.
+    this.identity =
+      this.spec.series === undefined
+        ? undefined
+        : { field: this.spec.series, read: memberOf("series") };
   }
 
   join(
@@ -190,7 +204,7 @@ export class Line3DMark implements Layer3D {
   legend(id: string | number, color: (key: string) => string): LegendEntry[] {
     return this.#groups().map(({ label, category }) => {
       const key = groupKey(id, category);
-      return { key, label, color: this.spec.stroke ?? color(key) };
+      return { key, label, color: ownOr(this.spec.stroke, color(key)) };
     });
   }
 
@@ -320,8 +334,8 @@ export class Line3DMark implements Layer3D {
 
   /** The colors of the paths: `stroke`, or each series'. */
   #palette(frame: Frame3D): string[] {
-    return this.#groups().map(
-      (group) => this.spec.stroke ?? frame.color(groupKey(frame.id, group.category)),
+    return this.#groups().map((group) =>
+      ownOr(this.spec.stroke, frame.color(groupKey(frame.id, group.category))),
     );
   }
 

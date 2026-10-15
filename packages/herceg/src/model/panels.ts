@@ -9,6 +9,7 @@ import { type Align, aligned } from "../layout/place.ts";
 import type { LayoutMark } from "../marks/layout-mark.ts";
 import type { BandContext, Bands, Mark } from "../marks/mark.ts";
 import type { Rect } from "../scene/scene.ts";
+import { ChartError } from "../spec/errors.ts";
 import type { GridSpec, ScaleScope } from "../spec/spec.ts";
 import type { AxisType } from "./axis.ts";
 import type { MarkSeries } from "./inspect.ts";
@@ -172,24 +173,31 @@ export class Panels implements PanelLayout {
     given: readonly LayoutMark[] = [],
   ): LayoutMark[] {
     const ids = new Set(this.list.map(({ id }) => id));
-    const unknown = (type: string, panel: string) =>
-      new Error(
-        `${type} panel: no panel "${panel}"; name one of ${[...ids].map((id) => `"${id}"`).join(", ")}`,
-      );
+    const unknown = (mark: Mark | LayoutMark, panel: string) => {
+      const index = (options.marks as readonly unknown[]).indexOf(mark);
+      return new ChartError({
+        code: "unknown-reference",
+        path: `marks[${index}].panel`,
+        mark: mark.spec.id ?? index,
+        message: `${mark.spec.type} panel: no panel "${panel}"; name one of ${[...ids].map((id) => `"${id}"`).join(", ")}`,
+      });
+    };
     checkLayouts(given, true);
-    for (const { spec } of given)
-      if (spec.panel !== undefined && spec.panel !== EVERY_PANEL && !ids.has(spec.panel))
-        throw unknown(spec.type, spec.panel);
+    for (const mark of given) {
+      const { panel } = mark.spec;
+      if (panel !== undefined && panel !== EVERY_PANEL && !ids.has(panel))
+        throw unknown(mark, panel);
+    }
     const layouts = given[0] ? given[0].views.inPanels(given, options, true) : [];
     // The panels layout marks have to themselves.
     const held = new Map<string, string>();
-    for (const { spec } of layouts) {
-      const { type, panel } = spec;
+    for (const mark of layouts) {
+      const { type, panel } = mark.spec;
       if (panel === undefined || panel === EVERY_PANEL)
         throw new Error(
           `${type} panel: expected the id of the panel it draws in; received ${JSON.stringify(panel) ?? "none"}`,
         );
-      if (!ids.has(panel)) throw unknown(type, panel);
+      if (!ids.has(panel)) throw unknown(mark, panel);
       const other = held.get(panel);
       if (other)
         throw new Error(
@@ -219,7 +227,7 @@ export class Panels implements PanelLayout {
       const { type, panel } = mark.spec;
       if (panel === undefined)
         throw new Error(`${type} panel: missing; give the id of a panel, or "*" for every panel`);
-      if (panel !== EVERY_PANEL && !ids.has(panel)) throw unknown(type, panel);
+      if (panel !== EVERY_PANEL && !ids.has(panel)) throw unknown(mark, panel);
       if (panel === EVERY_PANEL && first)
         throw new Error(
           `${type} panel: "*" would draw in panel "${first[0]}", which a ${first[1]} mark has to itself; give the id of a panel with axes`,

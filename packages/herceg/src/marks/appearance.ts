@@ -1,13 +1,11 @@
 // The values of a category field in order of first appearance, taking
-// places in a cycle of shapes or colors: point marks encode symbol fields
-// this way, and 3D and map points category colors, with a key of the
-// values in the legend. (Points' colors go through the chart's color scale;
-// see marks/features.)
+// places in a cycle of shapes: point marks encode symbol fields this way,
+// with a key of the values in the legend. (Points' category colors go
+// through the chart's color scale; see marks/features.)
 
 import type { Schema, Table } from "../data/table.ts";
 import { symbolPath } from "../draw/symbols.ts";
 import type { CategoryColors } from "../model/features.ts";
-import type { Theme } from "../theme.ts";
 import type { GlyphKey } from "./mark.ts";
 
 /** Radius of the circles of a color key. */
@@ -87,27 +85,6 @@ export class Appearance {
   of(label: string): number | undefined {
     return this.#places.get(label);
   }
-}
-
-/**
- * The colors category values take in turn: the theme's palette, at most 255
- * of them, since points index their colors by bytes.
- */
-export function categoryColors(theme: Theme): readonly string[] {
-  return theme.palette.length <= 255 ? theme.palette : theme.palette.slice(0, 255);
-}
-
-/** Each code's color of a category `color` field (by `categoryColors`), and -1 for codes no row holds. */
-export function categoryTones(colors: Appearance, table: Table<Schema>, theme: Theme): Int32Array {
-  return colors.tones(table, categoryColors(theme).length);
-}
-
-/** A key of a category `color` field's values in their colors, in order of appearance. */
-export function colorKey(colors: Appearance, table: Table<Schema>, theme: Theme): GlyphKey {
-  const palette = categoryColors(theme);
-  const tones = categoryTones(colors, table, theme);
-  const { dictionary } = table.categories(colors.field as never);
-  return keyOf(colors.field, dictionary, colors.order(table), (code) => palette[tones[code]!]!);
 }
 
 /** A key of a category `color` field's values in the colors a color scale gives them. */

@@ -143,8 +143,16 @@ describe("panels", () => {
       'line panel: missing; give the id of a panel, or "*" for every panel',
     );
     const lost = line(metrics, { x: "t", y: "latency", panel: "errors" });
-    expect(() => build({ marks: [lost], panels: stacked })).toThrow(
-      'line panel: no panel "errors"; name one of "latency", "traffic"',
+    expect(() => build({ marks: [loose, lost], panels: stacked })).toThrow(
+      'line panel: missing; give the id of a panel, or "*" for every panel',
+    );
+    expect(() => build({ marks: [marks[0]!, lost], panels: stacked })).toThrow(
+      expect.objectContaining({
+        code: "unknown-reference",
+        path: "marks[1].panel",
+        mark: 1,
+        message: 'line panel: no panel "errors"; name one of "latency", "traffic"',
+      }),
     );
     expect(() => build({ marks, panels: stacked, interaction: { zoom: "xy" } })).toThrow(
       "along x only",

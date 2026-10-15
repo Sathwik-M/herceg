@@ -22,7 +22,8 @@ One name per concept, used the same way in code and docs.
 | **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, a gauge's dial, a funnel's stage, a radar's value on one spoke, a Sankey diagram's or network's node or link, a map's region or point, or a 3D chart's point or surface grid point: what its tooltips and the keyboard visit. |
 | **Projection** | Maps longitudes and latitudes to the plane a map is drawn in (`projection`, a chart option): Equal Earth, Natural Earth, Mercator, equirectangular, or conic equal-area. |
 | **Camera** | Where a 3D chart is seen from: an azimuth about the vertical axis, an elevation above the floor, a zoom, and orthographic or perspective projection (`camera`, a chart option for the first view; then chart state the pointer and keyboard change). |
-| **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
+| **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field (or of a category `color` field, which lines, areas, and bars split series by without one). Tooltip rows are series. |
+| **Identity** | What a series or a layout mark's item stands for: a value of a table's category field (following derived tables back to their source), a value field's or band's label in a table, or a value through a named scale (`model/identity.ts`). Colors, legend entries, and visibility follow identities; each mark's series keys stay its own. |
 | **Orient** | The axis a line or area runs along (`orient`, "x" or "y"): the axis of its positions, which it is traced, reduced, and read along; its values are on the other. Bars lie along y when their positions are a category y, histograms when they bin `y`. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. A scale of categories (`type: "ordinal"` in `scales`) maps a field's values to outputs: colors, shapes, dashes, or numbers. |
 | **Break** | A span of time a time axis leaves out (nights, weekends, holidays): the axis measures the time it shows, and data inside a break is not drawn. |
@@ -328,9 +329,11 @@ run through the steps on their own and are appended, and each derived row
 remembers its source row's identity (`rowOffset + index`) so drops remove
 exactly the rows they produced; any other change or pipeline recomputes the
 table with `reset`. A derived table keeps its source alive (a `WeakMap` from
-derived to source), so chains hold together; the source's subscription
+derived to source, `data/origin.ts`), so chains hold together; the source's subscription
 holds the derived table weakly (`WeakRef`) and is removed when it is
-collected (`FinalizationRegistry`). The spec
+collected (`FinalizationRegistry`). The same map records which fields pass
+through from the source (those no step makes or replaces), which colors and
+legend entries follow back to the source's (see Identity and color). The spec
 loader loads tables in dependency order and rejects unknown sources and
 cycles.
 
@@ -3674,32 +3677,79 @@ supported.
 
 Each series has a key built from its mark's `id` (or index) and its source
 (a y field or a category) as JSON, so no combination of names can collide.
-Keys identify legend state, geometry buffers, and colors. Palette slots are
-assigned to keys the first time they appear and kept for the chart's
-lifetime, so a series keeps its color when others appear, disappear, or are
-hidden.
+Series keys identify what is drawn: geometry buffers, caches, inspection,
+and the keyboard, so two marks never write into each other's buffers.
 
-Marks naming a `legendGroup` share series by name across marks (a bar and
-its error bars, a line and its band). Each series keeps its own key, which
-geometry buffers, caches, inspection, and the keyboard use, so two marks
-never write into each other's buffers; the group adds a second identity, a
-legend key of the group and the series' name (a JSON object, which names no
-mark), which takes the palette slot, the one legend entry, and the
-visibility. The model maps each grouped series' key to its legend key as
-series resolve (`HiddenKeys`), so a series counts as hidden when its key or
-its group's entry is: everything that reads visibility by series key sees
-the group's state without knowing about groups. The palette callback registers
-membership before marks stack their series, including series with explicit
-colors, which take no palette slot. Scenes retain independent visibility
-snapshots. Marks that dodge prepare and share a roster of visible group names
-on demand, using the original snapshot when selection highlighting splits a
-series.
+What a series stands for is its **identity** (`model/identity.ts`), a value
+in a scope, with a JSON key of its own: `{"table":"data","field":"region",
+"value":"eu"}` for a category field's value, `{"table":"data","value":"p99"}`
+for a value field or a band's label, `{"scale":"regions","value":"eu"}` for
+a value through a named scale. A table is named by the table its fields come
+from (`rootOf`, `data/origin.ts`: derived tables, row views' tables, and spec
+tables with `origin` lead back to their source while the fields pass through
+unchanged), by its `name` (two tables of one name in a chart are refused)
+or else a name the chart gives it (`ChartModel.#names`): the place of the
+first mark reading it (`{"mark":0}`, `{"mark":"latency"}`, objects so no
+table's own name is one), which a new table read in that place takes once
+no table there keeps it (the table that had it, read again, is named
+anew), so a server snapshot and the browser name tables alike, a table
+rebuilt in its place (a framework rendering again) keeps its values'
+colors, and removing or bringing back a mark renames no other table.
+Colors, legend entries, and visibility follow identities, so a value has one
+color and one entry in every mark, panel, and facet, and unrelated tables
+sharing a field's name stay apart unless a named scale joins them. Layout
+marks give their items' sources (`LayoutMark.identity`, `ItemSources`: the
+field, its table when it is another, as a network's nodes, and how an item
+key names its value), so pie slices, top-level tree branches, radar series,
+map regions and points, network node groups, and 3D groups take their
+values' colors and entries; the model reads an item's mark from its key
+(`#itemColor`), so the layers of a map or a 3D plot drawn as one find
+theirs. With `scales.color` declared, items follow it as series do
+(`CompiledFeatures.items`).
+
+The core gives each mark its default scope as the configuration changes
+(`ChartModel.#configure`, from `Mark.identity`: the series field, or the
+value fields); the feature compiler, which a chart loads when it colors by
+field or declares scales, refines it (`marks/features/identity.ts`): a
+declared `scales.color` or a channel's `scale` makes series stand for values
+through that scale, and a line or area colored by a field other than its
+series field stands for that field's values. The palette callback each mark
+calls as its series resolve maps the series key to its identity in the
+model's hidden set (`HiddenKeys.groups`), and takes the identity's palette
+slot: one allocator per chart, assigning slots to identity keys the first
+time they appear and keeping them for the chart's lifetime, so a value keeps
+its color while others appear, disappear, or are hidden, and while the data
+streams. Explicit colors register the series but take no slot. A series
+counts as hidden when its key or its identity's is, so everything that
+reads visibility by series key sees an entry's state without knowing about
+identities; `setVisibility` given a series key acts on its identity. Hidden
+identity keys stay while a mark draws their scope (`keepsKey`); other keys
+go with their mark. Marks that dodge place series by their partition (the
+identity scope of their series field), so error bars stand on the bars of
+the same field's values even when one mark lacks some of them. Scenes keep
+copies of the hidden set.
+
+Lines, areas, bars, and points split series by a category `color` field
+when they have no `series` (`seriesOf`, `marks/mark.ts`; `series: false`
+turns it off, and a mark's own stroke or fill keeps it from happening); map
+and 3D points do too (`withSeries`, `marks/layout-mark.ts`), and the marks
+of summaries and observations (histograms, box plots, boxen plots, violins,
+error bars, rugs) read `color` as their series field or their paint
+(`colored`, `marks/colored.ts`). A line or area
+takes one color per series, so the feature compiler checks that the color
+field is constant within each series (`SeriesStyles`): once per table
+change, and as rows are appended, over the new rows alone, against each
+series' value. A field that changes within a series is a `series-varies`
+`ChartError`. The fixtures in `packages/herceg/test/fixtures`
+(`series-inference.json`, `color-identity.json`, `chart-errors.json`) pin
+inference, identities, and errors for the engine and the Python package
+alike.
 
 Colors by value come from scales of categories, not palette slots: a series
 or row colored by a field (`color: "site"`) takes its value's output in the
 chart's `"color"` scale (or the one `encode.color.scale` names), the same in
-every mark and panel, and series no channel colors keep their palette
-slots. See Encodings.
+every mark and panel; a declared scale's domain without `domain` is its
+fields' dictionary order, then first seen. See Encodings.
 
 ## Encodings
 
@@ -4125,10 +4175,10 @@ default one does; `legend: false` turns it off, not the legends listed. An
 automatic legend without layout settings is measured as the default one
 (`measureLegends`); others lay out a title, then their entries in a grid
 (`columns` or `rows`, filled by row or by column) or in rows flowing as the
-default's, then their parts. `merge: "semantic"` lists once the series that
-show the same value of the same `series` field (or have the same name)
-across marks and panels, toggling them together; it does not recolor them.
-`swatches: "mark"` draws each entry's swatch from its mark's settings: a
+default's, then their parts. Entries are identities (see Identity and
+color): the series of every mark and panel standing for one value are one
+entry, labelled as the first, toggling them all; labels alone never merge
+entries. `swatches: "mark"` draws each entry's swatch from its mark's settings: a
 line of its width and dash, a box of an area's or bar's fill at its
 opacity, a point's symbol (its legend glyph); several looks under one entry
 draw together. Custom `entries` show a swatch (a line, a box, a circle, or
@@ -4163,8 +4213,7 @@ Where these extend:
   own; points' symbols still cycle by first appearance (`Appearance`)
   rather than through a "symbol" scale, and points take no `encode`.
   Layout marks' scales are not named by legends and colorbars (they refuse
-  a reference to one). `legendGroup` stays while dodging reads legend
-  rosters; `merge: "semantic"` shares visibility, not colors. A log color
+  a reference to one). A log color
   scale needs its transform in `SequentialScale` and the colorbar's tick
   scale.
 - **Runtime and SSR.** Snapshots render synchronously and so import the
@@ -5040,8 +5089,9 @@ reports are read from the tables, which an application changing them in
 place renders first. Pointer and keyboard routing follow the last scene's
 kind too (a layout mark's items, or panels), and keys draw pending changes
 before moving the cursor. Hidden keys outlive
-their series (a stream may bring them back) but not their mark: an update
-drops the keys of mark identities (ids, or indexes) it no longer has.
+their series (a stream may bring them back) but not what owns them: an
+update drops the series keys of marks (ids, or indexes) it no longer has,
+and identity keys of scopes no mark draws.
 
 Changes of view (`setViewport`, wheel and pan, synced ranges, transitions)
 mark the chart dirty without marking its panels changed, so a later call
@@ -5061,6 +5111,53 @@ facets, and summaries. A lower-level extension API would follow demonstrated
 needs (custom picking, packed geometry, layouts) with its own lifecycle and
 export contract. The adapters reconcile marks with what is public: specs,
 constructors, and `tablesOf` and `viewOf`.
+
+## Chart errors
+
+What keeps a chart from drawing has one shape everywhere
+(`spec/errors.ts`): `ChartErrorInfo`, JSON-safe, with a `code` programs
+react to, the `phase` it happened in (`validate`, `compile`, `load`,
+`layout`, `render`), the `message` ("location: problem; correction"), and
+where known the spec `path` (`marks[1].color`), the `mark` (its `id`, else
+its index), and the `panel`. The engine throws `ChartError`, an `Error`
+with that info; mark functions give paths within their options, and the
+spec loader and the chart place them (`within`). An error takes the phase
+of where the chart met it (`chartError`), unless it was made knowing its
+own: panels that do not fit are a `layout-failed` error of the `layout`
+phase wherever a frame or an export lays them out. The static renderer hands
+the info to Python, which raises `herceg.ChartError`, a `ValueError` with
+the same fields in Python's spelling (option names in snake_case, never
+fields or ids); the Python package raises the same codes and paths as marks
+are added, for what it can check without the engine.
+
+A mounted chart reports through one path (`MountedChart.#fail`): options
+refused as the chart is made or updated, a compiler or other code that
+fails to load, and frames that fail on new data. Each is shown, then
+reported once per change of options or data (the chart's revision, so a
+frame failing again for the same data is quiet): `ready` rejects if
+nothing was drawn yet, `onError` is called, `"error"` listeners hear it,
+and with neither, the console. With `errorMode: "inline"` (the default) the
+chart shows it (`dom/errors.ts`): a box of the chart's size in its place,
+the drawing hidden and out of the tab order; or, for an update refused
+after a frame drew, a banner over that frame, which is still right because
+a refused update changes nothing (the model configures transactionally and
+the chart restores its options). The next frame that draws removes them.
+With `"throw"`, making the chart and `update` throw what they refuse, and
+nothing is shown. `ready` settles with the first frame on screen, or the
+first failure. The chart keeps what keeps it from drawing anything of its
+options (`#refusal`, `#compileFailure`), and an export throws it rather
+than drawing what the model holds in their place; a compiler load an
+update made needless changes nothing when it settles.
+
+The adapters build on this: what mark elements and props the engine refuses
+shows the same way, and with `errorMode="throw"`, the error is thrown in the
+framework's render (`useState` in React, a render function in Vue, a
+template expression under `<svelte:boundary>` in Svelte), whatever phase it
+came from, so error boundaries catch it. Svelte evaluates mark components'
+derived marks in its scheduler, outside the chart's try, so each mark
+component builds its mark through `built()`, which keeps a refusal as a
+value the chart reports. Python's HTML, notebook output, widgets, and the
+Streamlit component show the same box (`python/js`).
 
 ## Server rendering
 
@@ -5159,7 +5256,11 @@ indexes the buffers delivered next to the JSON), categories as int32
 dictionary codes, and geometries as a float64 buffer of coordinates and
 int32 buffers of offsets (and of codes, when rows do not hold geometry i in
 row i). A table with `matrix: { x, y }` is a matrix table, its coordinate
-columns sent once each rather than once per grid point. Binary columns become typed-array views of the delivered
+columns sent once each rather than once per grid point. A table of columns
+may name its `origin`, the table it was computed from (the Python package's
+summaries of a chart's data), so its fields' values keep that table's
+colors and legend entries; the loader refuses an origin that is no table,
+the table itself, or a cycle. Binary columns become typed-array views of the delivered
 bytes, copied only when misaligned, so large data never passes through JSON
 number lists. `chartFromSpec`, `specToSVG`, `specToPDF`, and `specToSnapshot` render a loaded spec.
 A spec's bindings name tables, not stores: `loadSpec` makes a store per

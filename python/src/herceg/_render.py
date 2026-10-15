@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from ._data import shown
+from ._errors import ChartError
 
 if TYPE_CHECKING:
     from ._chart import Chart
@@ -122,13 +123,19 @@ def _engine() -> Any:
 
 def _call(function: str, *args: Any) -> str:
     """Calls an export of the embedded renderer, which returns its output, or
-    ``{"error": message}`` for what it refuses (a spec it does not accept, a
-    font it cannot embed): raised here as a ValueError with herceg's message.
-    The engine's own failures (out of memory, a timeout) propagate as they are."""
+    ``{"error": message, "info": ...}`` for what it refuses (a spec it does
+    not accept, a font it cannot embed): raised here as a ChartError with
+    herceg's message, code, and path. The engine's own failures (out of
+    memory, a timeout) propagate as they are."""
     result = _engine().call(function, *args)
     if isinstance(result, str):
         return result
-    raise ValueError(result["error"])
+    raise ChartError.from_info(result["info"])
+
+
+def _reworded(error: ChartError, message: str) -> ChartError:
+    """`error` with a message in Python's words."""
+    return ChartError.from_info(error.info(), message)
 
 
 _ASPECT = re.compile(r"none|x(Min|Mid|Max)Y(Min|Mid|Max)( (meet|slice))?")
@@ -216,10 +223,11 @@ def snapshot(
             _encoded(buffers),
             json.dumps({key: value for key, value in options.items() if value is not None}),
         )
-    except ValueError as error:
+    except ChartError as error:
         message = str(error)
-        raise ValueError(
-            message.replace("renderToSnapshot ", "to_snapshot ").replace("timeZone", "time_zone")
+        raise _reworded(
+            error,
+            message.replace("renderToSnapshot ", "to_snapshot ").replace("timeZone", "time_zone"),
         ) from None
     snapshot: dict[str, Any] = json.loads(result)
     return snapshot
@@ -243,11 +251,11 @@ def _svg(
             raster,
             json.dumps(sizing or {}),
         )
-    except ValueError as error:
+    except ChartError as error:
         message = str(error)
         if message.startswith("fonts:"):
             message = f"{location} {message}"
-        raise ValueError(message) from None
+        raise _reworded(error, message) from None
 
 
 def _font_faces(fonts: Fonts | None, location: str) -> list[dict[str, str]]:
@@ -353,12 +361,13 @@ def pdf(
     )
     try:
         encoded = _call("hercegStatic.pdf", json.dumps(spec), encoded_buffers, json.dumps(options))
-    except ValueError as error:
-        raise ValueError(
+    except ChartError as error:
+        raise _reworded(
+            error,
             str(error)
             .replace("renderToPDF", "to_pdf")
             .replace("specToPDF", "to_pdf")
-            .replace("pageSize", "page_size")
+            .replace("pageSize", "page_size"),
         ) from None
     return base64.b64decode(encoded)
 

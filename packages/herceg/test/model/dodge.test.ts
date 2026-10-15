@@ -8,7 +8,6 @@ import { boxplot } from "../../src/marks/boxplot.ts";
 import { jitterOf } from "../../src/marks/dodge.ts";
 import { errorBar } from "../../src/marks/errorbar.ts";
 import { histogram } from "../../src/marks/histogram.ts";
-import { legendKey } from "../../src/marks/mark.ts";
 import { point } from "../../src/marks/point.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
@@ -71,21 +70,15 @@ describe("dodge", () => {
     expect(found.points[0]!.px).toBeCloseTo(first!, 3);
   });
 
-  it("regroups around series hidden with their legend group, as bars do", () => {
+  it("regroups around series hidden through their entry, as bars do", () => {
     const model = build({
       marks: [
-        bar(summary, { x: "day", y: "mean", series: "sex", legendGroup: "sex" }),
-        errorBar(summary, {
-          x: "day",
-          y1: "low",
-          y2: "high",
-          series: "sex",
-          dodge: true,
-          legendGroup: "sex",
-        }),
+        bar(summary, { x: "day", y: "mean", series: "sex" }),
+        errorBar(summary, { x: "day", y1: "low", y2: "high", series: "sex", dodge: true }),
       ],
     });
-    model.hidden.add(legendKey("sex", "m"));
+    model.scene(estimateText);
+    model.hidden.add(model.legendEntries().find(({ label }) => label === "m")!.key);
     const scene = model.scene(estimateText);
     const bars = of<RectGeometry>(scene, "rect");
     const intervals = of<SegmentGeometry>(scene, "segments");
@@ -274,21 +267,14 @@ describe("dodge across marks and panels", () => {
     }
   });
 
-  it("stands a legend group's marks on the group's series, whatever each mark has", () => {
+  it("stands marks splitting rows by one field on its values, whatever each mark has", () => {
     const bars = table({ day: ["thu", "thu"], sex: ["f", "m"], v: [2, 3] });
-    // Intervals for one sex only, in another dictionary order.
-    const intervals = table({ day: ["thu"], sex: ["m"], lo: [2], hi: [4] });
+    // Intervals for one sex only, in another dictionary order, made from the bars' rows.
+    const intervals = table({ day: ["thu"], sex: ["m"], lo: [2], hi: [4] }, { origin: bars });
     const model = build({
       marks: [
-        bar(bars, { x: "day", y: "v", series: "sex", legendGroup: "sex" }),
-        errorBar(intervals, {
-          x: "day",
-          y1: "lo",
-          y2: "hi",
-          series: "sex",
-          dodge: true,
-          legendGroup: "sex",
-        }),
+        bar(bars, { x: "day", y: "v", series: "sex" }),
+        errorBar(intervals, { x: "day", y1: "lo", y2: "hi", series: "sex", dodge: true }),
       ],
     });
     const scene = model.scene(estimateText);
@@ -296,20 +282,20 @@ describe("dodge across marks and panels", () => {
     const [stem] = of<SegmentGeometry>(scene, "segments");
     expect(Math.round(stems(stem!)[0]!)).toBe(Math.round(centers(m!)[0]!));
     // Hiding f gives m the whole band in both marks.
-    model.hidden.add(legendKey("sex", "f"));
+    model.hidden.add(model.legendEntries().find(({ label }) => label === "f")!.key);
     const after = model.scene(estimateText);
     const [onlyM] = of<RectGeometry>(after, "rect");
     const [stemM] = of<SegmentGeometry>(after, "segments");
     expect(Math.round(stems(stemM!)[0]!)).toBe(Math.round(centers(onlyM!)[0]!));
   });
 
-  it("stands box plots of a legend group in the group's slots", () => {
+  it("stands box plots in the slots of their field's values", () => {
     const tips = table({ day: ["thu", "thu", "thu"], sex: ["m", "m", "m"], v: [1, 2, 3] });
-    const both = table({ day: ["thu", "thu"], sex: ["f", "m"], v: [2, 2] });
+    const both = table({ day: ["thu", "thu"], sex: ["f", "m"], v: [2, 2] }, { origin: tips });
     const model = build({
       marks: [
-        boxplot(tips, { x: "day", y: "v", series: "sex", legendGroup: "sex" }),
-        point(both, { x: "day", y: "v", series: "sex", dodge: true, legendGroup: "sex" }),
+        boxplot(tips, { x: "day", y: "v", series: "sex" }),
+        point(both, { x: "day", y: "v", series: "sex", dodge: true }),
       ],
     });
     const scene = model.scene(estimateText);
@@ -387,13 +373,13 @@ describe("dodge across marks and panels", () => {
     }
   });
 
-  it("reports a legend group's bar in the group's slot", () => {
+  it("reports a bar in its field's value's slot", () => {
     const tips = table({ day: ["thu"], sex: ["m"], v: [3] });
-    const both = table({ day: ["thu", "thu"], sex: ["f", "m"], v: [1, 1] });
+    const both = table({ day: ["thu", "thu"], sex: ["f", "m"], v: [1, 1] }, { origin: tips });
     const model = build({
       marks: [
-        bar(tips, { x: "day", y: "v", series: "sex", legendGroup: "sex" }),
-        point(both, { x: "day", y: "v", series: "sex", dodge: true, legendGroup: "sex" }),
+        bar(tips, { x: "day", y: "v", series: "sex" }),
+        point(both, { x: "day", y: "v", series: "sex", dodge: true }),
       ],
     });
     const [m] = of<RectGeometry>(model.scene(estimateText), "rect");

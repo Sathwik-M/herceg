@@ -92,7 +92,9 @@ const grid: StaticOptions = {
     ids.map((id, k) => ({ id, title: `Line ${k + 1}` })),
     { columns: 3 },
   ),
-  // Each panel shows some of the sites, and the average.
+  // Each panel shows some of the sites, and the average, from tables of their
+  // own: a scale of their names gives each one legend entry.
+  scales: { site: { type: "ordinal" } },
   marks: ids.flatMap((panel, p) => [
     ...sites
       .filter((_, s) => p === 0 || (p + s) % 3 !== 2)
@@ -105,6 +107,7 @@ const grid: StaticOptions = {
             y: "v",
             label: site,
             stroke: colors[site]!,
+            encode: { color: { series: true, scale: "site" } },
             panel,
           },
         );
@@ -115,13 +118,13 @@ const grid: StaticOptions = {
       label: "Average",
       stroke: "#222222",
       dash: "--",
+      encode: { color: { series: true, scale: "site" } },
       panel,
     }),
   ]),
   legend: {
     place: { side: "bottom", align: "center" },
     columns: 3,
-    merge: "semantic",
     swatches: "mark",
   },
 };

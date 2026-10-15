@@ -138,8 +138,9 @@ const field: Check = (v, path) => {
 const integer: Check = (v, path) => {
   if (!Number.isInteger(v)) fail(path, "a whole number", v);
 };
-const group: Check = (v, path) => {
-  if (typeof v !== "string" || v === "") fail(path, "a legend group's name", v);
+/** A series field, or false for none: lines, areas, and bars infer one from a `color` field. */
+const seriesField: Check = (v, path) => {
+  if (typeof v !== "string" && v !== false) fail(path, "a field name, or false", v);
 };
 const fields: Check = (v, path) => {
   if (Array.isArray(v)) {
@@ -1068,7 +1069,6 @@ function legendOptions(spec: Record<string, unknown>, path: string) {
         keys.add(key);
       }
     },
-    merge: oneOf("semantic"),
     swatches: oneOf("mark"),
     style: rolesOf(["legendLabel", "legendTitle", "tickLabel"]),
   };
@@ -1362,13 +1362,28 @@ const CHANNEL_VALUES = {
   opacity: fraction,
 } satisfies ChecksOf<EncodingsSpec>;
 
-/** A channel of values `value` checks: a field through a scale, a constant, or a condition. */
+/**
+ * A channel of values `value` checks: a field through a scale, the
+ * series' names through one, a constant, or a condition.
+ */
 function channel(value: Check): Check {
   return (v, path) => {
     object(v, path);
     const c = v as Record<string, unknown>;
     if ("field" in c) checkProperties(c, path, ["field"], { field, scale: string });
-    else if ("value" in c) checkProperties(c, path, ["value"], { value });
+    else if ("series" in c) {
+      checkProperties(c, path, ["series"], {
+        series: (s, at) => {
+          if (s !== true) fail(at, "true, the series' names through a scale", s);
+        },
+        scale: string,
+      });
+      // As the feature compiler refuses it (marks/features/channels.ts).
+      if (c.scale === undefined)
+        throw new TypeError(
+          `${path}.scale: required, as the channel names series through a scale; give scale, the name of one of the chart's scales`,
+        );
+    } else if ("value" in c) checkProperties(c, path, ["value"], { value });
     else if ("condition" in c)
       checkProperties(c, path, ["condition"], {
         condition: (w, at) => {
@@ -1382,7 +1397,12 @@ function channel(value: Check): Check {
           });
         },
       });
-    else fail(path, "{ field }, { value }, or { condition: { when, then, otherwise } }", v);
+    else
+      fail(
+        path,
+        "{ field }, { series: true }, { value }, or { condition: { when, then, otherwise } }",
+        v,
+      );
   };
 }
 
@@ -1483,7 +1503,7 @@ const MARKS: MarkChecks = {
       x: fields,
       y: fields,
       orient: oneOf("x", "y"),
-      series: field,
+      series: seriesField,
       dodge: boolean,
       stroke: string,
       strokeWidth: width,
@@ -1492,7 +1512,6 @@ const MARKS: MarkChecks = {
       strokeOpacity: fraction,
       curve,
       label: string,
-      legendGroup: group,
       color: string,
       encode: encodings("color", "stroke", "dash", "strokeWidth", "opacity"),
       style: markStyle("marker"),
@@ -1514,7 +1533,7 @@ const MARKS: MarkChecks = {
       x1: field,
       x2: field,
       orient: oneOf("x", "y"),
-      series: field,
+      series: seriesField,
       dodge: boolean,
       stack: (v, path) => {
         if (isRecord(v)) {
@@ -1539,7 +1558,6 @@ const MARKS: MarkChecks = {
       opacity: fraction,
       curve,
       label: string,
-      legendGroup: group,
       color: string,
       encode: encodings("color", "fill", "stroke", "opacity"),
       style: markStyle(),
@@ -1634,7 +1652,7 @@ const MARKS: MarkChecks = {
       legend: legended,
       x: fields,
       y: fields,
-      series: field,
+      series: seriesField,
       stack: (v, path) => {
         if (typeof v !== "boolean" && v !== "fill")
           throw new Error(
@@ -1670,7 +1688,6 @@ const MARKS: MarkChecks = {
           },
         } satisfies ChecksOf<BarLabelsSpec>);
       },
-      legendGroup: group,
     },
   },
   point: {
@@ -1681,7 +1698,7 @@ const MARKS: MarkChecks = {
       legend: legended,
       x: field,
       y: field,
-      series: field,
+      series: seriesField,
       animationKey: field,
       radius: positive,
       size: field,
@@ -1701,7 +1718,6 @@ const MARKS: MarkChecks = {
       },
       sampling: oneOf("none", "pixel"),
       label: string,
-      legendGroup: group,
       dodge: boolean,
       jitter: (v, path) => {
         object(v, path);
@@ -1716,6 +1732,7 @@ const MARKS: MarkChecks = {
   histogram: {
     required: [],
     checks: {
+      color: string,
       ...placement,
       legend: legended,
       x: field,
@@ -1740,7 +1757,6 @@ const MARKS: MarkChecks = {
       colorDomain: range,
       colorMidpoint: finite,
       label: string,
-      legendGroup: group,
     },
   },
   treemap: { required: [], checks: hierarchyChecks() },
@@ -1860,6 +1876,7 @@ const MARKS: MarkChecks = {
   boxplot: {
     required: [],
     checks: {
+      color: string,
       ...placement,
       legend: legended,
       x: field,
@@ -1881,12 +1898,12 @@ const MARKS: MarkChecks = {
       fill: string,
       fillOpacity: fraction,
       label: string,
-      legendGroup: group,
     },
   },
   boxen: {
     required: ["x", "y"],
     checks: {
+      color: string,
       ...placement,
       legend: legended,
       x: field,
@@ -1904,12 +1921,12 @@ const MARKS: MarkChecks = {
       fill: string,
       fillOpacity: fraction,
       label: string,
-      legendGroup: group,
     },
   },
   violin: {
     required: ["x", "y"],
     checks: {
+      color: string,
       ...placement,
       legend: legended,
       x: field,
@@ -1921,7 +1938,6 @@ const MARKS: MarkChecks = {
       fill: string,
       fillOpacity: fraction,
       label: string,
-      legendGroup: group,
     },
   },
   candlestick: {
@@ -1939,12 +1955,12 @@ const MARKS: MarkChecks = {
       rise: string,
       fall: string,
       label: string,
-      legendGroup: group,
     },
   },
   rug: {
     required: [],
     checks: {
+      color: string,
       tooltip,
       ...placement,
       legend: legended,
@@ -1956,12 +1972,12 @@ const MARKS: MarkChecks = {
       stroke: string,
       strokeWidth: width,
       label: string,
-      legendGroup: group,
     },
   },
   errorbar: {
     required: [],
     checks: {
+      color: string,
       tooltip,
       ...placement,
       legend: legended,
@@ -1978,7 +1994,6 @@ const MARKS: MarkChecks = {
       strokeWidth: width,
       cap: width,
       label: string,
-      legendGroup: group,
       dodge: boolean,
     },
   },
@@ -2008,7 +2023,7 @@ const MARKS: MarkChecks = {
       longitude: field,
       latitude: field,
       labelField: field,
-      series: field,
+      series: seriesField,
       radius: positive,
       size: field,
       radiusRange: range,
@@ -2090,7 +2105,7 @@ const MARKS: MarkChecks = {
       x: field,
       y: field,
       z: field,
-      series: field,
+      series: seriesField,
       labelField: field,
       radius: positive,
       color: field,
@@ -2384,7 +2399,12 @@ export function unknownError(unknown: readonly UnknownProperty[]): string {
   const fix =
     meant !== undefined
       ? `did you mean "${meant}"?`
-      : 'remove it, or load with { unknown: "warn" } or "ignore"';
+      : // Marks without color choose theirs: by series, by category, or one of their own.
+        name === "color" && first!.known.includes("type")
+        ? first!.known.includes("series")
+          ? "the mark colors by series; give series, the field naming them"
+          : "the mark chooses its colors itself; remove it (fill or stroke, where it takes them, set one)"
+        : 'remove it, or load with { unknown: "warn" } or "ignore"';
   const more = rest.length > 0 ? ` (also unknown: ${rest.map(describeUnknown).join(", ")})` : "";
   return `${first!.path}: not a property of herceg's spec format; ${fix}${more}`;
 }
@@ -2503,11 +2523,15 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
               transform: transforms,
             } satisfies ChecksOf<DerivedSpec>);
           } else {
-            required(entry, at, ["columns"], ["columns", "matrix"]);
+            required(entry, at, ["columns"], ["columns", "matrix", "origin"]);
             object(entry.columns, `${at}.columns`);
             const fields = Object.keys(entry.columns as object);
             properties(entry, at, {
               columns: () => {},
+              origin: (v, where) => {
+                if (typeof v !== "string" || !Object.hasOwn(data as object, v) || v === name)
+                  fail(where, "the name of another table in spec.data", v);
+              },
               matrix: (m, where) => {
                 object(m, where);
                 const coordinate: Check = (v, path) => {

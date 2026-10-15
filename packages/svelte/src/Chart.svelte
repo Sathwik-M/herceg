@@ -5,15 +5,18 @@
 -->
 <script lang="ts">
   import {
+    type ChartError,
     type ChartEvents,
     type ChartListener,
     type ChartMark,
     type ChartOptions,
     type ChartUpdate,
+    chartError,
     createChart,
     type Chart as HercegChart,
     type Inspection,
     type RenderTooltip,
+    showFailure,
   } from "herceg";
   import { untrack } from "svelte";
   import { type ChartProps, canonical, sameMark } from "./chart.js";
@@ -37,6 +40,7 @@
     onitemmove,
     onvisibility,
     onrender,
+    onerror,
     renderTooltip,
     ...options
   }: ChartProps = $props();
@@ -65,12 +69,26 @@
     if (!renderTooltip) shown = null;
   });
 
-  /** What the chart shows, to skip updates when nothing changed. */
+  /** What the chart shows, to skip updates when nothing changed; with what refused its marks. */
   interface View {
     marks: readonly ChartMark[];
     options: Options;
     key: string;
+    refused?: ChartError | undefined;
   }
+
+  /** With errorMode "throw", what kept the chart from drawing, thrown in the template. */
+  let thrown = $state.raw<ChartError | null>(null);
+  const raise = (error: ChartError): never => {
+    throw error;
+  };
+  /** The chart's `onError`: stable, so options compare equal across updates. */
+  const report = (error: ChartError) => {
+    onerror?.(error);
+    if (untrack(() => options.errorMode) === "throw") thrown = error;
+  };
+  /** What says why the last marks were refused, and of which error. */
+  let refusal: { element: HTMLElement; message: string } | undefined;
 
   let container: HTMLDivElement;
   let current = $state.raw<HercegChart | null>(null);
@@ -103,8 +121,15 @@
   /** What the props describe; reading every option and mark tracks each one. */
   const described: View = $derived.by(() => {
     void moves;
-    const view = plain(options) as Options;
-    const next = [...marks, ...entries.toSorted(byPosition).map((entry) => entry.mark)];
+    const view = { ...(plain(options) as Options), onError: report };
+    // Mark components refused (an unknown field) leave the chart as it was, saying why.
+    const next: ChartMark[] = [...marks];
+    let refused: ChartError | undefined;
+    for (const { mark } of entries.toSorted(byPosition)) {
+      if (!("refused" in mark)) next.push(mark);
+      else if (view.errorMode === "throw") throw mark.refused;
+      else refused ??= chartError(mark.refused, "validate");
+    }
     // The tooltip's renderer is the chart's own, calling the prop: the key
     // says whether there is one.
     const rendered = renderTooltip !== undefined;
@@ -112,6 +137,7 @@
       marks: next,
       options: rendered ? { ...view, renderTooltip: showTooltip } : view,
       key: `${canonical(view)}${rendered ? " rendered tooltip" : ""}`,
+      refused,
     };
   });
 
@@ -151,7 +177,29 @@
     untrack(() => show(view));
   });
 
+  /**
+   * Says why mark components were refused: over the chart, or in its place
+   * before there is one; nothing once they are built again.
+   */
+  function refuse(error: ChartError | undefined) {
+    if (refusal && refusal.message === error?.message) return;
+    refusal?.element.remove();
+    refusal = undefined;
+    if (!error) return;
+    const box = container.getBoundingClientRect();
+    const element = current
+      ? showFailure(current.root, error, true)
+      : showFailure(container, error, false, {
+          width: options.width ?? (box.width || 640),
+          height: options.height ?? (box.height || 320),
+        });
+    refusal = { element, message: error.message };
+    onerror?.(error);
+  }
+
   function create(view: View) {
+    refuse(view.refused);
+    if (view.refused) return;
     // Options given as undefined take their defaults, as if left out.
     const given = Object.entries(view.options).filter(([, value]) => value !== undefined);
     const config = {
@@ -165,8 +213,13 @@
 
   /** Brings the chart up to date with the props. */
   function show(view: View) {
+    refuse(view.refused);
+    if (view.refused) return;
     const last = applied;
-    if (!current || !last) return;
+    if (!current || !last) {
+      if (!current) create(view);
+      return;
+    }
     // Unchanged marks keep their identity, so their caches survive.
     const next = view.marks.map((mark, i) => {
       const previous = last.marks[i];
@@ -210,6 +263,7 @@
   {/if}
   <!-- Mark components render only empty anchors, kept out of the layout. -->
   <div bind:this={anchors} hidden>{@render children?.()}</div>
+  {#if thrown}{raise(thrown)}{/if}
   <!-- The chart shows this in its tooltip's box. -->
   {#if renderTooltip}
     <div bind:this={tooltipHost}>{#if shown}{@render renderTooltip(shown)}{/if}</div>

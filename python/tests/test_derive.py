@@ -83,7 +83,7 @@ def test_charts_send_the_source_and_the_steps():
         ],
     }
     assert spec["marks"][0]["data"] == "data2"
-    with pytest.raises(KeyError, match="bar y: no column 'temp'"):
+    with pytest.raises(hg.ChartError, match="bar y: no column 'temp'"):
         hg.Chart(totals).bar(x="site", y="temp")
     svg = chart.to_svg()
     assert svg.count("<path") >= 1 and "n" in svg and "s" in svg

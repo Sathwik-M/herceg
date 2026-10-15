@@ -141,25 +141,29 @@ describe("swatches as the marks look", () => {
 
 describe("one entry for the same value across marks", () => {
   const a = table({ t: [0, 1], site: ["North", "South"], v: [1, 2] });
-  const b = table({ t: [0, 1], site: ["North", "South"], v: [3, 4] });
-  const subplots = {
+  const b = table({ t: [0, 1], site: ["North", "South"], v: [3, 4] }, { origin: a });
+  const subplots = (second = b) => ({
     panels: panels([{ id: "a" }, { id: "b" }], { columns: 2 }),
     marks: [
-      line(a, { x: "t", y: "v", series: "site", panel: "a", stroke: "#123456" }),
-      line(b, { x: "t", y: "v", series: "site", panel: "b", stroke: "#123456" }),
+      line(a, { x: "t", y: "v", series: "site", panel: "a" }),
+      area(second, { x: "t", y: "v", series: "site", panel: "b" }),
     ],
-  } satisfies Partial<ChartConfig>;
+    legend: { swatches: "mark" as const },
+  });
 
-  it("lists each site once, toggling its series in every panel", () => {
-    const merged = build({ ...subplots, legend: { merge: "semantic" } });
+  it("lists each site once, toggling its series in every panel, with each mark's look", () => {
+    const merged = build(subplots());
     const entries = entriesOf(merged.scene);
     expect(entries.map((e) => e.label)).toEqual(["North", "South"]);
-    expect(entries[0]!.targets).toHaveLength(2);
-    // Hiding both shows the entry hidden.
-    for (const key of entries[0]!.targets!) merged.model.hidden.add(key);
-    expect(entriesOf(merged.model.scene(estimateText))[0]!.hidden).toBe(true);
-    const apart = build({ ...subplots, legend: { place: { side: "top" } } });
-    expect(entriesOf(apart.scene)).toHaveLength(4);
+    // The area's box under the line's stroke, in the site's one color.
+    expect(entries[0]!.sample!.items.map((item) => item.type)).toEqual(["rect", "segments"]);
+    merged.model.hidden.add(entries[0]!.key);
+    const hidden = merged.model.scene(estimateText);
+    expect(entriesOf(hidden)[0]!.hidden).toBe(true);
+    expect(hidden.panels.map((panel) => panel.marks.length)).toEqual([1, 1]);
+    // Tables that only share a field's name stay apart.
+    const other = table({ t: [0, 1], site: ["North", "South"], v: [3, 4] });
+    expect(entriesOf(build(subplots(other)).scene)).toHaveLength(4);
   });
 });
 

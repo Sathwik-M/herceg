@@ -54,7 +54,7 @@ go to the container element. Chart events are Vue events: `@viewport`, `@edge`
 drilled into a node), `@item-move` (a network's node moved; with subplots, these and
 `@viewport` and `@select` events of a subplot's tree, map, or network name it in
 `panels`), `@visibility` (series hidden or shown),
-`@render` (a frame of the data drawn, for overlays, the first one as the chart mounts), `@row-selection` (a channel of
+`@render` (a frame of the data drawn, for overlays, the first one as the chart mounts), `@error` (see When a chart cannot draw), `@row-selection` (a channel of
 the chart's `rowSelection` changed), and `@click` (the chart's click, with the
 data under the pointer, not the element's). A `:row-selection` binding made again,
 or kept in reactive state, is the same while it binds the same stores and channels. A template ref exposes the underlying chart,
@@ -112,6 +112,24 @@ alternatives retain their English language.
 as pixel arrays. String patterns scale with `strokeWidth` (the theme's
 line width when omitted on `Line`); arrays stay in CSS pixels. `Custom`
 shape styles accept the same values. See the engine's [dash patterns](../herceg/README.md#marks).
+
+## When a chart cannot draw
+
+A mark component or prop the engine refuses (a field its table lacks, a
+line whose color changes within a series), code that fails to load, and a
+frame that fails on new data show in the chart's place, as the engine shows
+them (see [When a chart cannot draw](../herceg/README.md#when-a-chart-cannot-draw)):
+a box of the chart's size, or over the last frame still right, a banner;
+`@error` hears of each, a `ChartError` with its `code` and `path`. With
+`error-mode="throw"`, the chart shows nothing and throws the error from its
+render, whenever it came, for a parent's `onErrorCaptured` or the app's
+`errorHandler`:
+
+```vue
+<Chart error-mode="throw" @error="(error) => report(error.code, error.path)">
+  <Line :data="metrics" x="time" y="p99" color="region" />
+</Chart>
+```
 
 ## Server rendering
 

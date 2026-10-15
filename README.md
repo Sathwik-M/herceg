@@ -111,7 +111,11 @@ legends, titles, and subplots, titles above or below the plots and legends
 on any side or inside a plot, explicit padding, clipping per mark, text halos, rule,
 region, and text annotations from constants or data (with labels hidden or
 moved where they would overlap), custom marks drawing
-through the same renderers (with series, legends, and tooltips), derived
+through the same renderers (with series, legends, and tooltips), colors
+that follow what series stand for (a category color splits series, and a
+value keeps one color and one legend entry across marks, panels, and the
+tables made from one table), errors shown in the chart's place and reported
+as `ChartError`s, the same in Python and the adapters, derived
 tables (filter, calculate, bin, aggregate, rolling windows, sort) with
 portable expressions, level of detail, streaming updates (stacks of fields and of series
 in input order restacking only what appended and dropped rows touch for

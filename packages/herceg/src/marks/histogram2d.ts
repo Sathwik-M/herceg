@@ -97,7 +97,6 @@ export interface Histogram2DOptions<S extends Schema> {
   commonNorm?: never;
   fill?: never;
   fillOpacity?: never;
-  legendGroup?: never;
   axis?: never;
 }
 

@@ -1,0 +1,193 @@
+{
+  "about": "What series and slices stand for, as the legend's entries' keys and labels in order: the same field of the same table (or a table made from it, `origin`) gives a value one entry across marks and panels; unrelated tables keep apart; value fields stand for their labels; a named scale joins marks by value. Each case's spec is what the Python calls make (python/tests/test_conformance.py builds it and compares); the engine draws it and lists the entries (packages/herceg/test/model/conformance.test.ts).",
+  "cases": [
+    {
+      "name": "a line, bars, an area, and a pie of one table's region",
+      "spec": {
+        "data": {
+          "data": {
+            "columns": { "t": [0, 1, 0, 1], "region": ["eu", "eu", "us", "us"], "v": [1, 2, 3, 4] }
+          }
+        },
+        "panels": [{ "id": "a" }, { "id": "b" }, { "id": "c" }, { "id": "d" }],
+        "x": { "scope": "panel" },
+        "marks": [
+          { "type": "line", "x": "t", "y": "v", "color": "region", "panel": "a", "data": "data" },
+          { "type": "bar", "x": "t", "y": "v", "color": "region", "panel": "b", "data": "data" },
+          { "type": "area", "x": "t", "y": "v", "series": "region", "panel": "c", "data": "data" },
+          { "type": "pie", "category": "region", "value": "v", "panel": "d", "data": "data" }
+        ]
+      },
+      "python": [
+        { "method": "line", "args": { "x": "t", "y": "v", "color": "region", "panel": "a" } },
+        { "method": "bar", "args": { "x": "t", "y": "v", "color": "region", "panel": "b" } },
+        { "method": "area", "args": { "x": "t", "y": "v", "series": "region", "panel": "c" } },
+        { "method": "pie", "args": { "category": "region", "value": "v", "panel": "d" } }
+      ],
+      "entries": [
+        ["{\"table\":\"data\",\"field\":\"region\",\"value\":\"eu\"}", "eu"],
+        ["{\"table\":\"data\",\"field\":\"region\",\"value\":\"us\"}", "us"]
+      ]
+    },
+    {
+      "name": "value fields, by their labels",
+      "spec": {
+        "data": {
+          "data": {
+            "columns": { "t": [0, 1], "p50": [1, 2], "p99": [3, 4], "lo": [0, 1], "hi": [2, 3] }
+          }
+        },
+        "marks": [
+          { "type": "line", "x": "t", "y": ["p50", "p99"], "data": "data" },
+          { "type": "area", "x": "t", "y1": "lo", "y2": "hi", "label": "p50", "data": "data" }
+        ]
+      },
+      "python": [
+        { "method": "line", "args": { "x": "t", "y": ["p50", "p99"] } },
+        { "method": "area", "args": { "y1": "lo", "y2": "hi", "x": "t", "label": "p50" } }
+      ],
+      "entries": [
+        ["{\"table\":\"data\",\"value\":\"p50\"}", "p50"],
+        ["{\"table\":\"data\",\"value\":\"p99\"}", "p99"]
+      ]
+    },
+    {
+      "name": "unrelated tables apart, a table made from another together",
+      "spec": {
+        "data": {
+          "data": { "columns": { "t": [0, 1], "region": ["eu", "us"], "v": [1, 2] } },
+          "data2": { "columns": { "t": [0, 1], "region": ["eu", "us"], "v": [3, 4] } },
+          "data3": {
+            "columns": { "t": [0, 1], "region": ["eu", "us"], "v": [5, 6] },
+            "origin": "data"
+          }
+        },
+        "marks": [
+          { "type": "line", "x": "t", "y": "v", "series": "region", "data": "data" },
+          { "type": "line", "x": "t", "y": "v", "series": "region", "data": "data2" },
+          { "type": "line", "x": "t", "y": "v", "series": "region", "data": "data3" }
+        ]
+      },
+      "entries": [
+        ["{\"table\":\"data\",\"field\":\"region\",\"value\":\"eu\"}", "eu"],
+        ["{\"table\":\"data\",\"field\":\"region\",\"value\":\"us\"}", "us"],
+        ["{\"table\":\"data2\",\"field\":\"region\",\"value\":\"eu\"}", "eu"],
+        ["{\"table\":\"data2\",\"field\":\"region\",\"value\":\"us\"}", "us"]
+      ]
+    },
+    {
+      "name": "a named scale joins tables by value",
+      "spec": {
+        "data": {
+          "data": { "columns": { "t": [0, 1], "region": ["eu", "us"], "v": [1, 2] } },
+          "data2": { "columns": { "t": [0, 1], "region": ["eu", "us"], "v": [3, 4] } }
+        },
+        "scales": { "regions": { "type": "ordinal" } },
+        "marks": [
+          {
+            "type": "line",
+            "x": "t",
+            "y": "v",
+            "series": "region",
+            "encode": { "color": { "field": "region", "scale": "regions" } },
+            "data": "data"
+          },
+          {
+            "type": "line",
+            "x": "t",
+            "y": "v",
+            "series": "region",
+            "encode": { "color": { "field": "region", "scale": "regions" } },
+            "data": "data2"
+          }
+        ]
+      },
+      "entries": [
+        ["{\"scale\":\"regions\",\"value\":\"eu\"}", "eu"],
+        ["{\"scale\":\"regions\",\"value\":\"us\"}", "us"]
+      ]
+    },
+    {
+      "name": "rows without a category position, in no series (along x)",
+      "spec": {
+        "data": {
+          "data": { "columns": { "p": ["a", null, null], "v": [1, 2, 3], "c": ["eu", "us", "us"] } }
+        },
+        "panels": [{ "id": "a" }, { "id": "b" }],
+        "marks": [
+          {
+            "type": "line",
+            "x": "p",
+            "y": "v",
+            "series": false,
+            "color": "c",
+            "panel": "a",
+            "data": "data"
+          },
+          {
+            "type": "area",
+            "x": "p",
+            "y": "v",
+            "series": false,
+            "color": "c",
+            "panel": "b",
+            "data": "data"
+          }
+        ]
+      },
+      "python": [
+        {
+          "method": "line",
+          "args": { "x": "p", "y": "v", "color": "c", "series": false, "panel": "a" }
+        },
+        {
+          "method": "area",
+          "args": { "x": "p", "y": "v", "color": "c", "series": false, "panel": "b" }
+        }
+      ],
+      "entries": [["{\"table\":\"data\",\"field\":\"c\",\"value\":\"eu\"}", "eu"]]
+    },
+    {
+      "name": "rows without a category position, in no series (along y)",
+      "spec": {
+        "data": {
+          "data": { "columns": { "p": ["a", null, null], "v": [1, 2, 3], "c": ["eu", "us", "us"] } }
+        },
+        "panels": [{ "id": "a" }, { "id": "b" }],
+        "marks": [
+          {
+            "type": "line",
+            "x": "v",
+            "y": "p",
+            "orient": "y",
+            "series": false,
+            "color": "c",
+            "panel": "a",
+            "data": "data"
+          },
+          {
+            "type": "area",
+            "x": "v",
+            "y": "p",
+            "orient": "y",
+            "series": false,
+            "color": "c",
+            "panel": "b",
+            "data": "data"
+          }
+        ]
+      },
+      "python": [
+        {
+          "method": "line",
+          "args": { "x": "v", "y": "p", "orient": "y", "color": "c", "series": false, "panel": "a" }
+        },
+        {
+          "method": "area",
+          "args": { "x": "v", "y": "p", "orient": "y", "color": "c", "series": false, "panel": "b" }
+        }
+      ],
+      "entries": [["{\"table\":\"data\",\"field\":\"c\",\"value\":\"eu\"}", "eu"]]
+    }
+  ]
+}

@@ -863,14 +863,20 @@ describe("mistakes", () => {
   test("09: a misspelled theme name", async () => {
     const { createChart, line, table, time } = await herceg;
     const latency = table({ time: time(days), p50 });
-    expect(() =>
-      createChart(box(), {
-        theme: "drak" as never,
-        marks: [line(latency, { x: "time", y: "p50" })],
-      }),
-    ).toThrow(
-      'theme: no theme "drak"; use "light", "dark", "high-contrast", "high-contrast-dark", "auto"',
-    );
+    const message =
+      'theme: no theme "drak"; use "light", "dark", "high-contrast", "high-contrast-dark", "auto"';
+    // The chart says so in its place, and in the console.
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const element = box();
+    const mistaken = createChart(element, {
+      theme: "drak" as never,
+      marks: [line(latency, { x: "time", y: "p50" })],
+    });
+    cleanups.push(() => mistaken.destroy());
+    await expect(mistaken.ready).rejects.toThrow(message);
+    expect(element.querySelector('[role="alert"]')!.textContent).toContain(message);
+    expect(logged).toHaveBeenCalledOnce();
+    logged.mockRestore();
     // ECharts draws in its default theme; plotly.js ignores Plotly Python's template names.
     const chart = (await echarts).init(box(), "drak");
     cleanups.push(() => chart.dispose());

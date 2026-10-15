@@ -15,14 +15,17 @@ import type {
   TextGeometry,
 } from "../scene/scene.ts";
 import type { Frozen, PieSpec } from "../spec/spec.ts";
+import { refuseColor } from "./colored.ts";
 import {
   heldText,
+  type ItemSources,
   type LayoutFrame,
   type LayoutItem,
   type LayoutMark,
   type LayoutResult,
   RowsCache,
   SelectionCache,
+  secondOf,
 } from "./layout-mark.ts";
 import { CATEGORY, type ChartMark, DIM, frozen, type MARK, requireField } from "./mark.ts";
 
@@ -62,6 +65,7 @@ export class PieMark implements LayoutMark {
   readonly spec: Frozen<PieSpec>;
   readonly table: Table;
   readonly measure: string;
+  readonly identity: ItemSources;
   /** Clicks select a slice's rows, and a selection of them is drawn as a share of each slice. */
   readonly selects = true;
   /** Totals per category code, of all rows and of each facet panel's. */
@@ -81,6 +85,8 @@ export class PieMark implements LayoutMark {
     }
     this.table = table;
     this.measure = spec.value ?? "Count";
+    // Slices stand for their category field's values, as series of it do.
+    this.identity = { field: spec.category, read: secondOf };
   }
 
   /**
@@ -461,6 +467,7 @@ export function pie<S extends Schema>(
   table: Table<S>,
   options: PieOptions<S>,
 ): ChartMark<Frozen<PieSpec>> {
+  refuseColor(options, "pie");
   const spec: PieSpec = { type: "pie", category: options.category };
   if (options.value !== undefined) spec.value = options.value;
   if (options.innerRadius !== undefined) spec.innerRadius = options.innerRadius;

@@ -685,9 +685,17 @@ describe("Streamlit component", () => {
     expect(surface(own)).toBe("#ffffff");
   });
 
-  it("throws on a chart it cannot draw, for Streamlit to show", () => {
+  it("shows a chart it cannot draw in the chart's place, until a run shows one", () => {
+    const element = host();
     const broken = payload({ marks: [{ type: "line", x: "x", y: "y" }] }, [], []);
-    expect(() => run(host(), broken)).toThrow(/table/);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    run(element, broken);
+    error.mockRestore();
+    const alert = element.querySelector('[role="alert"]')!;
+    expect(alert.textContent).toMatch(/^Chart could not be rendered\n.*no tables/);
+    run(element, lineChart("Fixed", []));
+    expect(element.querySelector('[role="alert"]')).toBeNull();
+    expect(figure(element).getAttribute("aria-label")).toBe("Fixed");
   });
 
   it("works inside the shadow root Streamlit isolates styles with", () => {

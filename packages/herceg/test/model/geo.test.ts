@@ -316,24 +316,18 @@ describe("geopoint", () => {
     expect(legendOf(scene).map((entry) => entry.color)).toEqual([LIGHT.muted, LIGHT.muted]);
   });
 
-  it("color by a category, with a color key, and read the category", () => {
+  it("color by a category as their series, and refuse one coloring points row by row", () => {
     const { scene, model } = build({
       marks: [geopoint(cities(), { longitude: "lon", latitude: "lat", color: "kind" })],
     });
-    const [g] = points(scene);
-    expect(g!.colors!.categorical).toBe(true);
-    const colors = Array.from(g!.colors!.index.subarray(0, g!.count), (i) => g!.colors!.palette[i]);
-    expect(new Set(colors)).toEqual(new Set([LIGHT.palette[0], LIGHT.palette[1]]));
-    expect(keysOf(scene)[0]!.entries.map((e) => [e.label.text, e.fill])).toEqual([
+    expect(legendOf(scene).map(({ label, color }) => [label, color])).toEqual([
       ["capital", LIGHT.palette[0]],
       ["town", LIGHT.palette[1]],
     ]);
-    const read = items(model).map(({ points: [point] }) => [
-      point!.label,
-      point!.color,
-      point!.text,
-    ]);
-    expect(read).toContainEqual(["Point 1", LIGHT.palette[0], "kind capital"]);
+    expect(items(model).map(({ points: [point] }) => point!.color)).toContain(LIGHT.palette[0]);
+    expect(() =>
+      geopoint(cities(), { longitude: "lon", latitude: "lat", color: "kind", series: false }),
+    ).toThrow('geopoint color: "kind" holds categories, which color map points by series');
     expect(() =>
       geopoint(cities(), { longitude: "lon", latitude: "lat", color: "kind", colorMidpoint: 0 }),
     ).toThrow(/geopoint colors: "kind" is a category field/);

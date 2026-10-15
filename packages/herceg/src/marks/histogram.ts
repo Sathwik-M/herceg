@@ -28,7 +28,9 @@ import type {
   Histogram2DSpec,
   HistogramSpec,
 } from "../spec/spec.ts";
+import { colored } from "./colored.ts";
 import { BandShares, STILL } from "./dodge.ts";
+import type { CssColor } from "./encoding.ts";
 import { histogramFormError } from "./histogram-input.ts";
 import { Histogram2DMark, type Histogram2DOptions } from "./histogram2d.ts";
 import { definedFields } from "./line.ts";
@@ -42,6 +44,7 @@ import {
   type MARK,
   type Mark,
   type MarkKey,
+  type MarkSources,
   NUMERIC,
   type Palette,
   requireField,
@@ -57,6 +60,12 @@ interface HistogramStyle<S extends Schema> {
   bins?: BinSpec;
   /** Category field: one histogram per value. */
   series?: CategoryField<S>;
+  /**
+   * A category field naming the series, whose values color them (as
+   * `series` does, which must then name it too), or a color for every
+   * shape, as `fill` sets it.
+   */
+  color?: CategoryField<S> | CssColor;
   /** A number field each row counts as, in place of 1; rows missing a weight, or with a negative one, are not counted. */
   weight?: NumberField<S>;
   /**
@@ -90,11 +99,6 @@ interface HistogramStyle<S extends Schema> {
   clip?: Clip;
   /** The subplot to draw in, or "*" for every panel. */
   panel?: string;
-  /**
-   * Marks naming the same group share series by name: series of the same
-   * name share a color, one legend entry, and visibility.
-   */
-  legendGroup?: string;
   /** `false` leaves the mark out of the chart's legends. */
   legend?: false;
   id?: string;
@@ -198,6 +202,7 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
   declare readonly [MARK]: true;
   readonly spec: Frozen<Histogram1DSpec>;
   readonly table: Table<Schema>;
+  readonly identity: MarkSources;
   readonly tooltip: "x" | "y";
   readonly summarizes = true;
   readonly zero: "x" | "y";
@@ -232,7 +237,7 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
   readonly #flats = new WeakMap<NumericArray, Uint8Array>();
 
   constructor(input: Histogram1DSpec, table: Table<Schema>) {
-    this.spec = frozen(input);
+    this.spec = frozen(colored(input, table, "fill"));
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     this.table = table;
@@ -249,6 +254,7 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
     if (bins !== undefined) checkBins(bins, "histogram bins");
     if (Array.isArray(bins)) this.#explicit = Float64Array.from(bins);
     this.#split = new SeriesSplitter(table, undefined, [this.#field], spec.series, spec.label);
+    this.identity = { field: spec.series, values: [this.#field] };
     if (spec.dodge) this.#shares = new BandShares();
   }
 
@@ -469,8 +475,8 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
     }
     const opacity = this.spec.fillOpacity ?? (overlaid ? 0.5 : 1);
     const out: RectGeometry[] = [];
-    // Dodged series split each bin, a legend group's marks by the group's series.
-    this.#shares?.split(series, frame, this.spec.legendGroup, true);
+    // Dodged series split each bin, by their field's values (see dodge.ts).
+    this.#shares?.split(series, frame, true);
     for (const s of visible) {
       const rects = frame.floats(s.key, "rect", s.length * 4);
       let count = 0;
@@ -1233,11 +1239,12 @@ export function histogram<S extends Schema>(
   }
   const spec = {
     type: "histogram",
-    ...definedFields(options, [
+    ...definedFields(options as Histogram1DOptions<S>, [
       "x",
       "y",
       "bins",
       "series",
+      "color",
       "weight",
       "normalize",
       "stack",
@@ -1248,7 +1255,6 @@ export function histogram<S extends Schema>(
       "fill",
       "fillOpacity",
       "label",
-      "legendGroup",
       "legend",
       "axis",
       "facet",

@@ -109,9 +109,9 @@ def test_histogram_refuses_invalid_options(options, message):
 
 
 def test_histogram_checks_binned_column_kinds():
-    with pytest.raises(TypeError, match="histogram y.*category"):
+    with pytest.raises(hg.ChartError, match="histogram y.*category"):
         hg.histogram(DATA, y="g")
-    with pytest.raises(TypeError, match="histogram x.*category"):
+    with pytest.raises(hg.ChartError, match="histogram x.*category"):
         hg.histogram(DATA, x="g")
 
 

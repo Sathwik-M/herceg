@@ -301,6 +301,13 @@ export type DataSpec = ColumnsSpec | DerivedSpec;
 export interface ColumnsSpec {
   columns: Record<Field, ColumnSpec>;
   /**
+   * The table these rows were made from, by a computation outside the spec
+   * (statistics, a model's fit): the fields both tables have stand for the
+   * same things, so their values take one color and one legend entry in
+   * both, as a derived table's do (see `DerivedSpec`).
+   */
+  origin?: string;
+  /**
    * The table is a matrix (`fromMatrix`): the columns `x` and `y` name hold
    * its coordinates, one value per column of the matrix and one per row,
    * and every other column a value at each pair, in rows of x (the i-th x
@@ -989,15 +996,7 @@ interface Legended {
 }
 
 /** What marks drawing series (which legends list) have besides `MarkBase`. */
-interface SeriesBase extends MarkBase, Legended {
-  /**
-   * Marks naming the same group share series by name: series of the same
-   * name (a `series` value, or a mark's `label`) share a color, one legend
-   * entry, and visibility, as a bar and its error bars or a line and its
-   * band do.
-   */
-  legendGroup?: string;
-}
+type SeriesBase = MarkBase & Legended;
 
 /**
  * A field of a row that tooltips show besides the mark's values: its name,
@@ -1060,8 +1059,11 @@ export interface LineSpec extends SeriesBase, RowTooltip {
   /** Values along x (one field or several), or with `orient: "y"` the positions. */
   y: Field | readonly Field[];
   orient?: Orient;
-  /** Category field that splits rows into one line per value. */
-  series?: Field;
+  /**
+   * Category field that splits rows into one line per value. Without it,
+   * a category field as `color` splits them; `false` splits by neither.
+   */
+  series?: Field | false;
   /**
    * On a category position axis, with `series`: the series side by side in
    * each band, as grouped bars are, instead of at its center.
@@ -1080,9 +1082,9 @@ export interface LineSpec extends SeriesBase, RowTooltip {
   /** Legend and tooltip name for a single-field line without `series`. */
   label?: string;
   /**
-   * The lines' color: a category field's value (constant within each
-   * series) through the chart's "color" scale, or a color. The short form
-   * of `encode.color`; `stroke` wins over it.
+   * The lines' color: a category field (a line per value, unless `series`
+   * says otherwise; constant within each series), or a color. The short
+   * form of `encode.color`; `stroke` wins over it.
    */
   color?: string;
   /** Channels: color, stroke, dash, strokeWidth, and opacity, each constant within a series. */
@@ -1114,7 +1116,10 @@ interface AreaStyle extends SeriesBase, RowTooltip {
   strokeOpacity?: number;
   /** From 0 to 1: the whole mark's. */
   opacity?: number;
-  /** The areas' fill: a category field (constant within each series) through the chart's "color" scale, or a color. */
+  /**
+   * The areas' fill: a category field (an area per value, unless `series`
+   * says otherwise; constant within each series), or a color.
+   */
   color?: string;
   /** Channels, each constant within a series: color, fill, stroke, and opacity. */
   encode?: Pick<EncodingsSpec, "color" | "fill" | "stroke" | "opacity">;
@@ -1157,7 +1162,11 @@ export type AreaSpec = AreaStyle &
         x: Field | readonly Field[];
         /** Values filled to zero (one field or several), or with `orient: "y"` the positions. */
         y: Field | readonly Field[];
-        series?: Field;
+        /**
+         * Category field that splits rows into one area per value. Without
+         * it, a category field as `color` splits them; `false` splits by neither.
+         */
+        series?: Field | false;
         /** Pile the areas up: `true`, a mode, or its parts (`offset`, `order`, `gaps`). */
         stack?: AreaStack | StackSpec;
         y1?: never;
@@ -1174,7 +1183,8 @@ export type AreaSpec = AreaStyle &
         y?: never;
         x1?: never;
         x2?: never;
-        series?: never;
+        /** Category field that splits rows into one band per value (or a `color` field, as above). */
+        series?: Field | false;
         stack?: never;
       }
     | {
@@ -1186,7 +1196,7 @@ export type AreaSpec = AreaStyle &
         x?: never;
         y1?: never;
         y2?: never;
-        series?: never;
+        series?: Field | false;
         stack?: never;
       }
   );
@@ -1321,13 +1331,17 @@ export interface BarSpec extends SeriesBase, RowTooltip {
   type: "bar";
   x: Field | readonly Field[];
   y: Field | readonly Field[];
-  series?: Field;
+  /**
+   * Category field that splits rows into one bar series per value. Without
+   * it, a category field as `color` splits them; `false` splits by
+   * neither, and a `color` field then colors each bar.
+   */
+  series?: Field | false;
   /** Pile series up at each position. */
   stack?: BarStack;
   /**
    * Place series side by side in each position, as grouped bars: true by
-   * default for series that do not stack; false overlaps them. `color`
-   * alone makes no series, so never places bars apart.
+   * default for series that do not stack; false overlaps them.
    */
   dodge?: boolean;
   fill?: string;
@@ -1339,7 +1353,10 @@ export interface BarSpec extends SeriesBase, RowTooltip {
   dash?: Dash;
   /** From 0 to 1: the bars', fill and edges. */
   opacity?: number;
-  /** The bars' fill: a category field through the chart's "color" scale, or a color (see `encode.color`). */
+  /**
+   * The bars' fill: a category field (a bar series per value, unless
+   * `series` says otherwise), or a color (see `encode.color`).
+   */
   color?: string;
   /** Channels per bar: color, fill, stroke, strokeWidth, and opacity. */
   encode?: Pick<EncodingsSpec, "color" | "fill" | "stroke" | "strokeWidth" | "opacity">;
@@ -1363,6 +1380,12 @@ export type RugSpec = RugStyle &
 interface RugStyle extends SeriesBase, RowTooltip {
   type: "rug";
   series?: Field;
+  /**
+   * A category field naming the series, whose values color them (as
+   * `series` does, which must then name it too), or a color for every
+   * mark's lines, as `fill` sets it.
+   */
+  color?: string;
   /** Tick length in CSS pixels, finite and positive; default 8. */
   length?: number;
   stroke?: string;
@@ -1424,6 +1447,12 @@ export type ErrorBarSpec = ErrorBarStyle &
 interface ErrorBarStyle extends SeriesBase, RowTooltip {
   type: "errorbar";
   series?: Field;
+  /**
+   * A category field naming the series, whose values color them (as
+   * `series` does, which must then name it too), or a color for every
+   * mark's lines, as `stroke` sets it.
+   */
+  color?: string;
   /**
    * With `series` and category positions, the series side by side in each
    * band, as grouped bars are, so each interval stands on its bar.
@@ -1536,6 +1565,12 @@ export type BoxPlotInput = BoxPlotRawInput | BoxPlotPrecomputedInput;
 export type BoxPlotStyle = {
   /** Category field: a box per value in each category, side by side. */
   series?: Field;
+  /**
+   * A category field naming the series, whose values color them (as
+   * `series` does, which must then name it too), or a color for every
+   * shape, as `fill` sets it.
+   */
+  color?: string;
   /** Constant color for every shape; colors come from the palette otherwise. */
   fill?: string;
   /** Opacity of the boxes' fill; 0.25 by default. */
@@ -1563,6 +1598,12 @@ export interface BoxenSpec extends SeriesBase {
   y: Field;
   /** Category field: a box per value in each category, side by side. */
   series?: Field;
+  /**
+   * A category field naming the series, whose values color them (as
+   * `series` does, which must then name it too), or a color for every
+   * shape, as `fill` sets it.
+   */
+  color?: string;
   /**
    * How many letter values each side (levels of boxes) a group draws:
    * "tukey" (the default) leaves 5 to 8 values in each tail, "proportion"
@@ -1606,6 +1647,12 @@ export interface ViolinSpec extends SeriesBase {
   y: Field;
   /** Category field: a violin per value in each category, side by side. */
   series?: Field;
+  /**
+   * A category field naming the series, whose values color them (as
+   * `series` does, which must then name it too), or a color for every
+   * shape, as `fill` sets it.
+   */
+  color?: string;
   /** Two series share the category center: first left (below horizontally), second right (above). */
   split?: boolean;
   /** Inner box (default), dashed quartiles with a solid median, or no inner marks. */
@@ -1929,7 +1976,8 @@ interface GeoPointStyleSpec extends RowTooltip {
   /** Category field naming each point, for tooltips, keyboard reading, and the summary. */
   labelField?: Field;
   /** Category field: one colored set of points per value, with a legend. */
-  series?: Field;
+  /** A category field: a series per value; by default a category `color` field, and `false` for none. */
+  series?: Field | false;
   /** A number field colored on a continuous scale. */
   color?: Field;
   colors?: readonly string[] | string;
@@ -1972,6 +2020,12 @@ export type Histogram1DSpec = SeriesBase & {
   bins?: BinSpec;
   /** Category field: one histogram per value, overlaid, stacked, or dodged. */
   series?: Field;
+  /**
+   * A category field naming the series, whose values color them (as
+   * `series` does, which must then name it too), or a color for every
+   * shape, as `fill` sets it.
+   */
+  color?: string;
   /**
    * A number field each row counts as, in place of 1; rows whose weight is
    * missing or negative are not counted.
@@ -2043,7 +2097,11 @@ interface PointStyleSpec extends SeriesBase, RowTooltip {
   /** A number, time, or category field; a category field places points in its bands. */
   x: Field;
   y: Field;
-  series?: Field;
+  /**
+   * A category field: a series per value. By default a category `color`
+   * field; `false` for none, each point colored by its row's `color`.
+   */
+  series?: Field | false;
   /** Number, time, or category field matching points across resets when values animate. */
   animationKey?: Field;
   /** Outline color of every point; the chart's background with only `strokeWidth`. */
@@ -2053,7 +2111,10 @@ interface PointStyleSpec extends SeriesBase, RowTooltip {
   fill?: string;
   /** Opacity from 0 to 1, or a number field mapped from 0.15 to 1. */
   fillOpacity?: number | Field;
-  /** A number field colored on a continuous scale (see `colors`). */
+  /**
+   * A number or time field colored on a continuous scale (see `colors`),
+   * or a category field: its values' colors, and the series it names.
+   */
   color?: Field;
   /** Colors for `color`, low to high, or a scheme name such as "viridis". */
   colors?: readonly string[] | string;
@@ -2262,7 +2323,8 @@ export interface Point3DSpec extends RowTooltip {
   y: Field;
   z: Field;
   /** Category field: one colored set of points per value, with a legend. */
-  series?: Field;
+  /** A category field: a series per value; by default a category `color` field, and `false` for none. */
+  series?: Field | false;
   /** Category field naming each point, for tooltips and keyboard reading. */
   labelField?: Field;
   /** Radius in pixels; default 3.5. */

@@ -23,6 +23,7 @@ import {
 } from "../marks/mark.ts";
 import { type BandPlaces, rowOf, type Series } from "../marks/series.ts";
 import type { Rect } from "../scene/scene.ts";
+import { ChartError } from "../spec/errors.ts";
 import type { ChartSpec, InteractionSpec, ScaleScope, XAxisSpec } from "../spec/spec.ts";
 import type { AxisType } from "./axis.ts";
 import type { MarkSeries } from "./inspect.ts";
@@ -168,11 +169,13 @@ export function rowGap(grid: PanelGrid, panels: number, space: RowSpace): number
 const MIN_PANEL = 20;
 
 /** Refuses `panels` in rows of `columns` that do not fit `room`, saying what to do: `remedy`. */
-function tooSmall(panels: number, columns: number, room: PanelRoom, remedy: string): RangeError {
+function tooSmall(panels: number, columns: number, room: PanelRoom, remedy: string): ChartError {
   const rows = Math.ceil(panels / columns);
-  return new RangeError(
-    `chart size: ${panels} panels in ${rows} rows of ${columns} do not fit a ${room.width}×${room.height} chart; make it larger or ${remedy}`,
-  );
+  return new ChartError({
+    code: "layout-failed",
+    phase: "layout",
+    message: `chart size: ${panels} panels in ${rows} rows of ${columns} do not fit a ${room.width}×${room.height} chart; make it larger or ${remedy}`,
+  });
 }
 
 /**

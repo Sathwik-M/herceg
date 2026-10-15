@@ -351,9 +351,9 @@ describe("bindings", () => {
       marks: [line(data(), { x: "t", y: "v" })],
     });
     const twice = { gesture: { type: "pinch" }, action: { type: "zoom" } } as const;
-    expect(() => chart.update({ interaction: { bindings: [twice, twice] } })).toThrow(
-      "interaction.bindings[1]: duplicates binding 0; remove one or change its gesture",
-    );
+    expect(() =>
+      chart.update({ interaction: { bindings: [twice, twice] }, errorMode: "throw" }),
+    ).toThrow("interaction.bindings[1]: duplicates binding 0; remove one or change its gesture");
     // Its zoom is as it was.
     expect(wheel(chart, { deltaY: -100, ctrlKey: true }).defaultPrevented).toBe(true);
     expect(chart.getViewport().x).not.toBeNull();

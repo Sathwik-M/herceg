@@ -6,6 +6,7 @@ import type { Breaks } from "../lod/m4.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { Geometry, RectGeometry, SegmentGeometry } from "../scene/scene.ts";
 import type { CandlestickSpec, Clip, Frozen } from "../spec/spec.ts";
+import { refuseColor } from "./colored.ts";
 import { definedFields } from "./line.ts";
 import {
   type AxisFormat,
@@ -65,11 +66,6 @@ export interface CandlestickOptions<S extends Schema> {
   clip?: Clip;
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
-  /**
-   * Marks naming the same group share series by name: series of the same
-   * name share a color, one legend entry, and visibility.
-   */
-  legendGroup?: string;
   /** `false` leaves the mark out of the chart's legends. */
   legend?: false;
   /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
@@ -534,6 +530,7 @@ export function candlestick<S extends Schema>(
   table: Table<S>,
   options: CandlestickOptions<S>,
 ): ChartMark<Frozen<CandlestickSpec>> {
+  refuseColor(options, "candlestick");
   const spec: CandlestickSpec = {
     type: "candlestick",
     x: options.x,
@@ -547,7 +544,6 @@ export function candlestick<S extends Schema>(
       "rise",
       "fall",
       "label",
-      "legendGroup",
       "legend",
       "axis",
       "facet",

@@ -6,7 +6,7 @@ import { compileExpression, type Expression } from "../../src/data/expression.ts
 import { RowSet } from "../../src/data/row-set.ts";
 import { rowView } from "../../src/data/row-view.ts";
 import { type DataSelection, selectionStore, selectRows } from "../../src/data/selection.ts";
-import { type Table, table as typed } from "../../src/data/table.ts";
+import { type Table, type TableOptions, table as typed } from "../../src/data/table.ts";
 
 import { estimateText } from "../../src/layout/text.ts";
 import { area } from "../../src/marks/area.ts";
@@ -33,7 +33,7 @@ import type { AreaGeometry, PointGeometry, RectGeometry } from "../../src/scene/
 import { positionOf } from "../helpers/keyboard.ts";
 
 /** Tables as charts read them, whatever their fields. */
-const table = (columns: Record<string, ColumnInput>, options?: { maxRows?: number }): Table =>
+const table = (columns: Record<string, ColumnInput>, options?: TableOptions): Table =>
   typed(columns, options) as unknown as Table;
 
 function drawn(config: ChartConfig, width = 600, height = 400): ChartModel {
@@ -557,19 +557,12 @@ describe("lassos and clicks as rows", () => {
     });
     const m = at(dodged, "point", 1).coords;
     expect(Array.from(clickedRows(dodged, tables, m[0]!, m[1]!)!.rows)).toEqual([1]);
-    // A legend group's bar stands in the group's slot for its series.
-    const onlyM = table({ day: ["thu"], sex: ["m"], v: [3] });
+    // A bar of a table made from the points' rows stands in its value's slot.
+    const onlyM = table({ day: ["thu"], sex: ["m"], v: [3] }, { origin: tips });
     const grouped = drawn({
       marks: [
-        bar(onlyM, { x: "day", y: "v", series: "sex", legendGroup: "sex" }),
-        point(tips, {
-          x: "day",
-          y: "v",
-          series: "sex",
-          dodge: true,
-          legendGroup: "sex",
-          radius: 1,
-        }),
+        bar(onlyM, { x: "day", y: "v", series: "sex" }),
+        point(tips, { x: "day", y: "v", series: "sex", dodge: true, radius: 1 }),
       ],
     });
     const [x, y, w] = Array.from(at(grouped, "rect", 0).rects);

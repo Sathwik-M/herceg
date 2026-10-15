@@ -30,7 +30,7 @@ def columns(chart):
 
 
 def test_colors_by_column_go_through_the_charts_color_scale():
-    scale = hg.Scale(type="ordinal", map={"Average": "#222222"}, unknown="#999999")
+    scale = hg.OrdinalScale(map={"Average": "#222222"}, unknown="#999999")
     chart = hg.Chart(SITES, scales={"color": scale}).line(
         x="t", y="gain", series="site", color="site"
     )
@@ -40,19 +40,24 @@ def test_colors_by_column_go_through_the_charts_color_scale():
     }
     assert marks(chart)[0]["color"] == "site"
     assert 'stroke="#222222"' in chart.to_svg()
-    domain = hg.Scale(type="ordinal", domain=["Average", "A"])._spec()
+    domain = hg.OrdinalScale(domain=["Average", "A"])._spec()
     assert domain == {"type": "ordinal", "domain": ["Average", "A"]}
 
 
-def test_ordinal_scales_refuse_position_options_and_position_scales_refuse_maps():
-    with pytest.raises(ValueError, match="Scale nice: places values on an axis; drop it"):
-        hg.Scale(type="ordinal", nice=True)
-    with pytest.raises(TypeError, match="Scale domain: an ordinal scale's domain is"):
-        hg.Scale(type="ordinal", domain=[1, 2])
-    with pytest.raises(ValueError, match='Scale map: maps categories; give type="ordinal"'):
-        hg.Scale(map={"A": "#000"})
-    with pytest.raises(ValueError, match="Chart scales y: places values on an axis"):
-        hg.Chart(SITES, scales={"y": hg.Scale(type="ordinal")}).to_spec()
+def test_ordinal_scales_are_scales_of_categories_and_position_scales_place_values():
+    with pytest.raises(TypeError, match="unexpected keyword argument 'nice'"):
+        hg.OrdinalScale(nice=True)  # type: ignore[call-arg]
+    with pytest.raises(TypeError, match="OrdinalScale domain: a scale of categories' domain is"):
+        hg.OrdinalScale(domain=[1, 2])  # type: ignore[list-item]
+    with pytest.raises(TypeError, match="unexpected keyword argument 'map'"):
+        hg.Scale(map={"A": "#000"})  # type: ignore[call-arg]
+    with pytest.raises(hg.ChartError, match="Chart scales y: places values on an axis"):
+        hg.Chart(SITES, scales={"y": hg.OrdinalScale()}).to_spec()
+    with pytest.raises(hg.ChartError, match="Chart scales sites: expected an hg.OrdinalScale"):
+        hg.Chart(SITES, scales={"sites": hg.Scale()}).to_spec()
+    # A dict of a name other than a position's is an ordinal scale's options.
+    spec, _ = hg.Chart(SITES, scales={"sites": {"map": {"A": "#000000"}}}).to_spec()
+    assert spec["scales"]["sites"] == {"type": "ordinal", "map": {"A": "#000000"}}
 
 
 def test_channels_take_columns_constants_and_conditions():
@@ -62,7 +67,7 @@ def test_channels_take_columns_constants_and_conditions():
         dash={"field": "site", "scale": "dashes"},
     )
     chart = hg.Chart(
-        SITES, scales={"dashes": hg.Scale(type="ordinal", map={"Average": "--", "A": [4, 2]})}
+        SITES, scales={"dashes": hg.OrdinalScale(map={"Average": "--", "A": [4, 2]})}
     ).line(x="t", y="gain", series="site", encode=encode)
     assert marks(chart)[0]["encode"] == {
         "dash": {"field": "site", "scale": "dashes"},
@@ -77,10 +82,13 @@ def test_channels_take_columns_constants_and_conditions():
 
 
 def test_channels_are_checked_in_python_names():
-    with pytest.raises(ValueError, match="Channel: give field or value, one of them"):
+    with pytest.raises(hg.ChartError, match="Channel: give field, value, or series=True, one of"):
         hg.Channel()
-    with pytest.raises(ValueError, match="Channel scale: maps a column's values; give field"):
+    with pytest.raises(hg.ChartError, match="Channel scale: maps a column's values or the series'"):
         hg.Channel(value="#000", scale="color")
+    with pytest.raises(hg.ChartError, match="Channel series: names series through a scale"):
+        hg.Channel(series=True)
+    assert hg.Channel(series=True, scale="fit")._spec() == {"series": True, "scale": "fit"}
     with pytest.raises(TypeError, match="Encodings opacity: an expression gives a channel only"):
         hg.Encodings(opacity=hg.col("gain"))
     with pytest.raises(TypeError, match="Encodings color: a condition's then is a constant"):
@@ -197,13 +205,17 @@ def test_bars_group_unless_asked_to_overlap_and_take_outlines_and_label_objects(
         hg.BarLabels(place={"side": "top"})
 
 
-def test_bars_color_by_column_without_being_placed_apart():
+def test_bars_color_by_column_as_series_or_each_bar_with_series_false():
     sales = {"month": ["Jan", "Feb"], "v": [1.0, 3.0], "good": ["yes", "no"]}
-    chart = hg.Chart(sales, scales={"color": hg.Scale(type="ordinal", map={"no": "#c00000"})})
-    chart = chart.bar(x="month", y="v", color="good")
-    assert marks(chart)[0]["color"] == "good"
-    assert "good" in columns(chart)
-    assert "#c00000" in chart.to_svg()
+    chart = hg.Chart(sales, scales={"color": hg.OrdinalScale(map={"no": "#c00000"})})
+    grouped = chart.bar(x="month", y="v", color="good")
+    assert marks(grouped)[0]["color"] == "good"
+    assert "series" not in marks(grouped)[0]
+    assert "good" in columns(grouped)
+    assert "#c00000" in grouped.to_svg()
+    each = hg.Chart(sales).bar(x="month", y="v", color="good", series=False)
+    assert marks(each)[0]["series"] is False
+    assert "<path" in each.to_svg()
 
 
 def test_annotation_places_mix_values_fractions_pixels_and_offsets():

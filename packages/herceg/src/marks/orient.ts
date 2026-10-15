@@ -39,6 +39,7 @@ export function rolesOf(
   y: string | readonly string[],
   orient: unknown,
   series: string | undefined,
+  inferred = false,
 ): Roles {
   if (orient !== undefined && orient !== "x" && orient !== "y")
     throw new RangeError(`${type} orient: expected "x" or "y"; received ${JSON.stringify(orient)}`);
@@ -61,7 +62,7 @@ export function rolesOf(
   requireField(table, position, POSITION, `${type} ${along}`);
   const fields = typeof values === "string" ? [values] : values;
   for (const field of fields) requireField(table, field, NUMERIC, `${type} ${across}`);
-  requireSeriesFields(fields, series, `${type} ${across}`, true);
+  requireSeriesFields(fields, series, `${type} ${across}`, true, inferred);
   return {
     orient: along,
     position,

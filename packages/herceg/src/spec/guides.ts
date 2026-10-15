@@ -223,8 +223,6 @@ export interface LegendOptionsSpec {
   title?: LegendTitleSpec;
   /** Entries in place of those the chart's scales give. */
   entries?: readonly LegendEntrySpec[];
-  /** One entry for the series of several marks that show the same field's value. */
-  merge?: "semantic";
   /** Swatches that look like the marks: a dashed line for a dashed line, a symbol for points. */
   swatches?: "mark";
   style?: LegendStyles;

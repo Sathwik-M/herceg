@@ -16,16 +16,34 @@ const LEGEND_GAP = 16;
 export type LegendEntry = Omit<LegendItem, "hidden" | "x" | "y">;
 
 /**
- * The keys of series and items hidden through the legend and the
- * visibility methods. A series of a mark in a legend group is also hidden
- * while its group's entry for its name is: `groups` maps the keys of such
- * series to their entries' keys (see `legendKey`).
+ * The keys of series, items, and identities hidden through the legend and
+ * the visibility methods. A series or item is also hidden while what it
+ * stands for is: `groups` maps the keys of series and items to their
+ * identities' keys (see model/identity.ts).
  */
 export class HiddenKeys extends Set<string> {
   readonly groups = new Map<string, string>();
+  /** The keys `groups` mapped since the last scene was made (see `prune`). */
+  #joined = new Set<string>();
 
   override has(key: string): boolean {
     return super.has(key) || super.has(this.groups.get(key) ?? key);
+  }
+
+  /** Maps a series' or item's key to its identity's. */
+  join(key: string, identity: string): void {
+    this.groups.set(key, identity);
+    this.#joined.add(key);
+  }
+
+  /**
+   * Once a scene is made, lets go of the keys it mapped no more, as of
+   * series a rolling window left behind; keys mapped since the scene before
+   * stay, the identities the next scene's series start from.
+   */
+  prune(): void {
+    for (const key of this.groups.keys()) if (!this.#joined.has(key)) this.groups.delete(key);
+    this.#joined = new Set();
   }
 
   /** Scene-owned membership, including the series hidden by their group entries. */
@@ -84,6 +102,8 @@ export interface LegendContent {
   parts: readonly LegendPart[];
   /** Keys of hidden series. */
   hidden: ReadonlySet<string>;
+  /** Layout marks' entries, by key, whose looks swatches draw beside series' (`swatches: "mark"`). */
+  also?: readonly LegendEntry[] | undefined;
 }
 
 /**

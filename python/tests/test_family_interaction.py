@@ -90,7 +90,7 @@ def test_networks_drag_nodes_draw_directed_links_and_link_labels():
         ValueError, match="Chart drag: moves a network's nodes, and the chart has no graph"
     ):
         hg.Chart({"x": [1.0], "y": [2.0]}, drag=True).line("x", "y").to_spec()
-    with pytest.raises(TypeError, match="graph link_label_field: column 'n' holds number"):
+    with pytest.raises(hg.ChartError, match="graph link_label_field: column 'n' holds number"):
         hg.Chart({**TALKS, "n": [1.0, 2.0, 3.0]}).graph("from", "to", link_label_field="n")
     binding = hg.SelectionBinding("c")
     assert hg.Chart(TALKS, row_selection=binding).graph("from", "to").to_spec()[0]["rowSelection"]

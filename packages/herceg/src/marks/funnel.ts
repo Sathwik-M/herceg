@@ -17,6 +17,7 @@ import { contrastingText } from "../scale/color.ts";
 import type { Geometry, RectGeometry, ShapesGeometry, TextGeometry } from "../scene/scene.ts";
 import type { Frozen, FunnelSpec } from "../spec/spec.ts";
 import type { Halo } from "../spec/style.ts";
+import { refuseColor } from "./colored.ts";
 import {
   heldText,
   type LayoutFrame,
@@ -432,6 +433,7 @@ export function funnel<S extends Schema>(
   table: Table<S>,
   options: FunnelOptions<S>,
 ): ChartMark<Frozen<FunnelSpec>> {
+  refuseColor(options, "funnel");
   const spec: FunnelSpec = { type: "funnel", category: options.category };
   if (options.value !== undefined) spec.value = options.value;
   if (options.sort !== undefined) spec.sort = options.sort;

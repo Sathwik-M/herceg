@@ -284,6 +284,7 @@ export function boxen<S extends Schema>(
     y: options.y,
     ...definedFields(options, [
       "series",
+      "color",
       "depth",
       "outlierProportion",
       "trustAlpha",
@@ -292,7 +293,6 @@ export function boxen<S extends Schema>(
       "fill",
       "fillOpacity",
       "label",
-      "legendGroup",
       "legend",
       "axis",
       "facet",

@@ -3,6 +3,8 @@ import { segmentDrawing } from "../draw/segments.ts";
 import type { Breaks } from "../lod/m4.ts";
 import type { SegmentGeometry } from "../scene/scene.ts";
 import type { Clip, Frozen, RugSpec } from "../spec/spec.ts";
+import { colored } from "./colored.ts";
+import type { CssColor } from "./encoding.ts";
 import { definedFields } from "./line.ts";
 import {
   type AxisFormat,
@@ -15,6 +17,7 @@ import {
   type MARK,
   type Mark,
   type MarkKey,
+  type MarkSources,
   NUMERIC,
   type Palette,
   requireField,
@@ -27,17 +30,18 @@ import { unionExtent } from "./trace.ts";
 
 interface RugStyle<S extends Schema> {
   series?: CategoryField<S>;
+  /**
+   * A category field naming the series, whose values color them (as
+   * `series` does, which must then name it too), or a color for every
+   * mark's lines, as `stroke` sets it.
+   */
+  color?: CategoryField<S> | CssColor;
   /** Length into the plot, in CSS pixels. Default 8. */
   length?: number;
   stroke?: string;
   /** Width in CSS pixels. Default 1. */
   strokeWidth?: number;
   label?: string;
-  /**
-   * Marks naming the same group share series by name: series of the same
-   * name share a color, one legend entry, and visibility.
-   */
-  legendGroup?: string;
   /** `false` leaves the mark out of the chart's legends. */
   legend?: false;
   axis?: "left" | "right";
@@ -66,6 +70,7 @@ export class RugMark implements Mark<Frozen<RugSpec>> {
   declare readonly [MARK]: true;
   readonly spec: Frozen<RugSpec>;
   readonly table: Table;
+  readonly identity: MarkSources;
   readonly tooltip: "x" | "y";
   readonly #field: string;
   readonly #split: SeriesSplitter;
@@ -74,7 +79,7 @@ export class RugMark implements Mark<Frozen<RugSpec>> {
   readonly #positive = new WeakMap<Series, boolean>();
 
   constructor(input: RugSpec, table: Table) {
-    this.spec = frozen(input);
+    this.spec = frozen(colored(input, table, "stroke"));
     checkTooltip(table, this.spec.tooltip, "rug");
     this.table = table;
     const spec = this.spec;
@@ -101,6 +106,7 @@ export class RugMark implements Mark<Frozen<RugSpec>> {
     requireField(table, this.#field, NUMERIC, `rug ${this.tooltip}`);
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "rug series");
     this.#split = new SeriesSplitter(table, this.#field, [this.#field], spec.series, spec.label);
+    this.identity = { field: spec.series, values: [this.#field] };
   }
 
   channelKind(axis: "x" | "y") {
@@ -305,12 +311,12 @@ export function rug<S extends Schema>(
       "x",
       "y",
       "series",
+      "color",
       "length",
       "side",
       "stroke",
       "strokeWidth",
       "label",
-      "legendGroup",
       "legend",
       "axis",
       "facet",

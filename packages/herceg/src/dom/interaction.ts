@@ -70,6 +70,8 @@ export interface InteractionHost {
   scene(): Scene | undefined;
   /** Draws the overlay again on the next frame. */
   schedule(): void;
+  /** Tells of code the controller could not load, as the chart tells of what fails. */
+  report(error: unknown): void;
   /** Draws the scene again on the next frame. */
   invalidate(): void;
   /** Ends the frame without drawing the data: keeps the selection, then draws the overlay. */
@@ -293,6 +295,8 @@ export class Interaction {
     const options = host.options();
     this.#bindings = bindings;
     host.root.style.touchAction = this.#touchPolicy();
+    // Labels that failed to load are tried again.
+    if (this.#crosshair === null) this.#crosshair = undefined;
     if (typeof options.tooltip === "object" && options.tooltip.axisLabels) this.#loadCrosshair();
     if (options.renderTooltip || options.marks.some((mark) => mark.spec.tooltip))
       this.#loadContent();
@@ -1504,8 +1508,11 @@ export class Interaction {
         this.#host.root.append(labels.labels);
         return labels;
       })
-      // Without it, the crosshair has no labels.
-      .catch(() => null)
+      // Without it, the crosshair has no labels, until the options ask again.
+      .catch((error: unknown) => {
+        this.#host.report(error);
+        return null;
+      })
       .then((labels) => {
         this.#crosshair = labels;
         this.#crosshairLoading = undefined;
@@ -1528,7 +1535,7 @@ export class Interaction {
         this.#cleanup.push(ownContent(this.#tooltip, () => host.options().renderTooltip));
       })
       // Without it, tooltips show the built-in content, and inspections no fields.
-      .catch(() => {})
+      .catch((error: unknown) => this.#host.report(error))
       .then(() => {
         this.#content = undefined;
         // Inspections read the fields from the next frame on.

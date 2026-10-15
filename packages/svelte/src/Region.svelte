@@ -7,13 +7,15 @@
     type Schema,
     type Table,
   } from "herceg";
-  import { markAnchor, plain, type RegionProps } from "./marks.js";
+  import { built, markAnchor, plain, type RegionProps } from "./marks.js";
 
   let { data, ...options }: RegionProps<T> = $props();
   const mark = $derived(
-    data
-      ? region(data as unknown as Table, plain(options) as RegionDataOptions<Schema>)
-      : region(plain(options) as RegionOptions),
+    built(() =>
+      data
+        ? region(data as unknown as Table, plain(options) as RegionDataOptions<Schema>)
+        : region(plain(options) as RegionOptions),
+    ),
   );
   const anchor = markAnchor("Region", () => mark);
 </script>

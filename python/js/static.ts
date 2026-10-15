@@ -5,21 +5,31 @@
 import type { SvgSizing } from "herceg";
 import { type FontSource, prepareFonts } from "herceg/fonts";
 import type { PdfExportOptions } from "herceg/pdf";
-import { type ChartSpec, type PdfSpec, specToPDF, specToSnapshot, specToSVG } from "herceg/spec";
+import {
+  type ChartErrorInfo,
+  type ChartSpec,
+  chartError,
+  errorInfo,
+  type PdfSpec,
+  specToPDF,
+  specToSnapshot,
+  specToSVG,
+} from "herceg/spec";
 import { decodeBase64, encodeBase64 } from "./buffers.ts";
 import { rasterFont } from "./raster-font.ts";
 
 /**
  * Runs an export. What herceg refuses (a spec it does not accept, a font it
- * cannot embed) is returned as `{ error }`, which Python raises with
- * herceg's message: thrown, it would reach Python as V8's report, with a line
- * of this bundle's source in it.
+ * cannot embed) is returned as `{ error }`, its message, and `info`, the
+ * `ChartErrorInfo` Python raises as a `ChartError`: thrown, it would reach
+ * Python as V8's report, with a line of this bundle's source in it.
  */
-function exported(run: () => string): string | { error: string } {
+function exported(run: () => string): string | { error: string; info: ChartErrorInfo } {
   try {
     return run();
   } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) };
+    const info = errorInfo(chartError(error, "validate"));
+    return { error: info.message, info };
   }
 }
 
@@ -30,7 +40,7 @@ function exported(run: () => string): string | { error: string } {
     options = "[]",
     raster = false,
     sizing = "{}",
-  ): string | { error: string } {
+  ): string | { error: string; info: ChartErrorInfo } {
     return exported(() => {
       const sources = (JSON.parse(options) as (Omit<FontSource, "data"> & { data: string })[]).map(
         (font) => ({ ...font, data: decodeBase64(font.data) }),
@@ -75,7 +85,11 @@ function exported(run: () => string): string | { error: string } {
    * `options` hold its size, id prefix, locale, and zone, and its fonts as
    * base64.
    */
-  snapshot(spec: string, buffers: string[], options = "{}"): string | { error: string } {
+  snapshot(
+    spec: string,
+    buffers: string[],
+    options = "{}",
+  ): string | { error: string; info: ChartErrorInfo } {
     return exported(() => {
       const { fonts, ...settings } = JSON.parse(options) as {
         fonts?: (Omit<FontSource, "data"> & { data: string })[];
@@ -91,7 +105,11 @@ function exported(run: () => string): string | { error: string } {
       );
     });
   },
-  pdf(spec: string, buffers: string[] | string[][], options = "{}"): string | { error: string } {
+  pdf(
+    spec: string,
+    buffers: string[] | string[][],
+    options = "{}",
+  ): string | { error: string; info: ChartErrorInfo } {
     const supplied = JSON.parse(options) as Omit<PdfExportOptions, "fonts"> & {
       fonts?: (Omit<FontSource, "data"> & { data: string })[];
     };

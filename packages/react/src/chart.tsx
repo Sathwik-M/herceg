@@ -1,14 +1,17 @@
 import {
+  type ChartError,
   type ChartEvents,
   type ChartListener,
   type ChartMark,
   type ChartOptions,
   type ChartUpdate,
+  chartError,
   createChart,
   type Chart as HercegChart,
   type Hydration,
   type Inspection,
   type RenderTooltip,
+  showFailure,
   tablesOf,
   viewOf,
 } from "herceg";
@@ -30,7 +33,7 @@ import { createPortal } from "react-dom";
 import { markBuilder } from "./marks.tsx";
 
 /** Chart options as props: one left out, or `undefined`, takes its default. */
-export interface ChartProps extends Omit<ChartUpdate, "marks" | "renderTooltip"> {
+export interface ChartProps extends Omit<ChartUpdate, "marks" | "renderTooltip" | "onError"> {
   /**
    * The tooltip's content, rendered by React (with the application's
    * context) into the chart's own box, which keeps its placement, the
@@ -80,6 +83,13 @@ export interface ChartProps extends Omit<ChartUpdate, "marks" | "renderTooltip">
   onVisibility?: ChartListener<"visibility">;
   /** The chart drew a frame of its data: its panels and pixel mapping describe it, for overlays. */
   onRender?: ChartListener<"render">;
+  /**
+   * Something kept the chart from drawing: options or mark elements it
+   * refused, code it could not load, a frame that failed. With
+   * `errorMode="inline"` (the default) the chart also shows it in its
+   * place; with "throw", it is thrown in render, for an error boundary.
+   */
+  onError?: ((error: ChartError) => void) | undefined;
 }
 
 /**
@@ -93,15 +103,26 @@ function useChartEvent<K extends keyof ChartEvents>(
   handler: ChartListener<K> | undefined,
 ): RefObject<ChartListener<K> | undefined> {
   const latest = useRef(handler);
+  // The chart listened to, and what stops it: subscribed in the commit a
+  // handler comes, or a chart is made (once refused marks are fixed).
+  const subscribed = useRef<{ chart: HercegChart; stop: () => void } | null>(null);
   useLayoutEffect(() => {
     latest.current = handler;
+    const current = handler === undefined ? null : chart.current;
+    if (subscribed.current?.chart === current) return;
+    subscribed.current?.stop();
+    subscribed.current = current && {
+      chart: current,
+      stop: current.on(type, (event) => latest.current?.(event)),
+    };
   });
-  const present = handler !== undefined;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resubscribes only when a handler appears or goes
-  useLayoutEffect(() => {
-    if (!present || !chart.current) return;
-    return chart.current.on(type, (event) => latest.current?.(event));
-  }, [present]);
+  useLayoutEffect(
+    () => () => {
+      subscribed.current?.stop();
+      subscribed.current = null;
+    },
+    [],
+  );
   return latest;
 }
 
@@ -242,6 +263,52 @@ interface Applied {
 }
 
 /**
+ * What the chart reports of what keeps it from drawing: `report`, a stable
+ * `onError` for the chart (so the options compare equal across renders),
+ * calls the latest `onError` and with errorMode "throw" throws it in
+ * render; `show` says why mark elements were refused, over the chart (or
+ * in its place before there is one), until marks are built again.
+ */
+function useFailures(
+  onError: ((error: ChartError) => void) | undefined,
+  mode: ChartProps["errorMode"],
+  setThrown: (error: ChartError) => void,
+) {
+  const latest = useRef({ onError, mode });
+  useLayoutEffect(() => {
+    latest.current = { onError, mode };
+  });
+  const failure = useRef<{ element: HTMLElement; message: string } | null>(null);
+  return useMemo(() => {
+    const report = (error: ChartError) => {
+      latest.current.onError?.(error);
+      if (latest.current.mode === "throw") setThrown(error);
+    };
+    const show = (
+      refused: ChartError | undefined,
+      chart: HercegChart | null,
+      container: HTMLElement,
+      size: { width?: number | undefined; height?: number | undefined },
+    ) => {
+      const shown = failure.current;
+      if (shown && shown.message === refused?.message) return;
+      shown?.element.remove();
+      failure.current = null;
+      if (!refused) return;
+      const element = chart
+        ? showFailure(chart.root, refused, true)
+        : showFailure(container, refused, false, {
+            width: size.width ?? (container.getBoundingClientRect().width || 640),
+            height: size.height ?? (container.getBoundingClientRect().height || 320),
+          });
+      failure.current = { element, message: refused.message };
+      latest.current.onError?.(refused);
+    };
+    return { report, show };
+  }, [setThrown]);
+}
+
+/**
  * A herceg chart. Props are applied with `chart.update` when they change;
  * data changes made on a table (append, replace, reset) re-render the chart
  * directly, without re-rendering React.
@@ -271,6 +338,7 @@ export function Chart({
   onItemMove,
   onVisibility,
   onRender,
+  onError,
   renderTooltip,
   ...props
 }: ChartProps) {
@@ -288,16 +356,29 @@ export function Chart({
   const chart = useRef<HercegChart | null>(null);
   /** What the chart shows, to skip updates when a re-render changed nothing. */
   const applied = useRef<Applied | null>(null);
-  const marks = [...(markProp ?? []), ...marksFrom(children)];
+  // With errorMode "throw", what keeps the chart from drawing is thrown here,
+  // where an error boundary catches it, however late it came.
+  const [thrown, setThrown] = useState<ChartError | null>(null);
+  if (thrown) throw thrown;
+  const failing = useFailures(onError, props.errorMode, setThrown);
+  // Mark elements refused (an unknown field) leave the chart as it was, saying why.
+  let marks: ChartMark[] = applied.current?.marks.slice() ?? [];
+  let refused: ChartError | undefined;
+  try {
+    marks = [...(markProp ?? []), ...marksFrom(children)];
+  } catch (error) {
+    if (props.errorMode === "throw") throw error;
+    refused = chartError(error, "validate");
+  }
   const tooltip = useTooltip(renderTooltip);
-  const options: Options = tooltip.option ? { ...props, renderTooltip: tooltip.option } : props;
+  const shown: Options = { ...props, onError: failing.report };
+  const options: Options = tooltip.option ? { ...shown, renderTooltip: tooltip.option } : shown;
   // The tooltip's renderer is new when its version is: canonical JSON
   // compares functions by identity.
   const optionsKey = canonical(options);
 
-  // The chart is created once; later prop changes go through update().
-  // biome-ignore lint/correctness/useExhaustiveDependencies: created once on mount
-  useLayoutEffect(() => {
+  // The chart is created once its marks are; later prop changes go through update().
+  const create = () => {
     // Options given as undefined take their defaults, as if left out.
     const given = Object.entries(options).filter(([, value]) => value !== undefined);
     const config = { ...(Object.fromEntries(given) as Omit<ChartOptions, "marks">), marks };
@@ -309,11 +390,21 @@ export function Chart({
     hydrated.current = true;
     chart.current = created;
     applied.current = { marks, options, key: optionsKey };
+  };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: created on mount, destroyed on unmount
+  useLayoutEffect(() => {
+    if (!refused) create();
     return () => {
-      created.destroy();
+      chart.current?.destroy();
       chart.current = null;
+      applied.current = null;
     };
   }, []);
+  // Marks refused at mount, fixed: the chart is made now, before the ref and
+  // handlers below follow it (and parents' layout effects see it).
+  useLayoutEffect(() => {
+    if (!refused && !chart.current) create();
+  });
 
   useChartEvent(chart, "viewport", onViewport);
   useChartEvent(chart, "edge", onEdge);
@@ -327,17 +418,23 @@ export function Chart({
   useChartEvent(chart, "visibility", onVisibility);
   const render = useChartEvent(chart, "render", onRender);
 
-  useImperativeHandle<HercegChart | null, HercegChart | null>(ref, () => chart.current, []);
+  // Each commit: the chart may be made in this one's layout effects, above.
+  useImperativeHandle<HercegChart | null, HercegChart | null>(ref, () => chart.current);
 
   // The chart drew its first frame as it was created, before handlers
-  // subscribed: `onRender` hears of it once the ref is set.
+  // subscribed: `onRender` hears of it once the ref is set, once per chart.
+  const told = useRef<HercegChart | null>(null);
   useLayoutEffect(() => {
-    if (chart.current) render.current?.({});
-  }, [render]);
+    if (!chart.current || told.current === chart.current) return;
+    told.current = chart.current;
+    render.current?.({});
+  });
 
   // A layout effect, so parents' layout effects and refs see the new props;
   // after the handlers' own, so events an update emits reach the latest.
   useLayoutEffect(() => {
+    failing.show(refused, chart.current, container.current!, props);
+    if (refused) return;
     const last = applied.current;
     if (!chart.current || !last) return;
     // Unchanged marks keep their identity, so their caches survive.

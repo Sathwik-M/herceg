@@ -19,7 +19,7 @@ import type { FaceGeometry, Scene, TextGeometry } from "../../src/scene/scene.ts
 import { LIGHT } from "../../src/theme.ts";
 import { View } from "../../src/three/camera.ts";
 import { FaceIndex } from "../../src/three/faces.ts";
-import { keysOf, legendOf, rampsOf } from "../helpers/guides.ts";
+import { legendOf, rampsOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig, width = 500, height = 400) {
   const model = new ChartModel({ locale: "en-US", ...config });
@@ -178,7 +178,7 @@ describe("3D scatter", () => {
     ).toBe(6);
   });
 
-  it("colors by a category field with a color key", () => {
+  it("colors by a category field as its series, and refuses coloring points row by row", () => {
     const { scene, model } = build({
       marks: [point3d(clusters, { x: "x", y: "y", z: "z", color: "group" })],
     });
@@ -187,16 +187,12 @@ describe("3D scatter", () => {
       Array.from(mark.style.subarray(0, mark.count), (s) => mark.styles[s]!.fill),
     );
     expect(fills).toEqual(new Set(LIGHT.palette.slice(0, 3)));
-    expect(keysOf(scene)[0]!.entries.map((e) => [e.label.text, e.fill])).toEqual([
-      ["a", LIGHT.palette[0]],
-      ["b", LIGHT.palette[1]],
-      ["c", LIGHT.palette[2]],
-    ]);
+    expect(legendOf(scene).map(({ label }) => label)).toEqual(["a", "b", "c"]);
     const first = model.inspectItem(model.stepItem(undefined, 1)!) as ItemInspection;
-    expect(first.points[0]).toMatchObject({
-      text: "x 0, y 5, z 0, group a",
-      color: LIGHT.palette[0],
-    });
+    expect(first.points[0]).toMatchObject({ color: LIGHT.palette[0] });
+    expect(() =>
+      point3d(clusters, { x: "x", y: "y", z: "z", color: "group", series: false }),
+    ).toThrow('point3d color: "group" holds categories, which color 3D points by series');
   });
 
   it("labels time axes as times", () => {

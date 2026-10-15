@@ -32,11 +32,13 @@ export type CssColor =
 
 /**
  * A channel: a category field's values through a scale (`scale` names one of
- * the chart's `scales`; colors take "color" by default), a constant, or a
- * condition on each row.
+ * the chart's `scales`; colors take "color" by default), the series' names
+ * through a scale (`{ series: true, scale }`, which joins marks' series by
+ * name: a line and its band), a constant, or a condition on each row.
  */
 export type Channel<V, S extends Schema> =
   | { field: CategoryField<S>; scale?: string }
+  | { series: true; scale: string }
   | { value: V }
   | { condition: { when: Condition; then: V; otherwise: V } };
 

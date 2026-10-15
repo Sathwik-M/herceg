@@ -7,11 +7,13 @@ import type { MeasureText } from "../layout/text.ts";
 import type { Breaks } from "../lod/m4.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { CompiledFeatures } from "../model/features.ts";
+import { keyPrefix } from "../model/identity.ts";
 import type { MarkSeries } from "../model/inspect.ts";
 import type { LegendPart } from "../model/legend.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
 import type { Geometry, Rect } from "../scene/scene.ts";
+import { ChartError } from "../spec/errors.ts";
 import type { Clip, Frozen, MarkTooltipSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import {
@@ -57,50 +59,31 @@ export function keyOwner(key: string): MarkKey | undefined {
 }
 
 /**
- * The key of a legend group's entry for series named `label`: series of
- * marks sharing a `legendGroup` that have the same name share a color, one
- * legend entry, and visibility under this key. A JSON object without a
- * `mark`, so it names no mark and no series key can equal it.
+ * Whether an existing series, item, or identity key still belongs to the
+ * chart: a key of a mark it still has (`owners`), or an identity key whose
+ * scope one of its marks still draws (`scopes`, their prefixes, see
+ * model/identity.ts).
  */
-export function legendKey(group: string, label: string): string {
-  return JSON.stringify({ legendGroup: group, label });
-}
-
-/** The legend group a legend entry's key (see `legendKey`) names; undefined for other keys. */
-export function legendGroupOf(key: string): string | undefined {
-  if (!key.startsWith('{"legendGroup":')) return undefined;
-  return (JSON.parse(key) as { legendGroup: string }).legendGroup;
-}
-
-/** Whether an existing series, item, or group key still belongs to the chart's marks. */
 export function keepsKey(
   key: string,
   owners: ReadonlySet<MarkKey>,
-  groups: ReadonlySet<string | undefined>,
+  scopes: ReadonlySet<string>,
 ): boolean {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(key);
-  } catch (error) {
-    // Group keys use the strict parser that visibility previously used.
-    if (key.startsWith('{"legendGroup":')) throw error;
-    return false;
-  }
-  const owner = Array.isArray(parsed) ? parsed[0] : (parsed as { mark?: unknown } | null)?.mark;
-  if (typeof owner === "string" || typeof owner === "number") return owners.has(owner);
-  return (
-    key.startsWith('{"legendGroup":') && groups.has((parsed as { legendGroup: string }).legendGroup)
-  );
+  const prefix = keyPrefix(key);
+  if (prefix !== undefined) return scopes.has(prefix);
+  const owner = keyOwner(key);
+  return owner !== undefined && owners.has(owner);
 }
 
 /**
- * Color for a series key. A chart assigns each key a palette slot the first
- * time it appears and keeps it, so colors follow series, not their order.
- * Marks pass the series' `label` too, by which marks sharing a legend group
- * share colors. An explicit `color` still registers the series but takes
- * no palette slot.
+ * Color for a series key. A chart assigns each series' identity (see
+ * model/identity.ts) a palette slot the first time it appears and keeps it,
+ * so colors follow what series stand for, not their order. Marks pass the
+ * series' `label` too; the feature compiler, the identity key a series
+ * stands for where it names one (`entry`). An explicit `color` still
+ * registers the series but takes no palette slot.
  */
-export type Palette = (seriesKey: string, label?: string, color?: string) => string;
+export type Palette = (seriesKey: string, label?: string, color?: string, entry?: string) => string;
 
 /** The band axes' bands, in index order. */
 export interface Bands {
@@ -169,12 +152,7 @@ export interface Frame {
   /** Locale for numbers the mark formats as text; undefined uses the runtime's. */
   locale: string | undefined;
   hidden: ReadonlySet<string>;
-  /**
-   * Each legend group's visible series names, in the order of the chart's
-   * marks: marks of a group place their series side by side by these (dodge).
-   */
-  groups?: ReadonlyMap<string, readonly string[]> | undefined;
-  /** Scene-owned series before panel splits; dodging marks prepare group rosters on demand. */
+  /** Scene-owned series before panel splits, from which dodging marks make partitions' rosters. */
   groupSeries?: readonly [series: readonly MarkSeries[], hidden: ReadonlySet<string>] | undefined;
   /** The chart drawing this frame, for caches that count each chart's redraws. */
   owner: object;
@@ -289,12 +267,16 @@ export interface MarkIdentity {
   readonly panel?: string | undefined;
   /** What the mark's drawing is cut to; data to the plot, labels and text not at all, when absent. */
   readonly clip?: Clip | undefined;
-  /** Series of marks in the same legend group share colors, legend entries, and visibility by name. */
-  readonly legendGroup?: string | undefined;
   /** `false` leaves the mark out of the chart's legends. */
   readonly legend?: false | undefined;
   /** What tooltips show of the rows of marks whose points are rows, besides their values. */
   readonly tooltip?: Frozen<MarkTooltipSpec> | undefined;
+}
+
+/** What a mark's series stand for (see `Mark.identity`). */
+export interface MarkSources {
+  readonly field?: string | undefined;
+  readonly values: readonly string[];
 }
 
 /**
@@ -348,6 +330,14 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
    * channels, styles by value, markers, continuity.
    */
   readonly featured?: boolean;
+  /**
+   * What the mark's series stand for, for their colors and legend entries
+   * (see model/identity.ts): the values of the category field splitting
+   * its rows into series (`field`), or without one, the value fields its
+   * series read (`values`), by the series' names. Undefined for marks
+   * whose series stand for neither (contours, heatmaps, annotations).
+   */
+  readonly identity?: MarkSources | undefined;
   /**
    * Pixels the mark's glyphs reach past their data position along each
    * axis, such as a point's radius. Automatic domains leave this much room
@@ -650,13 +640,16 @@ export function requireField(
   kinds: readonly FieldKind[],
   role: string,
 ): void {
+  const path = role.slice(role.lastIndexOf(" ") + 1);
   if (!table.has(field)) {
-    throw new Error(
-      `${role}: no field "${field}"; the table has ${table
+    throw new ChartError({
+      code: "unknown-field",
+      path,
+      message: `${role}: no field "${field}"; the table has ${table
         .fields()
         .map((f) => `"${f}"`)
         .join(", ")}`,
-    );
+    });
   }
   const kind = table.kind(field);
   if (!kinds.includes(kind)) {
@@ -671,9 +664,11 @@ export function requireField(
           : kind === "category" && kinds.includes("number")
             ? "; give numbers, not strings"
             : "";
-    throw new TypeError(
-      `${role}: field "${field}" holds ${kind} values; expected ${kinds.join(" or ")}${fix}`,
-    );
+    throw new ChartError({
+      code: "field-type",
+      path,
+      message: `${role}: field "${field}" holds ${kind} values; expected ${kinds.join(" or ")}${fix}`,
+    });
   }
 }
 
@@ -692,15 +687,65 @@ export interface SeriesSource {
   stream?: SeriesStream | undefined;
 }
 
-/** Checks whether fields identify separate series or values within one grouped series. */
+/**
+ * The field splitting a line's, area's, or bar's rows into series: its
+ * `series`, or without one the category field its color names (`color`, or
+ * `encode.color`'s field), so that `color: "region"` draws a series per
+ * region. None with `series: false`, or where the mark's own paint (`paint`:
+ * a line's stroke, an area's or bar's fill) overrides the color.
+ */
+export function seriesOf(
+  spec: {
+    readonly series?: string | false | undefined;
+    readonly color?: string | undefined;
+    readonly stroke?: string | undefined;
+    readonly fill?: string | undefined;
+    readonly encode?: Readonly<Record<string, unknown>> | undefined;
+  },
+  table: Table,
+  paint: "stroke" | "fill",
+): string | undefined {
+  if (spec.series !== undefined) return spec.series === false ? undefined : spec.series;
+  if (spec[paint] !== undefined || spec.encode?.[paint] !== undefined) return undefined;
+  const field = (spec.encode?.color as { field?: string } | undefined)?.field ?? spec.color;
+  return field !== undefined && table.has(field) && table.kind(field) === "category"
+    ? field
+    : undefined;
+}
+
+/**
+ * A mark's `color` where it draws it itself: a color, not the field its
+ * series are split by (whose values the chart colors).
+ */
+export function ownColor(color: string | undefined, table: Table): string | undefined {
+  return color === undefined || table.has(color) ? undefined : color;
+}
+
+/**
+ * Checks whether fields identify separate series or values within one
+ * grouped series; `inferred` says the series field came from the color.
+ */
 export function requireSeriesFields(
   fields: readonly string[],
   series: string | undefined,
   role = "y",
   correction = false,
+  inferred = false,
 ): void {
-  if (series !== undefined && fields.length > 1)
-    throw new Error(`${role}: several fields or a series field, not both; drop one`);
+  if (series !== undefined && fields.length > 1) {
+    // Placed at the option that splits series, which the correction changes.
+    const space = role.lastIndexOf(" ");
+    const path = inferred ? "color" : "series";
+    throw new ChartError({
+      code: "series-with-values",
+      path,
+      message: `${role.slice(0, space + 1)}${path}: several ${role.slice(space + 1)} fields${
+        inferred
+          ? `, and series by "${series}" from color; give one field per mark, or series: false`
+          : " or a series field, not both; drop one"
+      }`,
+    });
+  }
   const repeated = fields.find((field, i) => fields.indexOf(field) !== i);
   if (repeated !== undefined)
     throw new Error(

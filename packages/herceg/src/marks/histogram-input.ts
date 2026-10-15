@@ -4,6 +4,7 @@
 /** Options of bars that 2D histograms, whose cells count pairs, have no use for. */
 const BARS_ONLY = [
   "series",
+  "color",
   "stack",
   "dodge",
   "cumulative",
@@ -11,7 +12,6 @@ const BARS_ONLY = [
   "commonNorm",
   "fill",
   "fillOpacity",
-  "legendGroup",
 ] as const;
 
 /** Options of 2D histograms' color scale. */
