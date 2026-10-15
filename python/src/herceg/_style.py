@@ -548,32 +548,3 @@ def title_text(title: Any) -> str | None:
     if isinstance(title, Mapping):
         return title.get("text")
     return str(title.text)
-
-
-@dataclass
-class Legend:
-    """The series legend: where it goes (``place``, an ``hg.Place``; above the
-    plots by default) and how it looks (``style``, an ``hg.Style`` of its
-    ``legend_label``, ``legend_title``, and ``tick_label`` roles). Giving one
-    shows the legend, also for a single series."""
-
-    place: Place | Mapping[str, Any] | None = None
-    style: Style | Mapping[str, Any] | None = None
-
-    def __post_init__(self) -> None:
-        self.place = _built(self.place, Place, "Legend place")
-        self.style = _built(self.style, Style, "Legend style")
-
-    def _spec(self) -> dict[str, Any]:
-        spec = {
-            "place": _spec(self.place),
-            "style": style_spec(self.style, "Legend style", LEGEND_ROLES),
-        }
-        return {key: value for key, value in spec.items() if value is not None}
-
-
-def legend_spec(legend: Any) -> Any:
-    """A chart's legend as the spec takes it: a boolean, or an object."""
-    if legend is None or isinstance(legend, bool):
-        return legend
-    return _built(legend, Legend, "Chart legend")._spec()

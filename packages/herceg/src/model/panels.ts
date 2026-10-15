@@ -4,11 +4,12 @@
 // in the chart's one list of marks, so their identity, colors, and legend
 // state do not depend on the panel they draw in.
 
+import type { AxisOptions, PanelOptions } from "../guides/options.ts";
 import { type Align, aligned } from "../layout/place.ts";
 import type { LayoutMark } from "../marks/layout-mark.ts";
 import type { BandContext, Bands, Mark } from "../marks/mark.ts";
 import type { Rect } from "../scene/scene.ts";
-import type { AxisSpec, GridSpec, PanelSpec, ScaleScope } from "../spec/spec.ts";
+import type { GridSpec, ScaleScope } from "../spec/spec.ts";
 import type { AxisType } from "./axis.ts";
 import type { MarkSeries } from "./inspect.ts";
 import {
@@ -47,6 +48,18 @@ import { titleText } from "./titles.ts";
 /** The `panel` that draws a mark in every panel. */
 export const EVERY_PANEL = "*";
 
+/** Ids of functions in settings, so that settings compare them by identity. */
+const functionIds = new WeakMap<object, number>();
+let lastFunctionId = 0;
+function functionId(value: object): number {
+  let id = functionIds.get(value);
+  if (id === undefined) {
+    id = ++lastFunctionId;
+    functionIds.set(value, id);
+  }
+  return id;
+}
+
 /**
  * Subplots for a chart's `panels` option: panels in rows of `columns` (1 by
  * default), in order, each drawing the marks whose `panel` names it, and
@@ -70,7 +83,7 @@ export const EVERY_PANEL = "*";
  * });
  * ```
  */
-export function panels(list: readonly PanelSpec[], grid: GridSpec = {}): Panels {
+export function panels(list: readonly PanelOptions[], grid: GridSpec = {}): Panels {
   return new Panels(list, grid);
 }
 
@@ -85,7 +98,7 @@ export class Panels implements PanelLayout {
     return columnGap(labeled, right, columns, room, title);
   }
 
-  readonly list: readonly PanelSpec[];
+  readonly list: readonly PanelOptions[];
   readonly columns: number;
   readonly rowHeights: readonly number[] | undefined;
   readonly columnWidths: readonly number[] | undefined;
@@ -101,7 +114,7 @@ export class Panels implements PanelLayout {
     return "set the grid's columns";
   }
 
-  constructor(list: readonly PanelSpec[], grid: GridSpec = {}) {
+  constructor(list: readonly PanelOptions[], grid: GridSpec = {}) {
     if (list.length === 0) throw new RangeError("panels: expected at least one panel");
     const ids = new Set<string>();
     for (const [i, { id }] of list.entries()) {
@@ -251,7 +264,7 @@ export class Panels implements PanelLayout {
     axis: PanelAxis,
     marks: readonly Mark[],
     scope: ScaleScope,
-    chart: AxisSpec | undefined,
+    chart: AxisOptions | undefined,
     held: ReadonlyMap<string, string>,
   ): void {
     if (scope === "panel") return;
@@ -269,16 +282,11 @@ export class Panels implements PanelLayout {
       const drawn = inPanel.filter((mark) => onAxis(mark, axis));
       const type = spec?.type ?? (x ? undefined : typeOf(drawn, "y"));
       const { domain, zero, nice, ticks, format, tooltipFormat } = spec ?? {};
-      const policy = JSON.stringify([
-        type,
-        domain,
-        zero,
-        nice,
-        ticks,
-        format,
-        tooltipFormat,
-        x && spec?.title,
-      ]);
+      const policy = JSON.stringify(
+        [type, domain, zero, nice, ticks, format, tooltipFormat, x && spec?.title],
+        // Tick generators and formatters agree when they are the same function.
+        (_, value) => (typeof value === "function" ? `function ${functionId(value)}` : value),
+      );
       const seen = first.get(groupOf(i));
       if (seen === undefined) first.set(groupOf(i), policy);
       else if (seen !== policy)
@@ -368,7 +376,11 @@ export class Panels implements PanelLayout {
   }
 
   /** The chart's `x`, `y`, or `yRight`, with the panel's own settings in place of its. */
-  panelAxis(axis: PanelAxis, index: number, chart: AxisSpec | undefined): AxisSpec | undefined {
+  panelAxis(
+    axis: PanelAxis,
+    index: number,
+    chart: AxisOptions | undefined,
+  ): AxisOptions | undefined {
     const own = this.list[index]?.[axis];
     return own ? { ...chart, ...own } : chart;
   }
@@ -398,7 +410,7 @@ export class Panels implements PanelLayout {
     split: PanelSplit,
     columns: number,
     axis: PanelAxis,
-    chart: AxisSpec | undefined,
+    chart: AxisOptions | undefined,
   ): ScaleGroups {
     const found = groups(scope, split, columns, axis);
     return typedGroups(found, axis, (g) => this.panelAxis(axis, found.first[g]!, chart), panelOf);

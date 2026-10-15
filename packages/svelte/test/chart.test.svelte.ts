@@ -23,6 +23,7 @@ import Annotations from "./Annotations.svelte";
 import Dendrograms from "./Dendrograms.svelte";
 import Faulty from "./Faulty.svelte";
 import Fields from "./Fields.svelte";
+import Formats from "./Formats.svelte";
 import Gauges from "./Gauges.svelte";
 import Lines from "./Lines.svelte";
 import Lollipops from "./Lollipops.svelte";
@@ -600,6 +601,25 @@ describe("<Chart>", () => {
 
   it("rejects mark components outside a chart", () => {
     expect(() => render(Stray, {})).toThrow(/inside a <Chart>/);
+  });
+});
+
+describe("<Chart> options that are functions", () => {
+  it("take a new tick format function as a change, and the same one as none", async () => {
+    const stars = (value: number) => `${value}*`;
+    const props = $state({ data: metrics, format: stars, chart: null as HercegChart | null });
+    render(Formats, props);
+    await props.chart!.loading;
+    expect(host.textContent).toContain("4*");
+    const updates = spyUpdates(props.chart!);
+    props.format = stars;
+    flushSync();
+    expect(updates).toHaveLength(0);
+    props.format = (value: number) => `${value}!`;
+    flushSync();
+    await frame();
+    expect(updates).toHaveLength(1);
+    expect(host.textContent).toContain("4!");
   });
 });
 

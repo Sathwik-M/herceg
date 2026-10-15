@@ -25,7 +25,10 @@ One name per concept, used the same way in code and docs.
 | **Orient** | The axis a line or area runs along (`orient`, "x" or "y"): the axis of its positions, which it is traced, reduced, and read along; its values are on the other. Bars lie along y when their positions are a category y, histograms when they bin `y`. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Break** | A span of time a time axis leaves out (nights, weekends, holidays): the axis measures the time it shows, and data inside a break is not drawn. |
-| **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
+| **Axis** | The visual guide of a position scale. In specs, a scale's short form (`x`, `y`, `yRight`) holds its scale and axis options in one object; `scales` holds scale options alone. |
+| **Guide** | What explains a scale beside the data: an axis, a legend, or a colorbar. The automatic guides follow the short forms; `guides` lists more, each naming the scale it explains. |
+| **Tick layer** | One set of an axis' ticks: "major" (its ticks) and those its `layers` add, such as day boundaries under hourly ticks, each with its tick marks, label row, and styles. |
+| **Colorbar** | A guide drawing a continuous color scale's colors along its values, with ticks, beside or below the plots. |
 | **Viewport** | What a chart shows when zoomed: `{ x, y, yRight }`, the visible x range (one per x scale when panels have x scales of their own) and the left and right y axes' ranges; null for an axis that is not zoomed, which shows its configured domain or its data. A map's are ranges of its projection's plane; a network's are ranges of its layout, with y increasing downwards. |
 | **Drill root** | The node a treemap or sunburst is drilled into, whose subtree it lays out (`getDrillRoot`, chart state that clicks, keys, and `setDrillRoot` change, shared by facet panels and each subplot's own); null for the whole tree. |
 | **Controls** | What a chart of a 3D, map, tree, or network mark loads to turn, pan and zoom, drill, or move nodes by pointer, keyboard, and toolbar (`dom/controls.ts`). |
@@ -3777,8 +3780,9 @@ draw no stray grid lines.
 
 Guides are positioned scene items (`scene/scene.ts`): `AxisGuide`,
 `TitleGuide`, `HeaderGuide` (panel titles and facet headers),
-`LegendGuide` (series entries), `RampGuide`, and `KeyGuide`, each with a key
-and `items` of five kinds: text (`TextItem`: point, anchor, baseline, turn,
+`LegendGuide` (series entries), `RampGuide`, `KeyGuide`, `ColorbarGuide`,
+and `CaptionGuide` (a legend's title and its entries that toggle nothing),
+each with a key and `items` of five kinds: text (`TextItem`: point, anchor, baseline, turn,
 paint, and resolved halo and box), segments (one stroke of straight lines),
 shapes (SVG path data about a point), rectangles, and ramps (a gradient
 with explicit stop offsets). Every renderer draws the items as they are:
@@ -3786,7 +3790,8 @@ SVG markup (`render/svg.ts`, `itemsMarkup`, writing only attributes that
 differ from what the document's root sets), PDF (`render/pdf.ts`,
 `paintItems`), and the live SVG layer; none computes a position, gap, or
 label placement. A ramp guide carries its ramp's SVG markup
-(`rampMarkup`, from `marks/legend-parts.ts`), so charts without color
+(`rampMarkup`, from `marks/legend-parts.ts`), and a colorbar its own (a
+ramp up the bar when the item is `vertical`), so charts without color
 ramps do not carry it. Text in a box is placed by its box: the box's edge
 (or middle) goes where the text's own would go without one, and the text
 moves inside the box by its padding, in its own turn (`layout/text.ts`),
@@ -3802,7 +3807,8 @@ paints) and ticks beside its items, and `axisItems`
 (`model/axis-guide.ts`) turns a placement and ticks into items: an x axis
 below its plot with its line and tick marks, y axes beside it with their
 labels; value transitions call it with ticks planned between two
-scenes, so a guide holds data, never a closure. The HTML legend reads the
+scenes, so a guide holds data, never a closure; axes the guide compiler
+drew carry `layers` and are left as they are. The HTML legend reads the
 legend guide's entries, label paint, and halo, and draws buttons there:
 a label with a box has it in one element and its text, at the paint's
 opacity and with its halo, in another, so the box stays opaque as static
@@ -3843,11 +3849,188 @@ rows, x tick labels and axis titles below the plots, y axis titles beside
 them, and panel headers; y labels keep their measured width and box. Axis
 room, tick planning, and the margins' widening for labels at the plot's
 ends follow, as monotonic passes bounded by a quarter of the chart's width
-(see Small multiples for grids). Requests come only from the chart's title
-and legend so far; a mark that labels outside its plot (a rule's label
-beside the axis) would add a request on its side, measured from its
-labels, and take its track's start as where to draw them. Tracks are the
-chart's; tracks beside one panel of several are not planned yet.
+(see Small multiples for grids). Requests come from the chart's title and
+its legends and colorbars, each a track of its own in the order the
+legends are listed (the automatic legend first); axes the guides list take
+their room through the axes hooks (see Scales and guides). A mark that
+labels outside its plot (a rule's label beside the axis) would add a
+request on its side, measured from its labels, and take its track's start
+as where to draw them. Tracks are the chart's; tracks beside one panel of
+several are not planned yet, so a side place with `scope: "panel"` is
+refused.
+
+## Scales and guides
+
+The chart's `scales` and `guides` are the general form of its position
+scales and the guides explaining them; `x`, `y`, `yRight`, and `legend` are
+their short forms. The model merges `scales` into the short forms before it
+checks or reads a configuration, so `scales: { x: { scope: "panel" } }` and
+`x: { scope: "panel" }` are one chart. What only charts asking for more
+than the automatic guides need is the **guide compiler** (`guides/`), which
+loads with the charts that use it: `needsGuides` (`model/guides.ts`, in
+every chart's bundle) says whether a configuration asks for it (ticks other
+than a number, formats other than Intl options, `scales`, `guides`, legend
+settings beyond `place` and `style`). A live chart imports it before
+drawing such a configuration: its first frame waits (nothing is drawn, and
+exports refuse with "await chart.loading"), an update keeps the last frame
+and its hit-testing until the frame planned with the compiler is drawn, and
+`chart.loading` settles with that frame on screen, or rejects when the
+import fails (a later update imports again; browsers that keep a failed
+module's result, as Chrome does, reject it until the page reloads). Once
+it is here the model checks the configuration again as the compiler reads
+it and resolves its styles again in the page (`useGuides`). `renderToSVG`,
+PDF, the spec loader, and the Python bundle import the compiler statically
+and pass it to the model, which compiles whenever it has it (`ChartModel`
+takes it as its third argument). No global registry decides what is
+loaded.
+
+The compiler imports only types from the chart's modules: a module both it
+and the chart's first chunk imported would move out of that chunk into one
+of its own (esbuild's code splitting), which compresses worse. What it uses
+of the chart's code it is handed, `GUIDE_KIT` (formatters, zone and calendar
+arithmetic, `planAxis`, text layout, stroke keys, insets, `measureLegends`);
+`test/architecture.test.ts` enforces this. Guides' own styles go over the
+paints the model resolved, their colors and fonts read as the chart's other
+styles are (`ChartStyles.read`, CSS variables from the page; `guides` are
+among the style sources whose page readings a change of the page compares).
+
+`compile(config)` (`CompiledGuides`) gives the model:
+
+- `config`, the configuration as the model reads it: each scale's listed
+  axis on its default side (x below, y left, yRight right) folded into its
+  short form, or the automatic axis hidden (`show: false`) when the scale's
+  axes are all elsewhere, its ticks, format, and grid then the first listed
+  axis', so that grid lines follow it. The model then plans that axis as it
+  always has.
+- `context(context, scale)`: an axis context with `plan` and `formatValue`
+  (`model/axis.ts`) where its settings ask for more than a count and Intl
+  options; contexts hold counts only, so the model's own planning never
+  sees the other forms. `planAxis` hands ticks and labels to `plan`;
+  tooltips, the keyboard, and crosshair labels write values with
+  `formatValue`.
+- `axes` (`CompiledAxes`), when guides list axes: `across` (pixels above the
+  plots, and below the default x labels for more rows, turned labels, and
+  longer ticks), `beside` (pixels beside the plots, once y is planned:
+  ticks and other layers' wider labels on y axes, y axes on the right),
+  `ends` (where each panel's x labels, every layer's below and above the
+  plot, begin and end as drawn, for the margins and the gaps between
+  columns), `fits`, and `panel` (each panel's axes: the default ones
+  redrawn with their layers, and axes on other sides added). They read the
+  scene through `AxesState`: the paints, which panels label each scale and
+  which draw along y, and a provisional x plan over a column's share of the
+  chart's width, so room for turned labels is kept before x is planned.
+  Once x is planned, before any mark's geometry, `fits` measures the axes
+  with each panel's own plan; where they need more (a steeper turn in a
+  narrower plot), the room grows for scenes of that width, as margins do,
+  and the model lays the scene out again, once.
+- `legends`, when legend settings or guides ask for more than the automatic
+  legend: the chart's legends and colorbars, measured from the chart's
+  whole roster of entries and parts, each with its place (`PlacedLegend`),
+  which `#furniture` stacks into tracks or places inside plots, and
+  `notes`, sentences for entries that explain rather than toggle.
+
+**Ticks** (`guides/ticks.ts`) are a count, `{ every }` (a number from an
+anchor; calendar steps in the scale's zone, at the same places whatever the
+view: seconds within the minute, hours within the day, days within the
+month, weeks from a Monday, months within the year; or elapsed
+milliseconds), `{ values }`, or a JavaScript function of the axis' domain,
+length, and automatic count. Steps closer than two pixels give way to
+coarser ones on the same boundaries (every n-th number; a multiple of a
+calendar step that divides the larger unit, or the larger unit's starts),
+generated directly, so work follows the ticks drawn, not the domain's
+length in steps; values inside breaks are dropped. Labels come from Intl
+options, a pattern (`format/patterns.ts`: a d3-format subset for numbers,
+strftime for times, both in the locale and the scale's zone, compiled
+once), or a function. Automatic ticks with a format that cannot tell them
+apart ask for fewer ticks, then drop duplicates, as the default time axes
+do; explicit ticks and function formats keep every tick and blank a label
+repeating the one before it, unless the axis' `labels.duplicates` is
+"show". Log axes refuse steps; category axes refuse planned ticks and
+formats. Subplots sharing a scale agree on its functions by identity.
+
+**Listed axes** (`guides/axes.ts`) resolve each axis against its short
+form: the axis on a scale's default side is the scale's own; others are
+"elsewhere" (x on top, y on the right; one axis per side, yRight only on
+the right, an x axis on top only without panel headers, and a y axis on
+the right, beside each row's last panel, only where a row's panels share
+y). Each axis has layers, "major" first (its own ticks, planned by the
+model for the axis on the default side, by the axis' own planner
+elsewhere) and those listed, each about its own count of ticks or the
+axis', with tick marks (`out`, `in`, or `cross`), labels (row, rotation,
+collision policy, priority, duplicates; rows, turns, staggers, and wraps
+on x axes only), and role styles over the axis'. Items are drawn as the
+default axes draw them (lines on pixel centers, x labels hanging from the
+gap, y labels from the line as given): tick marks of one look in one
+stroke, each position once, as long as the longest there; labels in rows
+outward, a layer of higher priority leaving out the labels of its row it
+would meet; "hide" keeps every n-th label for the least n at which
+neighbors do not meet (side by side on x, lines one above the other on y),
+"stagger" alternates two lanes, "wrap" breaks labels at spaces into up to
+three lines, and rotation candidates take the first angle at which
+neighbors do not overlap (boxes compared along and across the labels'
+direction). Labels along y stay inside the chart's height, where the
+plot's ends leave no room for a layer's taller ones, and are compared
+where they are drawn. Axes the compiler draws carry `AxisGuide.layers`; a change of
+values that moves their scale is shown at once, since their layers are
+planned with the scene.
+
+**Legends** (`guides/legends.ts`) are the automatic legend (the short form's
+settings) and the legends `guides` lists, each showing the scales it names
+(`ScaleRef`: the `id` of a mark along axes and its channel, "series",
+"color", "size", or "symbol") or all of them; listed legends claim their
+scales, colorbars theirs, and the automatic legend shows the rest. Marks
+with the same scale share one part (a ramp, a key), which any of them
+names. Only the automatic legend leaves out a chart of one series, as the
+default one does; `legend: false` turns it off, not the legends listed. An
+automatic legend without layout settings is measured as the default one
+(`measureLegends`); others lay out a title, then their entries in a grid
+(`columns` or `rows`, filled by row or by column) or in rows flowing as the
+default's, then their parts. `merge: "semantic"` lists once the series that
+show the same value of the same `series` field (or have the same name)
+across marks and panels, toggling them together; it does not recolor them.
+`swatches: "mark"` draws each entry's swatch from its mark's settings: a
+line of its width and dash, a box of an area's or bar's fill at its
+opacity, a point's symbol (its legend glyph); several looks under one entry
+draw together. Custom `entries` show a swatch (a line, a box, a circle, or
+several) or a mark's sample, and toggle the marks they target; entries that
+toggle nothing are drawn (`CaptionGuide`, with the legend's title) rather
+than made buttons, and described. A `LegendItem` that stands for several
+series has `targets`, which the HTML legend toggles together (shown hidden
+when all are hidden), and a `sample`, items about its left middle, which it
+draws in a small SVG, redrawn when the sample changes; each legend guide is
+a set of buttons of its own label style.
+
+**Colorbars** (`guides/colorbars.ts`) draw the part of a color scale its
+mark gives legends (`LegendPart.colorbar`: a ramp with its stops' offsets,
+or a contour's band levels and colors), found by `scale` or as the chart's
+only one. Their ticks are an axis' along the bar's outer edge, planned over
+the scale's domain and inside it (a contour's at its levels by default),
+with the axes' layers, tick marks, and label policies (`resolveLayers`,
+`layered`, and `drawn` from `guides/axes.ts`). Beside the plots a colorbar
+stands, low values at the bottom (`RampItem.vertical`); above or below them
+it lies. A `ColorbarGuide` carries its ramp's SVG markup, as a ramp legend
+does; PDF draws the same gradient along the item's axis.
+
+Where these extend:
+
+- **Marks and encodings.** Named color, size, symbol, and dash scales would
+  go in `scales` beside the position scales, and `ScaleRef` would take
+  their names as well as `{ mark, channel }`; colorbars and legends would
+  then read the scale's own domain and mapping. A mark could give
+  `legendSwatch(series, theme)` (a `SwatchSpec`) for `swatches: "mark"`,
+  replacing the compiler's derivation from mark types (`sampleOf`).
+  `SwatchSpec` has no named symbols: drawing them in the compiler needs
+  `draw/symbols.ts`, which the chunk rule keeps out of it (a symbols module
+  without imports from the chart's other modules would do). Layout marks'
+  scales are not named by legends and colorbars (they refuse a reference to
+  one). `legendGroup` stays while dodging reads legend rosters;
+  `merge: "semantic"` shares visibility, not colors. A log color scale needs
+  its transform in `SequentialScale` and the colorbar's tick scale.
+- **Runtime and SSR.** Snapshots render synchronously and so import the
+  compiler as static output does; hydrating a configuration that needs it
+  must not draw before it has it. Adapters compare options with functions
+  by identity (`canonical`), so a new tick or format function updates the
+  chart and the same one does not.
 
 ## Positions
 
@@ -3985,8 +4168,12 @@ bring their code (as `timeBreaks` does) would make TypeScript differ from
 specs and Python. Renderers draw one kind of guide, positioned items, for
 every chart, rather than a second, smaller path for unstyled ones.
 
-What a chart reaches only through an object it is given loads only with
-it: font parsing, page registration, and PDF embedding with
+What only some charts ask for loads only with them: the guide compiler
+(tick steps and values, pattern formatters, tick layers, axes on other
+sides, legends with layouts, merges, and custom entries, colorbars) with
+the first chart whose options need it, while what decides that and the
+hooks the model calls stay in every chart. What a chart reaches only
+through an object it is given loads only with it: font parsing, page registration, and PDF embedding with
 `herceg/fonts`; the SVG of color ramps with the marks whose legends have
 them; scale scopes, and the errors that name subplots' panels, with the
 panel layout; panels, PDF, and grid code as before.
@@ -4871,7 +5058,16 @@ mouse input, through Playwright's mouse.
   regions and points only.
 - One x axis per panel and at most two y axes per chart; category values
   and marks placed along y (horizontal bars and error bars) only on the
-  left.
+  left. Guides draw at most one axis per side, an x axis on top only
+  without panel headers, a y axis on the right only where each row's
+  panels share y, and rows, turned labels, staggers, and wraps on x axes
+  only; category axes label the categories that fit, with no tick steps,
+  values, or formats. Legends and colorbars stand in the chart's tracks,
+  not beside one panel of several, and name marks along axes, not layout
+  marks; colorbars show linear scales (no log color scale); custom
+  swatches are lines, boxes, and circles. Tick layers draw tick marks and
+  labels, not grid lines of their own. A change of values that moves an
+  axis the guides list is shown at once, not animated.
 - Breaks only on time x axes, the same for every panel (a panel's own `x`
   cannot change them). Histograms count values inside breaks (their bins
   span them), custom marks draw what their `draw` draws, annotations inside

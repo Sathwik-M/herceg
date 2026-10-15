@@ -20,6 +20,7 @@ import type { DrillRoot } from "../marks/tree-data.ts";
 import { planAxis } from "../model/axis.ts";
 import { axisGuide } from "../model/axis-guide.ts";
 import { describeChart } from "../model/describe.ts";
+import { GUIDE_KIT, type GuideCompiler, needsGuides } from "../model/guides.ts";
 import {
   type ChartConfig,
   ChartModel,
@@ -40,6 +41,7 @@ import type { PositionScale } from "../scale/scale.ts";
 import {
   type CloudPainter,
   type FaceGeometry,
+  guidesOf,
   type PlotRect,
   type PointGeometry,
   type Scene,
@@ -111,6 +113,10 @@ const DEFAULT_HEIGHT = 320;
 
 let nextId = 0;
 
+/** The guide compiler, once a chart on the page has loaded it (see model/guides.ts). */
+let guideCompiler: GuideCompiler | undefined;
+let guidesImport: Promise<GuideCompiler> | undefined;
+
 /**
  * What a scene leaves to the GPU painter: large point series ("points"), a
  * large 3D chart ("3d", which needs the 3D painter), or nothing.
@@ -161,6 +167,10 @@ export class MountedChart implements Chart, ExportsScene {
   /** Whether `#clouds` draws 3D charts' clouds too (render/webgl3d.ts loaded). */
   #clouds3d = false;
   #cloudsLoading: Promise<void> | undefined;
+  /** Whether the model has the guide compiler, and its loading while the configuration waits for it. */
+  #guided = !!guideCompiler;
+  #guidesLoading: Promise<void> | undefined;
+  #guidesFailed = false;
   /** The fonts measured with, as the page uses them, how, and their faces' loading while pending. */
   #fonts: Fonts | undefined;
   #page: PageFonts | undefined;
@@ -275,7 +285,7 @@ export class MountedChart implements Chart, ExportsScene {
     const document = container.ownerDocument;
     this.#container = container;
     this.#options = options;
-    this.#model = readPage(container, (page) => new ChartModel(options, page));
+    this.#model = readPage(container, (page) => new ChartModel(options, page, guideCompiler));
 
     this.root = document.createElement("div");
     this.root.style.cssText = "position:relative;overflow:hidden;outline-offset:2px";
@@ -294,8 +304,11 @@ export class MountedChart implements Chart, ExportsScene {
     });
     this.#brushLayer = svgElement(document, "g");
     this.#svg.overlay.append(this.#brushLayer, ...this.#crosshairs, this.#dots, this.#outline);
-    this.#legend = new Legend(document, (key) =>
-      this.setVisibility(key, this.#model.hidden.has(key)),
+    this.#legend = new Legend(document, (keys) =>
+      this.setVisibility(
+        keys,
+        [keys].flat().every((key) => this.#model.hidden.has(key)),
+      ),
     );
     this.#tooltip = new Tooltip(document);
     this.#description = document.createElement("div");
@@ -332,6 +345,7 @@ export class MountedChart implements Chart, ExportsScene {
       this.#useFonts(options.fonts);
       this.#listen();
       this.#applyOptions();
+      this.#loadGuides();
       this.#cleanup.push(observeVisibility(this.root, (visible) => this.#setVisible(visible)));
       this.#cleanup.push(() => this.#leaveSync?.());
       if (typeof ResizeObserver !== "undefined") {
@@ -375,6 +389,7 @@ export class MountedChart implements Chart, ExportsScene {
     this.#pageChanged = false;
     this.#settle();
     this.#applyOptions();
+    this.#loadGuides();
     this.#invalidate();
     // Hidden keys go with their marks' identities: their ids, or their
     // indexes, which other marks may take; a legend group's entries, with
@@ -550,6 +565,7 @@ export class MountedChart implements Chart, ExportsScene {
 
   get loading(): Promise<void> | undefined {
     const pending = [
+      this.#guidesLoading,
       this.#fontsLoading,
       this.#cloudsLoading,
       this.#animationLoading,
@@ -750,6 +766,8 @@ export class MountedChart implements Chart, ExportsScene {
     // An export shows the latest state at the container's current size: what
     // is pending is drawn first, and no frame is drawn when nothing is, so
     // render listeners may export.
+    if (this.#guidesLoading)
+      throw new Error("chart: the guide compiler has not loaded; await chart.loading");
     this.#remember();
     this.#settle();
     const { width, height } = this.#size();
@@ -793,7 +811,8 @@ export class MountedChart implements Chart, ExportsScene {
 
   /** Draws pending changes, the page's theme among them; whether there were any. */
   #drawPending(): boolean {
-    if (this.#destroyed) return false;
+    // A configuration waiting for the guide compiler keeps the last frame, or none.
+    if (this.#destroyed || this.#guidesLoading) return false;
     if (this.#pageChanged) {
       this.#pageChanged = false;
       if (readPage(this.#container, (page) => this.#model.refreshTheme(page))) {
@@ -913,6 +932,47 @@ export class MountedChart implements Chart, ExportsScene {
     // A chart scrolled away shows the view asked for when it returns.
     if (!visible) this.#settle();
     if (visible && (this.#dirty || this.#pageChanged)) schedule(this.#scheduled);
+  }
+
+  /**
+   * Loads the guide compiler when the configuration waits for it, and
+   * draws once it is here: `loading` settles with that frame on screen,
+   * or rejects when the compiler cannot load, and the chart draws nothing
+   * more until it does or the configuration no longer needs it.
+   */
+  #loadGuides(): void {
+    if (this.#guided) return;
+    if (!needsGuides(this.#options)) {
+      this.#guidesLoading = undefined;
+      return;
+    }
+    if (this.#guidesLoading && !this.#guidesFailed) return;
+    this.#guidesFailed = false;
+    guidesImport ??= import("../guides/compile.ts").then(
+      (module) => (guideCompiler = module.guideCompiler(GUIDE_KIT)),
+    );
+    this.#guidesLoading = guidesImport.then(
+      (guides) => {
+        try {
+          readPage(this.#container, (page) => this.#model.useGuides(guides, page));
+        } catch (error) {
+          // The compiler refuses the configuration: nothing is drawn until an update.
+          this.#guidesFailed = true;
+          throw error;
+        }
+        this.#guidesLoading = undefined;
+        this.#guided = true;
+        this.#invalidate();
+        this.#flush();
+      },
+      (error: unknown) => {
+        // A later update imports again, though browsers that keep a failed
+        // module's result (Chrome does) reject it until the page reloads.
+        guidesImport = undefined;
+        this.#guidesFailed = true;
+        throw error;
+      },
+    );
   }
 
   /**
@@ -1159,7 +1219,7 @@ export class MountedChart implements Chart, ExportsScene {
     // Uploads this chart no longer draws are released.
     this.#clouds?.endFrame(this);
     this.#svg.render(scene, { marks: !this.#onCanvas });
-    this.#legend.update(scene.guides.find((guide) => guide.kind === "legend"));
+    this.#legend.update(guidesOf(scene, "legend"), scene.theme);
     this.#model.items?.drawControls(scene);
     this.#drawTime = performance.now() - started;
     this.#describe();

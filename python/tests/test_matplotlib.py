@@ -91,14 +91,14 @@ def test_unavailable_equivalents_point_to_help(surface, mark, foreign):
 @pytest.mark.parametrize("axis", ["x", "y"])
 def test_matplotlib_axis_limits_use_the_callers_axis_names(axis):
     for function, name, hint in [
-        (hg.line, "line", f"did you mean {axis}_axis=hg.Axis(domain=...)?"),
-        (hg.Chart, "Chart", f"did you mean {axis}=hg.Axis(domain=...)?"),
+        (hg.line, "line", f"did you mean {axis}_axis=hg.AxisOptions(domain=...)?"),
+        (hg.Chart, "Chart", f"did you mean {axis}=hg.AxisOptions(domain=...)?"),
         (
             hg.Chart(DATA).line,
             "line",
-            f"set the chart's domain with hg.Chart({axis}=hg.Axis(domain=...))",
+            f"set the chart's domain with hg.Chart({axis}=hg.AxisOptions(domain=...))",
         ),
-        (hx.histplot, "histplot", f"did you mean {axis}_axis=hg.Axis(domain=...)?"),
+        (hx.histplot, "histplot", f"did you mean {axis}_axis=hg.AxisOptions(domain=...)?"),
     ]:
         with pytest.raises(TypeError) as error:
             function(data=DATA, x="x", y="y", **{f"{axis}lim": (0, 1)})

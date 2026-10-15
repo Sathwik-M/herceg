@@ -26,7 +26,8 @@ The chart's text alternative describes its overview and current x range,
 and its control of every panel's x when there are several.
 
 `<Chart>` accepts every chart option as a prop (`title`, `x`, `y`, `legend`,
-`padding`, `tooltip`, `interaction`, `renderer`, `theme`, `fonts`, `width`, `height`, ...). Its
+`scales`, `guides`, `padding`, `tooltip`, `interaction`, `renderer`, `theme`,
+`fonts`, `width`, `height`, ...). Its
 slot holds mark components: `<Line>`, `<Area>`, `<Bar>`, `<Point>`,
 `<Heatmap>`, `<Contour>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`,
 `<BoxPlot>`, `<Boxen>`, `<Violin>`, `<Treemap>`, `<Sunburst>`, `<Gauge>`, `<Funnel>`,
@@ -218,7 +219,9 @@ methods such as `appendRow` fail when called on the proxy.
 Props are the whole configuration: removing a prop restores its default.
 They are compared on each render of the chart, and when neither the options
 nor any mark's spec or table changed, the chart is left alone, so inline
-option objects are fine. Arrays and objects are copied as the chart reads
+option objects are fine. Functions in options (tick generators, formatters)
+are compared by identity: a function made anew on each render updates the
+chart, so define it once in `<script setup>`. Arrays and objects are copied as the chart reads
 them, so changing reactive state in place (`fields.push("p99")`) updates the
 chart as replacing it would. Changes are applied once Vue has patched the
 DOM, before the parent's `onUpdated` hooks run. Invalid props, such as a

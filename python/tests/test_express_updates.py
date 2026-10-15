@@ -76,7 +76,7 @@ def test_a_drawn_seed_is_kept_and_options_are_copied_when_the_call_is_made():
     assert spec(again)["theme"]["tokens"]["palette"] == ["#111111", "#222222"]
     same_tables(again, first)
     # Option objects too: a jitter's seed, an axis' title.
-    jitter, axis = hg.Jitter(width=0.2, seed=7), hg.Axis(title="Tip")
+    jitter, axis = hg.Jitter(width=0.2, seed=7), hg.AxisOptions(title="Tip")
     strip = hx.stripplot(DATA, x="day", y="tip", jitter=jitter, y_axis=axis)
     jitter.width, jitter.seed, axis.title = 0.8, 99, "Changed"
     again = spec(hx.recompute(strip, DATA))

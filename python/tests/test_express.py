@@ -1270,7 +1270,7 @@ def test_pointplot_pads_its_lines_with_the_categories_of_their_panels_axis():
     shared = joined()
     assert len(shared) == 16 and int(np.isnan(shared).sum()) == 10
     # Panels' own x axes hold their own days, where m's lines still break.
-    independent = joined(x_axis=hg.Axis(scope="panel"))
+    independent = joined(x_axis=hg.AxisOptions(scope="panel"))
     assert len(independent) == 8 and int(np.isnan(independent).sum()) == 2
 
 
@@ -1312,13 +1312,13 @@ def test_swarm_warning_reads_the_value_axis_as_the_chart_draws_it():
     spread = {"g": np.repeat(["a"], 150), "v": np.geomspace(1, 1e12, 150)}
     with pytest.warns(UserWarning, match="g 'a'"):
         hx.swarmplot(spread, x="g", y="v")
-    quiet(data=spread, x="g", y="v", y_axis=hg.Axis(type="log"))
+    quiet(data=spread, x="g", y="v", y_axis=hg.AxisOptions(type="log"))
     # A fixed domain far wider than the values crowds them.
     rng = np.random.default_rng(5)
     normal = {"g": np.repeat(["a"], 200), "v": rng.normal(0, 1, 200)}
     quiet(data=normal, x="g", y="v")
     with pytest.warns(UserWarning, match="g 'a'"):
-        hx.swarmplot(normal, x="g", y="v", y_axis=hg.Axis(domain=(-1000, 1000)))
+        hx.swarmplot(normal, x="g", y="v", y_axis=hg.AxisOptions(domain=(-1000, 1000)))
     # Panels of a value axis of their own lay their swarms out on it.
     panels = {
         "g": np.repeat(["a"], 200),
@@ -1327,14 +1327,21 @@ def test_swarm_warning_reads_the_value_axis_as_the_chart_draws_it():
     }
     with pytest.warns(UserWarning, match="g 'a'"):
         hx.swarmplot(panels, x="g", y="v", facet_column="p")
-    quiet(data=panels, x="g", y="v", facet_column="p", y_axis=hg.Axis(scope="panel"))
+    quiet(data=panels, x="g", y="v", facet_column="p", y_axis=hg.AxisOptions(scope="panel"))
     # Panels of a band axis of their own hold only their own categories, in wider bands.
-    level = hg.Axis(domain=(-1, 1))
+    level = hg.AxisOptions(domain=(-1, 1))
     bands = {"g": np.repeat(["a", "b"], 25), "p": np.repeat(["P1", "P2"], 25), "v": np.zeros(50)}
     with pytest.warns(UserWarning) as warned:
         hx.swarmplot(bands, x="g", y="v", facet_column="p", y_axis=level)
     assert ["g 'a' (p 'P1')" in str(w.message) for w in warned] == [True, False]
-    quiet(data=bands, x="g", y="v", facet_column="p", y_axis=level, x_axis=hg.Axis(scope="panel"))
+    quiet(
+        data=bands,
+        x="g",
+        y="v",
+        facet_column="p",
+        y_axis=level,
+        x_axis=hg.AxisOptions(scope="panel"),
+    )
     # Band axes hold every category of their rows, drawn or not, and no other.
     logged = {
         "g": ["a"] * 25 + ["b", "c"],
@@ -1347,8 +1354,8 @@ def test_swarm_warning_reads_the_value_axis_as_the_chart_draws_it():
             x="g",
             y="v",
             facet_column="p",
-            x_axis=hg.Axis(scope="panel"),
-            y_axis=hg.Axis(type="log", domain=(0.1, 10)),
+            x_axis=hg.AxisOptions(scope="panel"),
+            y_axis=hg.AxisOptions(type="log", domain=(0.1, 10)),
         )
     alone = {"g": ["a"] * 50, "s": ["A"] * 50, "v": np.zeros(50)}
     quiet(data=alone, x="g", y="v", order=["a", "b"], y_axis=level)
@@ -1359,7 +1366,7 @@ def test_swarm_warning_reads_the_value_axis_as_the_chart_draws_it():
         data={"g": ["a"] * 200, "v": np.full(200, 1000.0)},
         x="g",
         y="v",
-        y_axis=hg.Axis(domain=(0, 1)),
+        y_axis=hg.AxisOptions(domain=(0, 1)),
     )
 
 

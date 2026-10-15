@@ -21,7 +21,7 @@ from typing import Any, Literal, TypeVar
 
 import numpy as np
 
-from .._chart import Axis, Chart, _chart_of, helper
+from .._chart import AxisOptions, Chart, _chart_of, helper
 from .._data import Column, Table, listed, shown
 from .._rows import SelectionBinding
 from .._style import Theme, Tokens
@@ -152,7 +152,7 @@ def express(function: _F) -> _F:
 
 def _copied(value: Any) -> Any:
     """`value` with its lists, tuples, sets, dicts, arrays, and option
-    objects (``hg.Axis``, ``hg.Jitter``, ...) copied, so the caller changing
+    objects (``hg.AxisOptions``, ``hg.Jitter``, ...) copied, so the caller changing
     one later (a palette list, an axis title) leaves the call as it was;
     functions, and the table a ``SelectionBinding`` names, are the same
     objects."""
@@ -820,7 +820,7 @@ def axis_defaults(settings: dict[str, Any], axis: str, **defaults: Any) -> None:
     ``defaults`` its caller's own axis leaves unset."""
     given = settings.get(axis)
     if given is None:
-        settings[axis] = Axis(**defaults)
+        settings[axis] = AxisOptions(**defaults)
     elif isinstance(given, Mapping):
         settings[axis] = {**defaults, **{k: v for k, v in given.items() if v is not None}}
     else:
@@ -858,7 +858,7 @@ def make_chart(
         )
     for axis, label in (("x_axis", x_label), ("y_axis", y_label)):
         if label is not None and settings.get(axis) is None:
-            settings[axis] = Axis(title=label)
+            settings[axis] = AxisOptions(title=label)
     given = settings.get("description")
     settings["description"] = f"{given} {sentence}".strip() if given else sentence.strip()
     return _chart_of(data, settings)  # type: ignore[arg-type]

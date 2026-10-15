@@ -293,6 +293,7 @@ export function boxen<S extends Schema>(
       "fillOpacity",
       "label",
       "legendGroup",
+      "legend",
       "axis",
       "facet",
       "panel",

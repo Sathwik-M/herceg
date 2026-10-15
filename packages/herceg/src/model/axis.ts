@@ -6,6 +6,7 @@ import {
   timeTickLabels,
 } from "../format/format.ts";
 import type { TimeZone } from "../format/zone.ts";
+import type { AxisOptions } from "../guides/options.ts";
 import type { Breaks } from "../lod/m4.ts";
 import {
   BandScale,
@@ -17,7 +18,7 @@ import {
 } from "../scale/scale.ts";
 import { type CalendarScale, niceTimeDomain, TimeScale } from "../scale/time.ts";
 import type { Rect, SegmentGeometry } from "../scene/scene.ts";
-import type { AxisSpec, XAxisSpec } from "../spec/spec.ts";
+import type { XAxisSpec } from "../spec/spec.ts";
 
 export type AxisType = "linear" | "log" | "time" | "band";
 
@@ -37,11 +38,21 @@ export interface AxisPlan {
 
 export interface AxisContext {
   type: AxisType;
-  spec: AxisSpec | undefined;
+  spec: AxisOptions | undefined;
   zone: TimeZone;
   locale: string | undefined;
   /** Time a time axis leaves out, resolved in `zone` (scale/breaks.ts). */
   breaks?: AxisBreaks | undefined;
+  /**
+   * The ticks and labels of `ticker` (the scale over the domain ticks are
+   * chosen in) for about `count` ticks, for axes whose ticks or format the
+   * guide compiler plans (forms other than a count and Intl options).
+   */
+  plan?:
+    | ((ticker: PositionScale, count: number) => { ticks: number[]; labels: string[] })
+    | undefined;
+  /** How one value is written, where the guide compiler writes them. */
+  formatValue?: Formatter | undefined;
 }
 
 /** A time axis' breaks as axes use them; implemented by scale/breaks.ts. */
@@ -178,6 +189,7 @@ export function planAxis(
 ): AxisPlan {
   const scale = createScale(context, domain, range);
   const ticker = within === domain ? scale : createScale(context, within, range);
+  if (context.plan) return { scale, ...context.plan(ticker, count), within, context, count };
   const format = context.spec?.format;
   let ticks = ticker.ticks(count);
   let labels: string[];
@@ -232,6 +244,7 @@ export function shiftPlan(plan: AxisPlan, context: AxisContext, offset: number):
 
 /** Formatter for single values on this axis, as shown in tooltips. */
 export function valueFormatter(context: AxisContext, fallback: Formatter): Formatter {
+  if (context.formatValue) return context.formatValue;
   const format = context.spec?.tooltipFormat ?? context.spec?.format;
   if (!format) return fallback;
   return context.type === "time"

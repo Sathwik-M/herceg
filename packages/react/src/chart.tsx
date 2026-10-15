@@ -112,13 +112,31 @@ function marksFrom(children: ReactNode, out: ChartMark[] = []): ChartMark[] {
   return out;
 }
 
-/** JSON with object keys sorted, so equal settings written in any order compare equal. */
+/**
+ * Ids of the functions options hold (tick generators, formatters), so that
+ * a new function compares as a change and the same one as none.
+ */
+const functionIds = new WeakMap<object, number>();
+let functions = 0;
+
+/**
+ * JSON with object keys sorted, so equal settings written in any order
+ * compare equal, and functions by identity.
+ */
 function canonical(value: unknown): string {
-  return JSON.stringify(value, (_, v: unknown) =>
-    v && typeof v === "object" && !Array.isArray(v)
+  return JSON.stringify(value, (_, v: unknown) => {
+    if (typeof v === "function") {
+      let id = functionIds.get(v);
+      if (id === undefined) {
+        id = ++functions;
+        functionIds.set(v, id);
+      }
+      return `function ${id}`;
+    }
+    return v && typeof v === "object" && !Array.isArray(v)
       ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
-      : v,
-  );
+      : v;
+  });
 }
 
 /**
@@ -250,8 +268,9 @@ export function Chart({
   const marks = [...(markProp ?? []), ...marksFrom(children)];
   const tooltip = useTooltip(renderTooltip);
   const options: Options = tooltip.option ? { ...props, renderTooltip: tooltip.option } : props;
-  // The tooltip's renderer is a function, which canonical JSON leaves out.
-  const optionsKey = `${canonical(options)}${tooltip.option ? ` rendered tooltip ${tooltip.version}` : ""}`;
+  // The tooltip's renderer is new when its version is: canonical JSON
+  // compares functions by identity.
+  const optionsKey = canonical(options);
 
   // The chart is created once; later prop changes go through update().
   // biome-ignore lint/correctness/useExhaustiveDependencies: created once on mount

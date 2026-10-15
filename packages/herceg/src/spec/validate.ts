@@ -7,6 +7,8 @@
 // property meant where one is close, so misspellings do not go unnoticed.
 
 import { checkBins } from "../data/bins.ts";
+import { numberPattern, timePattern } from "../format/patterns.ts";
+import { calendarInterval } from "../guides/ticks.ts";
 import { areaFormError } from "../marks/area.ts";
 import { boxPlotFormError } from "../marks/boxplot-input.ts";
 import { contourFormError } from "../marks/contour-input.ts";
@@ -17,15 +19,18 @@ import { histogramFormError, perAxisBins } from "../marks/histogram-input.ts";
 import { regionFormError } from "../marks/region.ts";
 import { ruleFormError } from "../marks/rule.ts";
 import { treeFormError } from "../marks/tree-data.ts";
+import { GUIDE_KIT } from "../model/guides.ts";
 import { checkBreaks } from "../scale/breaks.ts";
 import {
   type AnimationSpec,
+  type AxisGuideSpec,
   type AxisSpec,
   type BinaryColumnSpec,
   type CameraSpec,
   type CategoryColumnSpec,
   type ChartAxisSpec,
   type ChartSpec,
+  type ColorbarSpec,
   type ColumnsSpec,
   type DerivedSpec,
   type GeometryColumnSpec,
@@ -33,6 +38,8 @@ import {
   type GridSpec,
   type InsidePlace,
   type InteractionSpec,
+  type LegendEntrySpec,
+  type LegendGuideSpec,
   type LegendSpec,
   type MarkSpec,
   type NavigatorSpec,
@@ -41,6 +48,8 @@ import {
   type PlotStyle,
   type ProjectionSpec,
   type RowSelectionSpec,
+  type ScaleRef,
+  type ScaleSpec,
   type SidePlace,
   SPEC_VERSION,
   type StrokeStyle,
@@ -49,6 +58,9 @@ import {
   type TextStyle,
   type ThemeSpec,
   type ThemeTokens,
+  type TickLabelsSpec,
+  type TickLayerSpec,
+  type TickMarkSpec,
   type TimeColumnSpec,
   type TitleSpec,
   type TooltipSpec,
@@ -440,13 +452,143 @@ function axisChecks(spec: Record<string, unknown>): ChecksOf<AxisSpec> {
     zero: boolean,
     title: string,
     grid: boolean,
-    ticks: positive,
-    format: format(spec.type),
-    tooltipFormat: format(spec.type),
+    ticks: ticks(spec.type),
+    format: axisFormat(spec.type),
+    tooltipFormat: axisFormat(spec.type),
     show: boolean,
     style: axisStyle,
   };
 }
+
+/** A function where a spec holds data: JavaScript only, never serializable. */
+function noFunction(v: unknown, path: string, instead: string): void {
+  if (typeof v === "function")
+    throw new TypeError(`${path}: a function cannot be in a spec; ${instead}`);
+}
+
+/**
+ * Which ticks an axis of `type` draws: a count, `{ count }`, `{ every,
+ * anchor }`, or `{ values }`.
+ */
+function ticks(type: unknown): Check {
+  return (v, path) => {
+    noFunction(v, path, "give a count, { every }, or { values }");
+    if (typeof v === "number") return positive(v, path);
+    if (!isRecord(v)) fail(path, "a count, or an object with count, every, or values", v);
+    if ("count" in v) return checkProperties(v, path, ["count"], { count: positive });
+    if ("values" in v)
+      return checkProperties(v, path, ["values"], {
+        values: (list, at) => {
+          if (!Array.isArray(list)) fail(at, "a list of values", list);
+          list.forEach((value, i) => {
+            if (
+              !(typeof value === "string" || (typeof value === "number" && Number.isFinite(value)))
+            )
+              fail(`${at}[${i}]`, "a finite number, epoch milliseconds, or a category", value);
+          });
+        },
+      });
+    if (!("every" in v)) fail(path, "an object with count, every, or values", v);
+    const every = v.every;
+    const calendar = typeof every === "string" || (isRecord(every) && "unit" in every);
+    checkProperties(v, path, ["every"], {
+      every: (e, at) => {
+        if (typeof e === "number") {
+          positive(e, at);
+          if (type === "time")
+            fail(
+              at,
+              'a time interval on a time axis, such as "6 hours" or { milliseconds: 3600000 }',
+              e,
+            );
+          if (type === "log")
+            fail(at, "a count or values on a log axis, which has no even steps", e);
+          return;
+        }
+        if (type === "linear" || type === "log") fail(at, `a number on a ${type} axis`, e);
+        if (isRecord(e) && "milliseconds" in e)
+          return checkProperties(e, at, ["milliseconds"], { milliseconds: positive });
+        if (isRecord(e)) checkProperties(e, at, ["unit"], { unit: string, step: count });
+        else if (typeof e !== "string")
+          fail(at, 'a number, a time interval such as "6 hours", or { milliseconds }', e);
+        try {
+          calendarInterval(e as string, at);
+        } catch (error) {
+          throw new TypeError((error as Error).message);
+        }
+      },
+      anchor: (a, at) => {
+        finite(a, at);
+        if (calendar)
+          fail(at, "no anchor with a calendar interval, which starts at calendar boundaries", a);
+      },
+    });
+  };
+}
+
+/**
+ * How an axis of `type` writes values: Intl options, or a pattern, `{ number }`
+ * (d3-format) or `{ time }` (strftime), alone.
+ */
+function axisFormat(type: unknown): Check {
+  const intl = format(type);
+  return (v, path) => {
+    noFunction(v, path, 'give Intl options, { number: ",.2f" }, or { time: "%H:%M" }');
+    if (!isRecord(v) || !("number" in v || "time" in v)) return intl(v, path);
+    const key = "number" in v ? "number" : "time";
+    checkProperties(v, path, [key], { [key]: string });
+    if (key === "number" && type === "time")
+      fail(`${path}.number`, '{ time: "..." } or Intl date options on a time axis', v.number);
+    if (key === "time" && (type === "linear" || type === "log"))
+      fail(`${path}.time`, '{ number: "..." } or Intl number options on a number axis', v.time);
+    try {
+      if (key === "number")
+        numberPattern(GUIDE_KIT, v.number as string, undefined, `${path}.number`);
+      else timePattern(GUIDE_KIT, v.time as string, "UTC", undefined, `${path}.time`);
+    } catch (error) {
+      throw new TypeError((error as Error).message);
+    }
+  };
+}
+
+/** Tick marks: their direction and length. */
+const tickMark: Check = (v, path) => {
+  if (v === false) return;
+  object(v, path);
+  properties(v as Record<string, unknown>, path, {
+    direction: oneOf("out", "in", "cross"),
+    length: width,
+  } satisfies ChecksOf<TickMarkSpec>);
+};
+
+/** A turn of labels: degrees from -90 (reading up) to 90 (reading down). */
+const angle: Check = (v, path) => {
+  if (typeof v !== "number" || !(v >= -90 && v <= 90)) fail(path, "degrees from -90 to 90", v);
+};
+
+/** Tick labels: rotation, collision policy, row, priority, and repeats. */
+const tickLabels: Check = (v, path) => {
+  if (v === false) return;
+  object(v, path);
+  properties(v as Record<string, unknown>, path, {
+    rotation: (r, at) => {
+      if (typeof r === "number") return angle(r, at);
+      object(r, at);
+      checkProperties(r as Record<string, unknown>, at, ["candidates"], {
+        candidates: (c, where) => {
+          if (!Array.isArray(c) || c.length === 0) fail(where, "a list of angles", c);
+          for (const [i, turn] of c.entries()) angle(turn, `${where}[${i}]`);
+        },
+      });
+    },
+    collision: oneOf("show", "hide", "stagger", "wrap"),
+    row: (r, at) => {
+      if (!Number.isInteger(r) || (r as number) < 0) fail(at, "a row: 0, 1, 2, ...", r);
+    },
+    priority: finite,
+    duplicates: oneOf("hide", "show"),
+  } satisfies ChecksOf<TickLabelsSpec>);
+};
 
 /** Which panels share a scale. */
 const scope = oneOf("chart", "panel", "row", "column");
@@ -698,10 +840,247 @@ const panelTitle: Check = (v, path) => {
 const legend: Check = (v, path) => {
   if (typeof v === "boolean") return;
   if (!isRecord(v)) fail(path, "true, false, or an object", v);
-  properties(v, path, {
+  properties(v, path, legendOptions(v, path) satisfies ChecksOf<LegendSpec>);
+};
+
+/** A legend's title: its text, or its text and style. */
+const legendTitle: Check = (v, path) => {
+  if (typeof v === "string") return;
+  if (!isRecord(v)) fail(path, "a string or an object with text", v);
+  checkProperties(v, path, ["text"], { text: string, style: textStyle });
+};
+
+/** A scale a mark owns, by the mark's id and the channel. */
+const scaleRef: Check = (v, path) => {
+  object(v, path);
+  checkProperties(v as Record<string, unknown>, path, ["mark", "channel"], {
+    mark: string,
+    channel: oneOf("series", "color", "size", "symbol"),
+  } satisfies ChecksOf<ScaleRef>);
+};
+
+/** A legend entry's swatch: a line, a box, a symbol, or several. */
+const swatch: Check = (v, path) => {
+  object(v, path);
+  const spec = v as Record<string, unknown>;
+  const opacity = { opacity: fraction };
+  switch (spec.type) {
+    case "line":
+      return checkProperties(spec, path, ["stroke"], {
+        type: string,
+        stroke: string,
+        strokeWidth: width,
+        dash,
+        ...opacity,
+      });
+    case "rect":
+      return checkProperties(spec, path, ["fill"], {
+        type: string,
+        fill: string,
+        stroke: string,
+        ...opacity,
+      });
+    case "circle":
+      return checkProperties(spec, path, ["fill"], {
+        type: string,
+        fill: string,
+        stroke: string,
+        size: positive,
+        ...opacity,
+      });
+    case "composite":
+      return checkProperties(spec, path, ["parts"], {
+        type: string,
+        parts: (parts, at) => {
+          if (!Array.isArray(parts) || parts.length === 0) fail(at, "a list of swatches", parts);
+          for (const [i, part] of parts.entries()) swatch(part, `${at}[${i}]`);
+        },
+      });
+    default:
+      fail(`${path}.type`, '"line", "rect", "circle", or "composite"', spec.type);
+  }
+};
+
+/** A legend entry of your own. */
+const legendEntry: Check = (v, path) => {
+  object(v, path);
+  const spec = v as Record<string, unknown>;
+  checkProperties(spec, path, ["key", "label"], {
+    key: string,
+    label: string,
+    swatch,
+    sample: (s, at) => {
+      object(s, at);
+      checkProperties(s as Record<string, unknown>, at, ["mark"], { mark: string });
+      if (spec.swatch !== undefined) fail(at, "a swatch or a sample, not both", s);
+    },
+    targets: (t, at) => {
+      if (!Array.isArray(t)) fail(at, "a list of { mark }", t);
+      for (const [i, target] of t.entries()) {
+        object(target, `${at}[${i}]`);
+        checkProperties(target as Record<string, unknown>, `${at}[${i}]`, ["mark"], {
+          mark: string,
+        });
+      }
+    },
+  } satisfies ChecksOf<LegendEntrySpec>);
+};
+
+/** The checks of a legend's layout options, as the short form and legend guides take them. */
+function legendOptions(spec: Record<string, unknown>, path: string) {
+  if (spec.columns !== undefined && spec.rows !== undefined)
+    fail(`${path}.rows`, "columns or rows, not both", spec.rows);
+  return {
     place,
+    columns: count,
+    rows: count,
+    order: oneOf("row", "column"),
+    title: legendTitle,
+    entries: (v: unknown, at: string) => {
+      if (!Array.isArray(v)) fail(at, "a list of entries", v);
+      const keys = new Set<unknown>();
+      for (const [i, entry] of v.entries()) {
+        legendEntry(entry, `${at}[${i}]`);
+        const key = (entry as LegendEntrySpec).key;
+        if (keys.has(key)) fail(`${at}[${i}].key`, "a key no other entry has", key);
+        keys.add(key);
+      }
+    },
+    merge: oneOf("semantic"),
+    swatches: oneOf("mark"),
     style: rolesOf(["legendLabel", "legendTitle", "tickLabel"]),
-  } satisfies ChecksOf<LegendSpec>);
+  };
+}
+
+/**
+ * The chart's guides: axes, legends, and colorbars, each with an id no
+ * other has; axes of x go above or below the plots, of y beside them.
+ * `typeOf` gives the type the chart declares for a scale.
+ */
+function guideList(typeOf: (scale: unknown) => unknown): Check {
+  return (v, path) => {
+    if (!Array.isArray(v)) fail(path, "a list of guides", v);
+    const ids = new Set<unknown>();
+    for (const [i, item] of v.entries()) {
+      const at = `${path}[${i}]`;
+      object(item, at);
+      const guide = item as Record<string, unknown>;
+      if (guide.id !== undefined) {
+        if (ids.has(guide.id)) fail(`${at}.id`, "an id no other guide has", guide.id);
+        ids.add(guide.id);
+      }
+      if (guide.type === "axis") axisGuide(guide, at, typeOf(guide.scale));
+      else if (guide.type === "legend")
+        properties(guide, at, {
+          ...legendOptions(guide, at),
+          type: string,
+          id: string,
+          scales: scaleRefs,
+          show: boolean,
+        } satisfies ChecksOf<LegendGuideSpec>);
+      else if (guide.type === "colorbar")
+        properties(guide, at, {
+          type: string,
+          id: string,
+          scale: scaleRef,
+          place,
+          title: legendTitle,
+          ticks: ticks("linear"),
+          format: axisFormat("linear"),
+          tick: tickMark,
+          labels: tickLabels,
+          layers: tickLayers("linear"),
+          length: positive,
+          thickness: positive,
+          show: boolean,
+          style: rolesOf(["tick", "tickLabel", "legendTitle"]),
+        } satisfies ChecksOf<ColorbarSpec>);
+      else fail(`${at}.type`, '"axis", "legend", or "colorbar"', guide.type);
+    }
+  };
+}
+
+const scaleRefs: Check = (v, path) => {
+  if (!Array.isArray(v) || v.length === 0) fail(path, "a list of scales, { mark, channel }", v);
+  for (const [i, ref] of v.entries()) scaleRef(ref, `${path}[${i}]`);
+};
+
+/** An axis guide: its scale, side, ticks and their layers, and look. */
+function axisGuide(guide: Record<string, unknown>, path: string, type: unknown): void {
+  required(guide, path, ["scale"], Object.keys(guide));
+  const scale = guide.scale;
+  checkProperties(guide, path, ["scale"], {
+    type: string,
+    id: string,
+    scale: oneOf("x", "y", "yRight"),
+    place: (p, at) => {
+      object(p, at);
+      checkProperties(p as Record<string, unknown>, at, ["side"], { side: sides });
+      const side = (p as { side: string }).side;
+      const across = side === "top" || side === "bottom";
+      if (across !== (scale === "x"))
+        fail(
+          `${at}.side`,
+          scale === "x" ? '"top" or "bottom" for an x axis' : '"left" or "right" for a y axis',
+          side,
+        );
+    },
+    title: string,
+    ticks: ticks(type),
+    format: axisFormat(type),
+    tick: tickMark,
+    labels: tickLabels,
+    line: boolean,
+    grid: boolean,
+    layers: tickLayers(type),
+    show: boolean,
+    style: axisStyle,
+  } satisfies ChecksOf<AxisGuideSpec>);
+}
+
+/** An axis' or colorbar's tick layers on a scale of `type`, each with an id of its own. */
+function tickLayers(type: unknown): Check {
+  return (v, at) => {
+    if (!Array.isArray(v)) fail(at, "a list of tick layers", v);
+    const ids = new Set<unknown>(["major"]);
+    for (const [i, layer] of v.entries()) {
+      const where = `${at}[${i}]`;
+      object(layer, where);
+      checkProperties(layer as Record<string, unknown>, where, ["id"], {
+        id: string,
+        ticks: ticks(type),
+        format: axisFormat(type),
+        tick: tickMark,
+        labels: tickLabels,
+        style: rolesOf(["tick", "tickLabel"]),
+      } satisfies ChecksOf<TickLayerSpec>);
+      const id = (layer as { id: unknown }).id;
+      if (ids.has(id))
+        fail(
+          `${where}.id`,
+          id === "major" ? 'a name other than "major", the own ticks' : "a name no other layer has",
+          id,
+        );
+      ids.add(id);
+    }
+  };
+}
+
+/** A position scale's settings in `scales`. */
+const scaleSettings: Check = (v, path) => {
+  object(v, path);
+  const spec = v as Record<string, unknown>;
+  properties(spec, path, {
+    type: oneOf("linear", "log", "time"),
+    domain: (d, p) => {
+      numbers(d, p);
+      if ((d as unknown[]).length !== 2) fail(p, "two numbers", d);
+    },
+    nice: boolean,
+    zero: boolean,
+    scope,
+    tooltipFormat: axisFormat(spec.type),
+  } satisfies ChecksOf<ScaleSpec>);
 };
 
 /** A tree's fields: a path of category fields, or node and parent fields. */
@@ -733,6 +1112,10 @@ const clip: Check = (v, path) => {
   if (v !== "plot" && v !== "chart" && v !== false) fail(path, '"plot", "chart", or false', v);
 };
 const placement = { axis: side, facet: repeat, panel: string, clip };
+/** A mark's `legend`: only `false`, which leaves it out of the legends. */
+const legended: Check = (v, path) => {
+  if (v !== false) fail(path, "false, which leaves the mark out of the legends", v);
+};
 
 /** What a mark's tooltips show of its rows: fields, by name or with a label and format. */
 const tooltip: Check = (v, path) => {
@@ -770,6 +1153,7 @@ const MARKS: MarkChecks = {
     checks: {
       tooltip,
       ...placement,
+      legend: legended,
       x: fields,
       y: fields,
       orient: oneOf("x", "y"),
@@ -788,6 +1172,7 @@ const MARKS: MarkChecks = {
     checks: {
       tooltip,
       ...placement,
+      legend: legended,
       x: fields,
       y: fields,
       y1: field,
@@ -893,6 +1278,7 @@ const MARKS: MarkChecks = {
       halo,
       tooltip,
       ...placement,
+      legend: legended,
       x: fields,
       y: fields,
       series: field,
@@ -914,6 +1300,7 @@ const MARKS: MarkChecks = {
     checks: {
       tooltip,
       ...placement,
+      legend: legended,
       x: field,
       y: field,
       series: field,
@@ -952,6 +1339,7 @@ const MARKS: MarkChecks = {
     required: [],
     checks: {
       ...placement,
+      legend: legended,
       x: field,
       y: field,
       bins: (v, path) => {
@@ -1095,6 +1483,7 @@ const MARKS: MarkChecks = {
     required: [],
     checks: {
       ...placement,
+      legend: legended,
       x: field,
       y: field,
       low: field,
@@ -1121,6 +1510,7 @@ const MARKS: MarkChecks = {
     required: ["x", "y"],
     checks: {
       ...placement,
+      legend: legended,
       x: field,
       y: field,
       series: field,
@@ -1143,6 +1533,7 @@ const MARKS: MarkChecks = {
     required: ["x", "y"],
     checks: {
       ...placement,
+      legend: legended,
       x: field,
       y: field,
       series: field,
@@ -1160,6 +1551,7 @@ const MARKS: MarkChecks = {
     checks: {
       tooltip,
       ...placement,
+      legend: legended,
       x: field,
       open: field,
       high: field,
@@ -1177,6 +1569,7 @@ const MARKS: MarkChecks = {
     checks: {
       tooltip,
       ...placement,
+      legend: legended,
       x: field,
       y: field,
       series: field,
@@ -1193,6 +1586,7 @@ const MARKS: MarkChecks = {
     checks: {
       tooltip,
       ...placement,
+      legend: legended,
       x: field,
       y: field,
       x1: field,
@@ -1258,6 +1652,7 @@ const MARKS: MarkChecks = {
     checks: {
       tooltip,
       ...placement,
+      legend: legended,
       x: field,
       y: field,
       x1: field,
@@ -1287,6 +1682,7 @@ const MARKS: MarkChecks = {
     required: ["x", "y", "color"],
     checks: {
       ...placement,
+      legend: legended,
       x: field,
       y: field,
       color: field,
@@ -1812,6 +2208,19 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
           fail(`${path}.columns`, "absent in a grid of row and column fields", spec.columns);
       },
       legend,
+      scales: (v, path) => {
+        object(v, path);
+        properties(v as Record<string, unknown>, path, {
+          x: scaleSettings,
+          y: scaleSettings,
+          yRight: scaleSettings,
+        });
+      },
+      guides: guideList((scale) => {
+        const name = scale as "x" | "y" | "yRight";
+        const scales = chart.scales as Record<string, { type?: unknown } | undefined> | undefined;
+        return scales?.[name]?.type ?? (chart[name] as { type?: unknown } | undefined)?.type;
+      }),
       padding: insets,
       tooltip: (t, path) => {
         if (typeof t === "boolean") return;

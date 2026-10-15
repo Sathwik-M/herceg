@@ -9,6 +9,6 @@ chart = hg.line(
     y="latency",
     series="service",
     title="Latency by service",
-    y_axis=hg.Axis(title="ms"),
+    y_axis=hg.AxisOptions(title="ms"),
 )
 chart  # noqa: B018 (a notebook displays the value of a cell's last line)

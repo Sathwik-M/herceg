@@ -7,6 +7,7 @@ import { dashAttribute, escapeXml, n, rectMarkup } from "../draw/markup.ts";
 import { haloAttributes } from "../draw/text.ts";
 import { gridStrokes } from "../scene/grid.ts";
 import {
+  type ColorbarGuide,
   clipOf,
   type Geometry,
   type Guide,
@@ -145,7 +146,7 @@ export function itemsMarkup(
         break;
       }
       case "ramp":
-        out += (guide as RampGuide).rampMarkup(item, id());
+        out += (guide as RampGuide | ColorbarGuide).rampMarkup(item, id());
         break;
     }
   }

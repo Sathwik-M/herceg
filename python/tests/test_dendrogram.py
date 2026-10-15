@@ -129,7 +129,9 @@ def test_facets_require_repeat_and_scope_categories():
     ):
         hg.Chart(DATA, facet="group").dendrogram("first", "second", "height", leaves=LEAVES)
     cells = {"x": ["a", "b"], "y": ["a", "b"], "v": [1, 2], "group": ["N", "S"]}
-    chart = hg.Chart(cells, facet="group", x=hg.Axis(scope="panel"), y=hg.Axis(scope="panel"))
+    chart = hg.Chart(
+        cells, facet="group", x=hg.AxisOptions(scope="panel"), y=hg.AxisOptions(scope="panel")
+    )
     chart.heatmap("x", "y", "v").dendrogram(
         "first", "second", "height", leaves=LEAVES, data=DATA, facet="repeat"
     )
@@ -139,7 +141,7 @@ def test_facets_require_repeat_and_scope_categories():
     with pytest.raises(
         ValueError, match=r"Chart sync: panels with categories of their own \(x scope"
     ):
-        hg.Chart(DATA, panels=["tree"], x=hg.Axis(scope="panel"), sync="tree").dendrogram(
+        hg.Chart(DATA, panels=["tree"], x=hg.AxisOptions(scope="panel"), sync="tree").dendrogram(
             "first", "second", "height", leaves=LEAVES, panel="tree"
         )
 
@@ -154,16 +156,16 @@ def test_clustermap_panels():
     chart = hg.Chart(
         matrix,
         panels=[
-            hg.Panel("corner", x=hg.Axis(show=False), y=hg.Axis(show=False)),
-            hg.Panel("top", y=hg.Axis(show=False)),
-            hg.Panel("left", x=hg.Axis(show=False)),
+            hg.Panel("corner", x=hg.AxisOptions(show=False), y=hg.AxisOptions(show=False)),
+            hg.Panel("top", y=hg.AxisOptions(show=False)),
+            hg.Panel("left", x=hg.AxisOptions(show=False)),
             hg.Panel("matrix"),
         ],
         panel_columns=2,
         panel_row_heights=[1, 4],
         panel_column_widths=[1, 4],
-        x=hg.Axis(scope="column"),
-        y=hg.Axis(scope="row"),
+        x=hg.AxisOptions(scope="column"),
+        y=hg.AxisOptions(scope="row"),
         width=800,
         height=600,
     )

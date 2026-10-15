@@ -10,6 +10,8 @@ import { selectionStore, selectRows } from "../../src/data/selection.ts";
 import { type Table, table } from "../../src/data/table.ts";
 import { fieldReader } from "../../src/dom/tooltip-content.ts";
 import { plan, sidesOf, snapshot } from "../../src/dom/value-transition.ts";
+import { guideCompiler } from "../../src/guides/compile.ts";
+import { colorbar } from "../../src/guides/options.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { Polyline } from "../../src/lod/polyline.ts";
 import { area } from "../../src/marks/area.ts";
@@ -50,18 +52,20 @@ import { planAxis } from "../../src/model/axis.ts";
 import { axisGuide } from "../../src/model/axis-guide.ts";
 import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";
+import { GUIDE_KIT } from "../../src/model/guides.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { rangeNavigator } from "../../src/model/navigator.ts";
 import { panels } from "../../src/model/panels.ts";
 import { rowSelection } from "../../src/model/row-selection.ts";
 import { brushedRows } from "../../src/model/selected-rows.ts";
 import { renderToPDF } from "../../src/pdf.ts";
-import type {
-  Geometry,
-  Panel,
-  RectGeometry,
-  SegmentGeometry,
-  TextGeometry,
+import {
+  type Geometry,
+  guidesOf,
+  type Panel,
+  type RectGeometry,
+  type SegmentGeometry,
+  type TextGeometry,
 } from "../../src/scene/scene.ts";
 import { legendOf, rampsOf } from "../helpers/guides.ts";
 
@@ -1311,6 +1315,44 @@ describe("capabilities: legend toggle", () => {
     expect(legendOf(next).find((e) => e.key === entry!.key)!.hidden).toBe(true);
     expect(next.panels[0]!.marks.reduce((n, m) => n + m.draw.size(m), 0)).toBeLessThan(before);
     expect(model.keyboardStops("").some((s) => s.key === entry!.key)).toBe(false);
+  });
+
+  it.each(cartesian.filter((c) => !c.noLegend))(
+    "$name leaves the legend with legend: false",
+    (c) => {
+      const { scene } = build({ marks: [c.make({ legend: false } as Placement)], legend: true });
+      expect(legendOf(scene)).toEqual([]);
+      expectGeometry(scene.panels[0]!, c.kind);
+    },
+  );
+
+  // Marks coloring by a number field show their color scale in a colorbar.
+  const colored = [
+    ...cartesian.filter((c) => c.kind === "raster" || c.kind === "polygons"),
+    {
+      name: "point colored by a number",
+      make: () => point(samples, { x: "x", y: "y", color: "y" }),
+      kind: "point",
+    } satisfies MarkCase,
+  ];
+  const guides = guideCompiler(GUIDE_KIT);
+
+  it.each(colored)("$name draws its color scale as a colorbar", (c) => {
+    const model = new ChartModel(
+      { locale: "en-US", timeZone: "UTC", marks: [c.make()], guides: [colorbar()] },
+      undefined,
+      guides,
+    );
+    model.setSize(600, 400, 1);
+    const scene = model.scene(estimateText);
+    expect(guidesOf(scene, "colorbar")).toHaveLength(1);
+    expect(rampsOf(scene)).toEqual([]);
+  });
+
+  it.each(colored.slice(0, 3))("$name leaves its legend with legend: false", (c) => {
+    const { scene } = build({ marks: [c.make({ legend: false } as Placement)], legend: true });
+    expect(rampsOf(scene)).toEqual([]);
+    expect(guidesOf(scene, "key")).toEqual([]);
   });
 
   it.each(cartesian.filter((c) => c.noLegend))("$name has no series toggle", (c) => {

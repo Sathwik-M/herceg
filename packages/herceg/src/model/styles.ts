@@ -34,6 +34,7 @@ export function styleSources(config: ChartConfig): unknown[] {
     config.title,
     config.legend,
     config.panels?.list,
+    config.guides,
   ];
 }
 
@@ -81,6 +82,9 @@ export function chartStyles(theme: Theme, config: ChartConfig, environment: Them
     ];
   };
   return {
+    /** `style` with its colors and font read as the chart reads its styles, `path` naming it in messages. */
+    read: <T extends object>(style: T, path: string): T =>
+      readStyle(style, (name) => `${path}.${name}`, environment),
     /** How axis `axis` of panel `panel` writes its tick labels or title. */
     axisText: (role: "tickLabel" | "axisTitle", axis: ScaleName, panel: number): TextPaint =>
       text(role, `${role} ${axis} ${panel}`, axisLevels(role, axis, panel)),

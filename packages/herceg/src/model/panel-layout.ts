@@ -2,6 +2,7 @@
 // values, or subplots, whose marks name their panel. The model reads either
 // through these types; their code loads only with a facet or panels.
 
+import type { AxisOptions, ChartAxisOptions } from "../guides/options.ts";
 import type { Align } from "../layout/place.ts";
 import type { Breaks } from "../lod/m4.ts";
 import {
@@ -22,7 +23,7 @@ import {
 } from "../marks/mark.ts";
 import { type BandPlaces, rowOf, type Series } from "../marks/series.ts";
 import type { Rect } from "../scene/scene.ts";
-import type { AxisSpec, ChartAxisSpec, ChartSpec, ScaleScope, XAxisSpec } from "../spec/spec.ts";
+import type { ChartSpec, ScaleScope, XAxisSpec } from "../spec/spec.ts";
 import type { AxisType } from "./axis.ts";
 import type { MarkSeries } from "./inspect.ts";
 import {
@@ -242,8 +243,10 @@ export function trackSizes(
 }
 
 /** The chart options a layout checks; the x axis as panels read it, breaks aside. */
-export type LayoutOptions = Pick<ChartSpec, "interaction" | "y" | "yRight"> & {
-  x?: (ChartAxisSpec & Pick<XAxisSpec, "seams">) | undefined;
+export type LayoutOptions = Pick<ChartSpec, "interaction"> & {
+  x?: (ChartAxisOptions & Pick<XAxisSpec, "seams">) | undefined;
+  y?: ChartAxisOptions | undefined;
+  yRight?: ChartAxisOptions | undefined;
 };
 
 /** The chart options a layout checks, and those its layout marks are drawn with (a map's projection). */
@@ -325,7 +328,11 @@ export interface PanelLayout {
     room: PanelRoom,
   ): number[];
   /** Panel `index`'s `axis` settings: the chart's, with the panel's own. */
-  panelAxis(axis: PanelAxis, index: number, chart: AxisSpec | undefined): AxisSpec | undefined;
+  panelAxis(
+    axis: PanelAxis,
+    index: number,
+    chart: AxisOptions | undefined,
+  ): AxisOptions | undefined;
   /**
    * The instances of `axis`' scale under `scope` (see `groups`), each with its
    * axis: the chart's settings `chart` (with, in subplots, its first panel's
@@ -336,7 +343,7 @@ export interface PanelLayout {
     split: PanelSplit,
     columns: number,
     axis: PanelAxis,
-    chart: AxisSpec | undefined,
+    chart: AxisOptions | undefined,
   ): ScaleGroups;
   /** See `across`. */
   across(
@@ -427,7 +434,7 @@ export function onAxis(mark: Mark, axis: PanelAxis): boolean {
 
 /** Groups of panels sharing a scale, with each group's axis: its settings and type. */
 export interface ScaleGroups extends PanelGroups {
-  axes: { type: AxisType; spec: AxisSpec | undefined }[];
+  axes: { type: AxisType; spec: AxisOptions | undefined }[];
 }
 
 /** Panels sharing a scale: each panel's group, and each group's marks and name. */
@@ -498,7 +505,7 @@ export function groups(
 export function typedGroups(
   found: PanelGroups,
   axis: PanelAxis,
-  specOf: (group: number) => AxisSpec | undefined,
+  specOf: (group: number) => AxisOptions | undefined,
   panelOf?: (mark: Mark) => string | undefined,
 ): ScaleGroups {
   const channel = axis === "x" ? "x" : "y";

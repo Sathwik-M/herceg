@@ -26,6 +26,20 @@ function files(directory: string): string[] {
 }
 
 describe("architecture", () => {
+  // A live chart loads the guide compiler when a configuration needs it. A
+  // module both imported would move out of the chart's first chunk into a
+  // chunk of its own (esbuild's splitting), so the compiler is handed what
+  // it uses of the chart's code (GUIDE_KIT) and imports only types from it.
+  it("the guide compiler imports only types from the chart's modules", () => {
+    const own = (path: string) =>
+      path.startsWith(join(SRC, "guides")) || path === join(SRC, "format/patterns.ts");
+    for (const file of [...files(join(SRC, "guides")), join(SRC, "format/patterns.ts")]) {
+      const source = readFileSync(file, "utf8");
+      for (const [, path] of source.matchAll(/^import (?!type )[^;]*?from "([^"]+)"/gm))
+        expect(own(resolve(dirname(file), path!)), `${file} imports ${path}`).toBe(true);
+    }
+  });
+
   // Marks import their drawings, so drawings must load and write SVG without
   // a DOM. Canvas painting reaches the DOM only through the canvas it is
   // handed (rasters fall back to creating a canvas in its document).

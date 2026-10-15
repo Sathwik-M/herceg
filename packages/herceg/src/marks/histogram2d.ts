@@ -76,6 +76,8 @@ export interface Histogram2DOptions<S extends Schema> {
   colorMidpoint?: number;
   /** What cells measure, in the legend and tooltips; the measure's name by default. */
   label?: string;
+  /** `false` leaves the mark out of the chart's legends. */
+  legend?: false;
   /** Draw all rows in every facet panel instead of counting that panel's rows. */
   facet?: "repeat";
   /**

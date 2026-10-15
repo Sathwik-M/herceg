@@ -92,6 +92,28 @@ export type {
 } from "./dom/handle.ts";
 export type { RenderTooltip } from "./dom/tooltip.ts";
 export type { SymbolName } from "./draw/symbols.ts";
+export {
+  type AxisGuideOptions,
+  type AxisOptions,
+  axis,
+  type ChartAxisOptions,
+  type ColorbarOptions,
+  colorbar,
+  type Format,
+  type FormatContext,
+  type GuideOptions,
+  type LegendGuideOptions,
+  legend,
+  type PanelOptions,
+  type ScaleOptions,
+  type Scales,
+  type TickContext,
+  type TickGenerator,
+  type TickLayerOptions,
+  type Ticks,
+  type ValueFormatter,
+  type XAxisOptions,
+} from "./guides/options.ts";
 export type { MeasureText } from "./layout/text.ts";
 export type { TextField } from "./marks/annotation.ts";
 export { type AreaOptions, area } from "./marks/area.ts";

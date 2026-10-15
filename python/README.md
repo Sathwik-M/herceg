@@ -29,8 +29,15 @@ matplotlib names in unknown-option errors suggest the options that callable take
 | `ax.axhline(value)` / `ax.axvline(value)` | `chart.rule(y=value)` / `chart.rule(x=value)` |
 | `ax.text(x, y, text)` / `ax.annotate(text, (x, y))` | `chart.text(x=x, y=y, label=text)`; `dx`/`dy` offset text in pixels |
 | `plt.subplots(...)` | `hg.Chart(data, panels=["a", "b"], panel_columns=2)`; marks name `panel="a"` or `"b"` |
-| `ax.twinx()` | `hg.Chart(data, y_right=hg.Axis(...))`; supported marks use `axis="right"` |
+| `ax.twinx()` | `hg.Chart(data, y_right=hg.AxisOptions(...))`; supported marks use `axis="right"` |
 | `ax.legend()` | `legend=True` on the chart (automatic for multiple series); `label` names a single series |
+| `fig.legend(ncol=3, loc="lower center")` | `legend=hg.LegendOptions(columns=3, place=hg.Place(side="bottom", align="center"), merge="semantic")` |
+| `fig.colorbar(mappable, label="°C")` | `guides=[hg.colorbar(title="°C")]` |
+| `HourLocator(interval=6)`, `MultipleLocator(10)`, `FixedLocator([15, 95])` | `hg.AxisOptions(ticks=hg.Ticks(every="6 hours"))`, `hg.Ticks(every=10)`, `hg.Ticks(values=[15, 95])` |
+| `DateFormatter("%H:%M")`, `StrMethodFormatter("{x:,.2f}")` | `hg.AxisOptions(format=hg.Format(time="%H:%M"))`, `hg.Format(number=",.2f")` |
+| `ax.tick_params(direction="in", length=6)`, minor locators | `guides=[hg.axis("x", tick=hg.Tick(direction="in", length=6), layers=[hg.TickLayer(id="minor", ...)])]` |
+| `plt.setp(ax.get_xticklabels(), rotation=45, ha="right")` | `hg.axis("x", labels=hg.TickLabels(rotation=-45))` (degrees clockwise) |
+| `ax.secondary_xaxis("top")` | `hg.axis("x", place=hg.Place(side="top"))`, the same scale above the plot |
 | `fig.savefig(path)` | `chart.save(path)` for HTML, SVG, PNG, or PDF |
 | `linewidth` / `lw` | `stroke_width` on lines, rules, and other outlined marks |
 | `linestyle` / `ls` | `dash` on 2D lines and rules |
@@ -39,7 +46,7 @@ matplotlib names in unknown-option errors suggest the options that callable take
 | `alpha` | `fill_opacity` on marks that take it; no line opacity option |
 | `cmap`, `vmin` / `vmax` | `colors="viridis"` and `color_domain=(low, high)` on color-scaled marks |
 | `bins`, `density=True` | `hg.histogram(data, x="y", bins=20, normalize="density")` |
-| `ax.set_xlim(...)` / `ax.set_ylim(...)` | `hg.Chart(data, x=hg.Axis(domain=(low, high)), y=hg.Axis(domain=(low, high)))`; helpers use `x_axis` / `y_axis` |
+| `ax.set_xlim(...)` / `ax.set_ylim(...)` | `hg.Chart(data, x=hg.AxisOptions(domain=(low, high)), y=hg.AxisOptions(domain=(low, high)))`; helpers use `x_axis` / `y_axis` |
 | `zorder` | Marks draw in the order given; add marks in the desired order |
 
 `dash` accepts `"-"` (solid), `"--"` (dashed), `":"` (dotted), and `"-."`
@@ -52,7 +59,9 @@ its line styles.
 
 There is no pyplot state, combined plot format string (`"ro--"`), line
 marker option (compose `.line(...)` and `.point(...)`), arbitrary `zorder`,
-annotation arrows, secondary x axis (`twiny`), or matplotlib's full artist
+annotation arrows, second x scale (`twiny`; `hg.axis` puts the same x on
+top), formatter callbacks (`FuncFormatter`; Python functions cannot travel
+in a chart, so write a `hg.Format` pattern), or matplotlib's full artist
 and coordinate-transform API. Marker symbols and color schemes use
 Herceg's `hg.SYMBOLS` and `hg.SCHEMES`, not matplotlib's complete catalogs.
 
@@ -115,7 +124,7 @@ category's rows, in order, one path, broken where a row has no value), and
 only), seen from `camera=hg.Camera(azimuth=-60,
 elevation=25, zoom=1, perspective=False)` (or a dict of those) and turned by
 dragging (`rotate=False` stops that), the wheel with `zoom=True`, the
-keyboard, and buttons in the chart's corner. `z=hg.Axis(...)` sets the
+keyboard, and buttons in the chart's corner. `z=hg.AxisOptions(...)` sets the
 vertical axis, `box_aspect=(2, 2, 1)` the box's proportions. A surface from a
 matrix travels as a matrix (`hg.matrix`), its coordinates once each; rows
 not on a grid must be binned or aggregated first. In the browser, large standalone 3D charts
@@ -236,7 +245,7 @@ a column per day of the month.
 
 ```python
 hg.violin(requests, x="region", y="latency", series="version", split=True, inner="quartiles")
-hg.Chart(requests, facet="service", y=hg.Axis(scope="panel")).violin(
+hg.Chart(requests, facet="service", y=hg.AxisOptions(scope="panel")).violin(
     x="latency", y="region", series="version", split=True, inner="none"
 )
 ```
@@ -264,7 +273,7 @@ data=values)` joins the new rows to the features again.
 
 ```python
 chart = (
-    hg.Chart(df, title="Request latency", y=hg.Axis(title="ms"), zoom=True)
+    hg.Chart(df, title="Request latency", y=hg.AxisOptions(title="ms"), zoom=True)
     .line(x="time", y=["p50", "p99"])
     .rule(y=250, label="SLO")
 )
@@ -281,13 +290,13 @@ hg.Chart(sales, facet="region").pie("product", "revenue")
 ```
 
 Chart options: `title`, `description`, `width`, `height`, `x` and `y`
-(`hg.Axis(type="log", domain=(0, 100), title="ms", ...)` or a dict),
+(`hg.AxisOptions(type="log", domain=(0, 100), title="ms", ...)` or a dict),
 `y_right` (the axis for marks added with `axis="right"`, in every panel
 that draws them), `facet` and
 `facet_columns` (a panel per value of a category column, wrapped into rows),
 or `facet_row` and `facet_column` (a grid with a row per value of one category
 column and a column per value of another; either may be left out), with the
-`scope` of the chart's `x`, `y`, and `y_right` axes (`hg.Axis(scope=...)`:
+`scope` of the chart's `x`, `y`, and `y_right` axes (`hg.AxisOptions(scope=...)`:
 `"chart"`, `"panel"`, `"row"`, or `"column"`) choosing which panels share an
 x, a y, or a right y scale (facets share them by default, subplots x; the
 right y as y unless given; on a category axis, panels that do not share it
@@ -302,8 +311,8 @@ radars, Sankey diagrams, maps (a map's layers together), and networks draw
 each facet panel's rows in it, as a faceted chart's only mark, or fill a
 panel of their own with `panel=` (no `"*"`, and no other mark there), whose
 neighbors keep their axes; `panels` (ids or
-`hg.Panel("latency", title="Latency", x=hg.Axis(title="Time"),
-y=hg.Axis(title="ms"), y_right=hg.Axis(title="requests"))`), `panel_columns`, and
+`hg.Panel("latency", title="Latency", x=hg.AxisOptions(title="Time"),
+y=hg.AxisOptions(title="ms"), y_right=hg.AxisOptions(title="requests"))`), `panel_columns`, and
 `panel_row_heights` and `panel_column_widths` (relative heights of the rows
 and widths of the columns) for subplots, whose marks
 name their panel with `panel="latency"` (or `"*"` for all),
@@ -358,7 +367,7 @@ color="host")` raises `TypeError: line: no option 'color'; did you mean
 'series' or 'stroke'?`.
 
 Tooltips show the position and each series' value, written as the axis'
-`format` writes it; `hg.Axis(tooltip_format=...)` writes tooltips' (and the
+`format` writes it; `hg.AxisOptions(tooltip_format=...)` writes tooltips' (and the
 keyboard's and crosshair labels') values without changing tick labels.
 Marks whose points are rows (lines, areas, bars, points, rugs, error bars,
 candlesticks, heatmaps, map regions and points, 3D points and lines) show
@@ -374,8 +383,8 @@ hg.line(
     y="p99",
     locale="en-US",
     tooltip=hg.Tooltip(fields=[hg.TooltipField("requests", label="Requests")]),
-    x_axis=hg.Axis(tooltip_format={"weekday": "short", "month": "short", "day": "numeric"}),
-    y_axis=hg.Axis(title="ms", tooltip_format={"style": "unit", "unit": "millisecond"}),
+    x_axis=hg.AxisOptions(tooltip_format={"weekday": "short", "month": "short", "day": "numeric"}),
+    y_axis=hg.AxisOptions(title="ms", tooltip_format={"style": "unit", "unit": "millisecond"}),
 )
 hg.Chart(daily).line(x="time", y="p99", tooltip=hg.Tooltip(fields=["requests"]))
 ```
@@ -416,7 +425,7 @@ text), `title`, `panel_title`, `axis_title`, `tick_label`, `legend_label`,
 (`hg.StrokeStyle`: `stroke`, `stroke_width`, `dash`, `opacity`), `plot`
 (`hg.PlotStyle`: `fill` behind the plot, `stroke` and `stroke_width` around
 it), and the marks' `line`, `bar`, and `tooltip` defaults. The theme's
-`style` sets every role; an axis' (`hg.Axis(style=...)`), the legend's,
+`style` sets every role; an axis' (`hg.AxisOptions(style=...)`), the legend's,
 the title's, and a panel's change their own over it, the most specific
 winning. Text takes `color`, never `fill`.
 
@@ -424,8 +433,8 @@ winning. Text takes `color`, never `fill`.
 hg.Chart(
     data,
     title=hg.Title("Latency\nby service", style=hg.TextStyle(align="center")),
-    y=hg.Axis(title="ms", style=hg.Style(tick_label=hg.TextStyle(color="#3266d6"))),
-    legend=hg.Legend(place=hg.Place(inside="top-right")),
+    y=hg.AxisOptions(title="ms", style=hg.Style(tick_label=hg.TextStyle(color="#3266d6"))),
+    legend=hg.LegendOptions(place=hg.Place(inside="top-right")),
     padding={"top": 4, "right": 12},
 ).line(x="time", y="latency", series="service")
 ```
@@ -438,8 +447,75 @@ inside, it takes no room from the plots. Without `padding`, spacing is
 automatic; with it (pixels, or a dict of sides; `0` included), it is the
 whitespace around everything the chart draws.
 
+### Scales and guides
+
+`x=`, `y=`, `y_right=`, and `legend=` are the short forms of the chart's
+`scales` and `guides`. `scales={"y": hg.Scale(domain=(0, 100))}` sets a
+scale's settings over its short form's; `guides` lists axes, legends, and
+colorbars. An axis takes the place of its scale's automatic axis on the
+same side (its unset settings taken from the short form) or is drawn on
+another side too; a legend or colorbar shows the scales it names, and the
+automatic legend the rest.
+
+```python
+chart = hg.Chart(
+    df,
+    time_zone="UTC",
+    x=hg.AxisOptions(ticks=hg.Ticks(every="6 hours"), format=hg.Format(time="%H:%M")),
+    guides=[
+        hg.axis(
+            "x",
+            tick=hg.Tick(direction="in"),
+            layers=[
+                hg.TickLayer(
+                    id="day",
+                    ticks=hg.Ticks(every="day"),
+                    format=hg.Format(time="%a %b %-d"),
+                    labels=hg.TickLabels(row=1),
+                )
+            ],
+        ),
+        hg.axis("y", place=hg.Place(side="right")),
+    ],
+).line(x="time", y="load")
+```
+
+| Builder | Options |
+| --- | --- |
+| `hg.Ticks` | One of `count` (about how many; a number alone is the same), `every` (a number from `anchor` on number axes; `"day"`, `"6 hours"`, ... calendar steps in the chart's time zone; a `timedelta` of elapsed time), or `values` (numbers or datetimes). Log axes take a count or values; category axes neither. |
+| `hg.Format` | `number`, a d3-format pattern (`[sign][,][.precision][~][type]`, type `d`, `f`, `e`, `g`, `s`, `%`, or none), or `time`, a strftime pattern (`%Y %y %m %d %e %H %I %M %S %L %p %a %A %b %B %z %%`, `%-d` without padding). Intl options are a dict of their own (camelCase) names. Python functions cannot travel in a chart. |
+| `hg.axis(scale, ...)` | `scale` (`"x"`, `"y"`, `"y_right"`), `place` (`hg.Place(side=...)`: x on the `"bottom"` or `"top"`, y on the `"left"` or `"right"`, y_right on the `"right"`), `id`, `title`, `ticks`, `format`, `grid`, `show`, `style`, `tick` (`hg.Tick(direction="out" \| "in" \| "cross", length=...)` or `False`), `labels` (`hg.TickLabels` or `False`), `line` (draw its line), `layers` (`hg.TickLayer`s). |
+| `hg.TickLayer` | `id` (not `"major"`), `ticks`, `format`, `tick`, `labels`, `style` (its `tick` and `tick_label`): minor ticks, a row of day boundaries. |
+| `hg.TickLabels` | `rotation` (degrees clockwise, or a list tried in turn), `collision` (`"show"`, `"hide"`, and on x axes `"stagger"` and `"wrap"`), `row` (0 by the line, 1 beyond, on x axes), `priority` (the higher stays where labels of a row meet), `duplicates` (`"hide"` leaves out a label repeating the one before it). |
+| `hg.LegendOptions` (`legend=`), `hg.legend(...)` (`guides`) | `place`, `columns` or `rows`, `order` (`"row"` or `"column"`), `title`, `entries` (`hg.LegendEntry`s of your own), `merge="semantic"` (one entry per value of a field across marks and panels), `swatches="mark"` (swatches that look like the marks), `style`; `hg.legend` also `scales` (`hg.ScaleRef(mark=..., channel="series" \| "color" \| "size" \| "symbol")`), `id`, `show`. |
+| `hg.LegendEntry` | `key`, `label`, a `swatch` (`hg.Swatch(type="line" \| "rect" \| "circle" \| "composite", ...)`) or `sample` (a mark's id, drawn as it looks), and `targets` (the ids of marks clicking it hides and shows). |
+| `hg.colorbar(...)` | `scale` (`hg.ScaleRef(mark=..., channel="color")`; the chart's only color scale by default), `place` (the right by default; beside the plots it stands, above or below it lies), `title`, `ticks`, `format`, `tick`, `labels`, `layers` (as an axis' along the bar), `length`, `thickness`, `style`, `id`, `show`. Ticks are rounded inside the color domain; a diverging scale's middle color sits at its midpoint; a contour's bands are steps. |
+
+A mark's `legend=False` leaves it out of the legends.
+
+```python
+# One legend under a grid of subplots, each site listed once.
+grid = hg.Chart(
+    df,
+    panels=["north", "south", "east"],
+    panel_columns=3,
+    legend=hg.LegendOptions(
+        place=hg.Place(side="bottom", align="center"), columns=3,
+        merge="semantic", swatches="mark",
+    ),
+)
+for panel in ("north", "south", "east"):
+    grid.line(x="day", y="value", series="site", panel=panel, data=df[df.panel == panel])
+
+# A heatmap with a colorbar beside it.
+hg.Chart(
+    cells,
+    guides=[hg.colorbar(title="Gain (%)", ticks=6, format=hg.Format(number="+.0f"))],
+).heatmap(x="hour", y="zone", color="gain", color_midpoint=0)
+```
+
 A time x axis can leave out time, so trading sessions sit side by side:
-`hg.Axis(breaks=[...])` takes `hg.Break` rules, each one of `weekdays`
+`hg.AxisOptions(breaks=[...])` takes `hg.Break` rules, each one of `weekdays`
 (`("sat", "sun")`), `hours` (`("16:00", "09:30")` or `datetime.time`s, a
 daily span wrapping past midnight), `dates` (holidays, as dates or
 `"YYYY-MM-DD"`), or `start` and `end` (instants; naive datetimes are UTC),
@@ -449,7 +525,7 @@ in a break move to the session that opens after it. Dicts in the spec's
 form (`{"weekdays": [...]}`, `{"from": ..., "to": ...}`) work too.
 
 ```python
-sessions = hg.Axis(
+sessions = hg.AxisOptions(
     seams=True,
     breaks=[
         hg.Break(weekdays=("sat", "sun")),
@@ -463,7 +539,7 @@ sessions = hg.Axis(
 )
 ```
 
-`hg.Axis(seams=True)` marks time breaks' seams with dashed vertical lines,
+`hg.AxisOptions(seams=True)` marks time breaks' seams with dashed vertical lines,
 one CSS pixel wide, behind the data and inside the plot. Set
 `seams={"min_spacing": 40}` to change their minimum spacing (finite and
 positive, default 40 CSS pixels). Seams are kept in chronological order;
@@ -706,7 +782,7 @@ rows+1 distinct labels; an empty linkage with one leaf is valid.
 
 ```python
 linkage = {"first": [0, 2, 5], "second": [1, 3, 4], "height": [1, 2, 4]}
-chart = hg.Chart(linkage, y=hg.Axis(show=False)).dendrogram(
+chart = hg.Chart(linkage, y=hg.AxisOptions(show=False)).dendrogram(
     "first", "second", "height",
     leaves=["a", "b", "c", "d"], side="bottom", label="Column clustering",
 )
@@ -716,7 +792,7 @@ The tree contributes leaf categories in first-child-before-second-child
 order (c, d, a, b here) and places leaves at band centers. `side` names
 the leaves' plot edge: bottom (default) or top along x, left or right along
 y. Merge heights scale linearly within the panel to its opposite edge,
-independent of axis zoom. Hide that direction's axis with `hg.Axis(show=False)`.
+independent of axis zoom. Hide that direction's axis with `hg.AxisOptions(show=False)`.
 Ties and decreasing heights are allowed; all-zero heights stay at the
 leaves' edge. A leaf missing from the axis omits links above it. The default
 stroke is muted theme text, with width 1 CSS pixel; `label` names a summary
@@ -725,8 +801,8 @@ With facets, `facet="repeat"` is required.
 
 Compose a clustered heatmap with panels corner, top, left, matrix,
 `panel_columns=2`, `panel_row_heights=[1, 4]`,
-`panel_column_widths=[1, 4]`, `x=hg.Axis(scope="column")`, and
-`y=hg.Axis(scope="row")`.
+`panel_column_widths=[1, 4]`, `x=hg.AxisOptions(scope="column")`, and
+`y=hg.AxisOptions(scope="row")`.
 Put the heatmap in matrix with categories reordered by the dendrograms,
 the column tree in top with `side="bottom"`, and the row tree in left
 with `side="right"`; hide corner's axes, top's y axis, and left's x axis.
@@ -812,7 +888,7 @@ default), `"chart"`, or `False` (the default for rules and text), what their
 drawing is cut to, so markers at the plot's edge can show whole.
 
 Time axes choose coarser intervals for coarse `format` options and drop
-remaining duplicate labels. `hg.Axis(tooltip_format=...)` formats tooltip,
+remaining duplicate labels. `hg.AxisOptions(tooltip_format=...)` formats tooltip,
 keyboard, and crosshair values independently, without changing tick labels.
 
 ## Statistical charts
@@ -1140,7 +1216,7 @@ too.
 
 ```python
 spark = hg.Chart(df, width=140, height=48, padding=0, legend=False,
-                 x=hg.Axis(show=False, nice=False), y=hg.Axis(show=False, nice=False))
+                 x=hg.AxisOptions(show=False, nice=False), y=hg.AxisOptions(show=False, nice=False))
 svg = spark.line(x="t", y="v", clip=False).to_svg(
     sizing="fluid", preserve_aspect_ratio="none", stroke_scaling="fixed"
 )

@@ -743,6 +743,8 @@ export interface RectItem {
  */
 export interface RampItem {
   readonly type: "ramp";
+  /** Ramps up from the bottom, as a vertical colorbar does, rather than left to right. */
+  readonly vertical?: boolean | undefined;
   readonly x: number;
   readonly y: number;
   readonly width: number;
@@ -772,8 +774,11 @@ export interface GuideBase {
  * view playing places the ticks between two scenes.
  */
 export interface AxisPlacement {
-  /** Below the plot, an x axis, which draws its line and tick marks; beside it, a y axis, which draws neither. */
-  readonly side: "bottom" | "left" | "right";
+  /**
+   * Below the plot, an x axis, which draws its line and tick marks; beside
+   * it, a y axis, which draws neither; axes the guides list on any side.
+   */
+  readonly side: "top" | "bottom" | "left" | "right";
   /** The axis' line: y for an axis below the plot, x for one beside it. */
   readonly edge: number;
   /** Its extent along its direction, from the plot's start to its end. */
@@ -795,6 +800,11 @@ export interface AxisPlacement {
 /** An axis of a panel: its scale's ticks along one side of the plot, and its title. */
 export interface AxisGuide extends GuideBase, AxisPlacement {
   readonly kind: "axis";
+  /**
+   * The ids of the tick layers an axis the guides list draws ("major"
+   * first); such axes keep their items while a change of values plays.
+   */
+  readonly layers?: readonly string[] | undefined;
   /** The scale it shows: "x", "y", or "yRight". */
   readonly scale: string;
   readonly ticks: readonly AxisTick[];
@@ -837,6 +847,16 @@ export interface LegendItem {
   glyph?: string | undefined;
   /** The glyph's outline color, drawn 1 pixel wide, for outlined points. */
   stroke?: string | undefined;
+  /** The series keys the entry hides and shows, when not its own key. */
+  targets?: readonly string[] | undefined;
+  /**
+   * A swatch drawn as the marks look (a dashed line, a symbol), in place
+   * of the square or glyph: its items, centered vertically on 0 and
+   * starting at 0, and the room it takes, the same for a legend's entries.
+   */
+  sample?:
+    | { readonly width: number; readonly height: number; readonly items: readonly GuideItem[] }
+    | undefined;
   hidden: boolean;
   x: number;
   y: number;
@@ -899,8 +919,33 @@ export interface KeyGuide extends GuideBase {
   }[];
 }
 
+/**
+ * What a legend draws besides its entries that toggle series: its title,
+ * and entries that toggle nothing (a shaded region's), drawn as items.
+ */
+export interface CaptionGuide extends GuideBase {
+  readonly kind: "caption";
+}
+
+/**
+ * A colorbar: a color scale's colors along its values, with ticks, labels,
+ * and a title, drawn as items; it carries the SVG markup of its ramp, as a
+ * ramp legend does.
+ */
+export interface ColorbarGuide extends GuideBase {
+  readonly kind: "colorbar";
+  readonly rampMarkup: (item: RampItem, id: string) => string;
+}
+
 /** Chart furniture outside panels' axes, in drawing order. */
-export type Guide = TitleGuide | HeaderGuide | LegendGuide | RampGuide | KeyGuide;
+export type Guide =
+  | TitleGuide
+  | HeaderGuide
+  | LegendGuide
+  | RampGuide
+  | KeyGuide
+  | CaptionGuide
+  | ColorbarGuide;
 
 /**
  * One plotting area: its data, clipped to `plot`, its guides (rules and

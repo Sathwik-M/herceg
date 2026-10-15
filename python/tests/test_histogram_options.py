@@ -126,7 +126,7 @@ def test_horizontal_time_histogram_and_static_exports():
 
 
 def test_horizontal_histograms_with_facets_and_subplots():
-    facets = hg.Chart(DATA, facet="g", y=hg.Axis(scope="panel")).histogram(
+    facets = hg.Chart(DATA, facet="g", y=hg.AxisOptions(scope="panel")).histogram(
         y="v", bins=[0, 0.2, 0.5], common_norm=True
     )
     assert facets.to_spec()[0]["y"] == {"scope": "panel"}
