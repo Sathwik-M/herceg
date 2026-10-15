@@ -61,6 +61,30 @@ export function rampOf(
 }
 
 /**
+ * A CSS color's own alpha: of `transparent`, `#rgba` and `#rrggbbaa`, and
+ * functions with one (`rgba(…)`, `rgb(… / a)`, `oklch(… / a)`); 1 for
+ * others, named colors, variables, and functions of other colors, which
+ * are taken as opaque.
+ */
+export function alphaOf(color: string): number {
+  const c = color.trim().toLowerCase();
+  if (c === "transparent") return 0;
+  const hex = /^#(?:[0-9a-f]{3}([0-9a-f])|[0-9a-f]{6}([0-9a-f]{2}))$/.exec(c);
+  if (hex)
+    return hex[1] ? Number.parseInt(hex[1] + hex[1], 16) / 255 : Number.parseInt(hex[2]!, 16) / 255;
+  // Functions of colors (`color-mix`, relative colors) are taken as opaque:
+  // only a function's own alpha is read.
+  const args = /^[a-z-]+\(([^()]*)\)$/.exec(c)?.[1];
+  if (args === undefined) return 1;
+  const slash = args.lastIndexOf("/");
+  const parts = args.split(",");
+  const alpha = slash >= 0 ? args.slice(slash + 1) : parts.length === 4 ? parts[3]! : undefined;
+  if (alpha === undefined) return 1;
+  const value = Number.parseFloat(alpha) / (alpha.trim().endsWith("%") ? 100 : 1);
+  return value >= 0 && value <= 1 ? value : 1;
+}
+
+/**
  * Whether a CSS color is certainly opaque: hex without alpha, `rgb()` or
  * `hsl()` without an alpha part, or a named color. Anything else may be
  * translucent.
@@ -114,9 +138,11 @@ export function colorContrast(
 }
 
 /**
- * Black or white text, whichever contrasts more with `fill` painted at
- * `opacity` (times the color's own alpha) over `backdrop`; undefined when
- * either color cannot be read or the backdrop is translucent.
+ * White or black text on `fill` painted at `opacity` (times the color's own
+ * alpha) over `backdrop`: white where its WCAG contrast with the result is
+ * at least 3:1 (as on the palettes' mid-tone blues, greens, and oranges),
+ * else black; undefined when either color cannot be read or the backdrop
+ * is translucent.
  */
 export function contrastingText(
   fill: string,
@@ -128,7 +154,8 @@ export function contrastingText(
   if (!top || !bottom || bottom[3] < 1) return undefined;
   const alpha = opacity * top[3];
   const mixed = [0, 1, 2].map((i) => top[i]! * alpha + bottom[i]! * (1 - alpha));
-  return luminance(mixed as [number, number, number]) > 0.179 ? "#000000" : "#ffffff";
+  // White's contrast, 1.05 / (L + 0.05), reaches 3 at a luminance of 0.3.
+  return luminance(mixed as [number, number, number]) > 0.3 ? "#000000" : "#ffffff";
 }
 
 /** WCAG relative luminance of an sRGB color with channels from 0 to 255. */

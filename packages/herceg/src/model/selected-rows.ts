@@ -37,7 +37,8 @@
 //   anchors on a map's plane (`LayoutResult.lassoed`); brushes nothing.
 
 import type { NumericArray } from "../data/column.ts";
-import { compileExpression, Expr, type Expression } from "../data/expression.ts";
+import { Expr } from "../data/expr.ts";
+import { compileExpression, type Expression } from "../data/expression.ts";
 import { RowSet } from "../data/row-set.ts";
 import { type DataSelection, selectRows, selectWhere } from "../data/selection.ts";
 import type { Table } from "../data/table.ts";
@@ -385,6 +386,13 @@ function brushCondition(
   }
   const view = viewCondition(mark);
   if (view !== true) restrictions.push(view);
+  // Rows `where` and `continuity.defined` leave out are not drawn, and not brushed.
+  const { where, continuity } = mark.spec as {
+    where?: Expression;
+    continuity?: { defined?: Expression };
+  };
+  if (where !== undefined) restrictions.push(where);
+  if (continuity?.defined !== undefined) restrictions.push(continuity.defined);
   const panels = panelCondition(model, mark, keys);
   if (panels !== true) restrictions.push(panels);
   return all([any(conditions), ...restrictions]);
@@ -575,6 +583,8 @@ function drawnRow(d: Drawn, row: number): boolean {
   // A heatmap's row without a value colors no cell.
   if (mark.tooltip === "cell" && !mark.summarizes && !Number.isFinite(cellValues(mark)[row]!))
     return false;
+  // Rows `where` and `continuity.defined` leave out.
+  if (s.features?.drawn?.(row) === false) return false;
   return mark.shows?.(s, row, d.y, d.x) ?? true;
 }
 

@@ -1151,7 +1151,10 @@ describe("right axes in panels", () => {
     const events = table({ at: [1, 2], note: ["deploy", "outage"], region: ["a", "b"] });
     const chart = createChart(host, {
       locale: "en-US",
-      marks: [line(traffic, { x: "t", y: "ms" }), rule(events, { x: "at", textField: "note" })],
+      marks: [
+        line(traffic, { x: "t", y: "ms" }),
+        rule(events, { x: "at", label: { field: "note" } }),
+      ],
       facet: facet("region"),
     });
     const live = chart.root.querySelector("[aria-live]")!;

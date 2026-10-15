@@ -1,10 +1,11 @@
 import type { CategoryField, NumberField, Schema, Table } from "../data/table.ts";
+import { labelHalo } from "../draw/label-halo.ts";
 import { lineDrawing } from "../draw/line.ts";
 import { SvgPath } from "../draw/markup.ts";
 import { pointDrawing } from "../draw/point.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
 import { symbolPath } from "../draw/symbols.ts";
-import { labelHalo, textDrawing } from "../draw/text.ts";
+import { textDrawing } from "../draw/text.ts";
 import { formatNumber, numberTickLabels } from "../format/format.ts";
 import { fitTickLabels, placeSpokeLabels, type SpokeLabel } from "../layout/radar-labels.ts";
 import { Polyline } from "../lod/polyline.ts";

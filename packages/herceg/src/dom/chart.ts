@@ -20,7 +20,8 @@ import type { DrillRoot } from "../marks/tree-data.ts";
 import { planAxis } from "../model/axis.ts";
 import { axisGuide } from "../model/axis-guide.ts";
 import { describeChart } from "../model/describe.ts";
-import { GUIDE_KIT, type GuideCompiler, needsGuides } from "../model/guides.ts";
+import type { FeatureCompiler } from "../model/features.ts";
+import { GUIDE_KIT, type GuideCompiler } from "../model/guides.ts";
 import {
   type ChartConfig,
   ChartModel,
@@ -113,9 +114,21 @@ const DEFAULT_HEIGHT = 320;
 
 let nextId = 0;
 
-/** The guide compiler, once a chart on the page has loaded it (see model/guides.ts). */
-let guideCompiler: GuideCompiler | undefined;
-let guidesImport: Promise<GuideCompiler> | undefined;
+/**
+ * The guide compiler and the feature compiler (model/guides.ts,
+ * model/features.ts), once a chart on the page has loaded them, and their
+ * imports: code a configuration may need before it draws.
+ */
+const compilers: [GuideCompiler?, FeatureCompiler?] = [];
+const imports: (Promise<unknown> | undefined)[] = [];
+const COMPILERS = [
+  () => import("../guides/compile.ts").then((module) => module.guideCompiler(GUIDE_KIT)),
+  () =>
+    import("../marks/features/compile.ts").then((module) =>
+      // The browser tells colors from fields' names (see FeatureKit).
+      module.featureCompiler({ ...GUIDE_KIT, isColor: (value) => CSS.supports("color", value) }),
+    ),
+];
 
 /**
  * What a scene leaves to the GPU painter: large point series ("points"), a
@@ -167,10 +180,9 @@ export class MountedChart implements Chart, ExportsScene {
   /** Whether `#clouds` draws 3D charts' clouds too (render/webgl3d.ts loaded). */
   #clouds3d = false;
   #cloudsLoading: Promise<void> | undefined;
-  /** Whether the model has the guide compiler, and its loading while the configuration waits for it. */
-  #guided = !!guideCompiler;
-  #guidesLoading: Promise<void> | undefined;
-  #guidesFailed = false;
+  /** The compilers' loading while the configuration waits for them. */
+  #compiling: Promise<void> | undefined;
+  #compileFailed = false;
   /** The fonts measured with, as the page uses them, how, and their faces' loading while pending. */
   #fonts: Fonts | undefined;
   #page: PageFonts | undefined;
@@ -285,7 +297,7 @@ export class MountedChart implements Chart, ExportsScene {
     const document = container.ownerDocument;
     this.#container = container;
     this.#options = options;
-    this.#model = readPage(container, (page) => new ChartModel(options, page, guideCompiler));
+    this.#model = readPage(container, (page) => new ChartModel(options, page, ...compilers));
 
     this.root = document.createElement("div");
     this.root.style.cssText = "position:relative;overflow:hidden;outline-offset:2px";
@@ -345,7 +357,7 @@ export class MountedChart implements Chart, ExportsScene {
       this.#useFonts(options.fonts);
       this.#listen();
       this.#applyOptions();
-      this.#loadGuides();
+      this.#loadCompilers();
       this.#cleanup.push(observeVisibility(this.root, (visible) => this.#setVisible(visible)));
       this.#cleanup.push(() => this.#leaveSync?.());
       if (typeof ResizeObserver !== "undefined") {
@@ -389,7 +401,7 @@ export class MountedChart implements Chart, ExportsScene {
     this.#pageChanged = false;
     this.#settle();
     this.#applyOptions();
-    this.#loadGuides();
+    this.#loadCompilers();
     this.#invalidate();
     // Hidden keys go with their marks' identities: their ids, or their
     // indexes, which other marks may take; a legend group's entries, with
@@ -565,7 +577,7 @@ export class MountedChart implements Chart, ExportsScene {
 
   get loading(): Promise<void> | undefined {
     const pending = [
-      this.#guidesLoading,
+      this.#compiling,
       this.#fontsLoading,
       this.#cloudsLoading,
       this.#animationLoading,
@@ -766,8 +778,7 @@ export class MountedChart implements Chart, ExportsScene {
     // An export shows the latest state at the container's current size: what
     // is pending is drawn first, and no frame is drawn when nothing is, so
     // render listeners may export.
-    if (this.#guidesLoading)
-      throw new Error("chart: the guide compiler has not loaded; await chart.loading");
+    if (this.#compiling) throw new Error("chart: its code has not loaded; await chart.loading");
     this.#remember();
     this.#settle();
     const { width, height } = this.#size();
@@ -811,8 +822,8 @@ export class MountedChart implements Chart, ExportsScene {
 
   /** Draws pending changes, the page's theme among them; whether there were any. */
   #drawPending(): boolean {
-    // A configuration waiting for the guide compiler keeps the last frame, or none.
-    if (this.#destroyed || this.#guidesLoading) return false;
+    // A configuration waiting for a compiler keeps the last frame, or none.
+    if (this.#destroyed || this.#compiling) return false;
     if (this.#pageChanged) {
       this.#pageChanged = false;
       if (readPage(this.#container, (page) => this.#model.refreshTheme(page))) {
@@ -935,44 +946,50 @@ export class MountedChart implements Chart, ExportsScene {
   }
 
   /**
-   * Loads the guide compiler when the configuration waits for it, and
-   * draws once it is here: `loading` settles with that frame on screen,
-   * or rejects when the compiler cannot load, and the chart draws nothing
-   * more until it does or the configuration no longer needs it.
+   * Loads the compilers the configuration waits for, and draws once they
+   * are here: `loading` settles with that frame on screen, or rejects when
+   * one cannot load or refuses the configuration, and the chart draws
+   * nothing more until an update loads them or needs them no more.
    */
-  #loadGuides(): void {
-    if (this.#guided) return;
-    if (!needsGuides(this.#options)) {
-      this.#guidesLoading = undefined;
+  #loadCompilers(): void {
+    const lacks = this.#model.lacks();
+    if (!lacks.includes(true)) {
+      this.#compiling = undefined;
       return;
     }
-    if (this.#guidesLoading && !this.#guidesFailed) return;
-    this.#guidesFailed = false;
-    guidesImport ??= import("../guides/compile.ts").then(
-      (module) => (guideCompiler = module.guideCompiler(GUIDE_KIT)),
-    );
-    this.#guidesLoading = guidesImport.then(
-      (guides) => {
-        try {
-          readPage(this.#container, (page) => this.#model.useGuides(guides, page));
-        } catch (error) {
-          // The compiler refuses the configuration: nothing is drawn until an update.
-          this.#guidesFailed = true;
-          throw error;
-        }
-        this.#guidesLoading = undefined;
-        this.#guided = true;
-        this.#invalidate();
-        this.#flush();
-      },
-      (error: unknown) => {
-        // A later update imports again, though browsers that keep a failed
-        // module's result (Chrome does) reject it until the page reloads.
-        guidesImport = undefined;
-        this.#guidesFailed = true;
-        throw error;
-      },
-    );
+    if (this.#compiling && !this.#compileFailed) return;
+    this.#compileFailed = false;
+    const fail = (error: unknown) => {
+      this.#compileFailed = true;
+      throw error;
+    };
+    for (const [i, lack] of lacks.entries())
+      if (lack)
+        imports[i] ??= COMPILERS[i]!().then(
+          (compiler) => {
+            compilers[i] = compiler as never;
+          },
+          (error: unknown) => {
+            // A later update imports again, though browsers that keep a failed
+            // module's result (Chrome does) reject it until the page reloads.
+            imports[i] = undefined;
+            throw error;
+          },
+        );
+    this.#compiling = Promise.all(lacks.map((lack, i) => lack && imports[i])).then(() => {
+      try {
+        readPage(this.#container, (page) => this.#model.use(compilers[0], compilers[1], page));
+      } catch (error) {
+        // A compiler refuses the configuration: nothing is drawn until an update.
+        fail(error);
+      }
+      this.#compiling = undefined;
+      // An update while they loaded may need another.
+      this.#loadCompilers();
+      if (this.#compiling) return this.#compiling;
+      this.#invalidate();
+      this.#flush();
+    }, fail);
   }
 
   /**

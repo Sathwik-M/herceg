@@ -4,6 +4,7 @@
 // one entry for the series several marks show of the same value. Each
 // legend claims the scales it shows; the automatic legend shows the rest.
 
+import type { SeriesSwatch } from "../model/features.ts";
 import type { GuideKit, PlacedLegend } from "../model/guides.ts";
 import type { MarkSeries } from "../model/inspect.ts";
 import type {
@@ -485,8 +486,18 @@ function derived(
   const merged = new Map<string, Row>();
   for (const entry of content.entries) {
     const mark = markOf(entry.key);
-    const sample =
-      options.swatches === "mark" ? sampleOf(kit, mark?.spec, entry, theme) : undefined;
+    // A series styled by the feature compiler says how it looks.
+    const own =
+      options.swatches === "mark" &&
+      marks
+        .flatMap(({ series }) => series)
+        .find((s) => s.key === entry.key)
+        ?.features?.swatch?.(theme);
+    const sample = own
+      ? swatchItems(kit, own)
+      : options.swatches === "mark"
+        ? sampleOf(kit, mark?.spec, entry, theme)
+        : undefined;
     const row: Row = {
       key: entry.key,
       label: entry.label,
@@ -608,6 +619,7 @@ function sampleOf(
     strokeWidth?: number;
     dash?: Dash;
     fillOpacity?: number;
+    opacity?: number;
     stack?: unknown;
     y1?: unknown;
     y2?: unknown;
@@ -655,10 +667,13 @@ function sampleOf(
       return swatchItems(kit, { type: "rect", fill: entry.color, opacity });
     }
     default:
+      // Bars as they paint: outlined in their stroke, at their opacities.
       return swatchItems(kit, {
         type: "rect",
         fill: entry.color,
-        ...(mark.fillOpacity !== undefined && { opacity: mark.fillOpacity }),
+        ...(mark.type === "bar" && mark.stroke !== undefined && { stroke: mark.stroke }),
+        ...(mark.fillOpacity !== undefined && { fillOpacity: mark.fillOpacity }),
+        ...(mark.opacity !== undefined && { opacity: mark.opacity }),
       });
   }
 }
@@ -674,7 +689,7 @@ function readSwatch(read: Read, swatch: SwatchSpec, path: string): SwatchSpec {
 }
 
 /** A swatch's items about its left middle, and its size. */
-function swatchItems(kit: GuideKit, swatch: SwatchSpec): Sample {
+function swatchItems(kit: GuideKit, swatch: SeriesSwatch): Sample {
   switch (swatch.type) {
     case "line": {
       const strokeWidth = swatch.strokeWidth ?? 2;
@@ -696,7 +711,12 @@ function swatchItems(kit: GuideKit, swatch: SwatchSpec): Sample {
       };
     }
     case "rect": {
-      const opacity = swatch.opacity !== undefined && { opacity: swatch.opacity };
+      // The fill's opacity under the outline's; a box without one, both as one.
+      const { fillOpacity, opacity } = swatch;
+      const alpha =
+        fillOpacity === undefined && opacity === undefined
+          ? undefined
+          : (fillOpacity ?? 1) * (opacity ?? 1);
       const h = SWATCH / 2;
       return {
         width: SWATCH,
@@ -710,7 +730,8 @@ function swatchItems(kit: GuideKit, swatch: SwatchSpec): Sample {
                 at: [h, 0],
                 fill: swatch.fill,
                 stroke: swatch.stroke,
-                ...opacity,
+                ...(fillOpacity !== undefined && { fillOpacity }),
+                ...(opacity !== undefined && { opacity }),
               }
             : {
                 type: "rect",
@@ -720,7 +741,7 @@ function swatchItems(kit: GuideKit, swatch: SwatchSpec): Sample {
                 height: SWATCH,
                 radius: 2,
                 fill: swatch.fill,
-                ...opacity,
+                ...(alpha !== undefined && { opacity: alpha }),
               },
         ],
       };
@@ -743,12 +764,33 @@ function swatchItems(kit: GuideKit, swatch: SwatchSpec): Sample {
         ],
       };
     }
-    case "composite": {
-      const parts = swatch.parts.map((part) => swatchItems(kit, part));
+    case "glyph": {
+      const size = Math.max(SWATCH, swatch.size);
       return {
-        width: Math.max(...parts.map((part) => part.width)),
+        width: size,
+        height: size,
+        items: [
+          {
+            type: "shape",
+            d: swatch.d,
+            at: [size / 2, 0],
+            fill: swatch.fill,
+            ...(swatch.stroke && { stroke: swatch.stroke }),
+            ...(swatch.opacity !== undefined && { opacity: swatch.opacity }),
+          },
+        ],
+      };
+    }
+    case "composite": {
+      // Parts over one another, centered on the widest: a line with its marker on it.
+      const parts = swatch.parts.map((part) => swatchItems(kit, part));
+      const width = Math.max(...parts.map((part) => part.width));
+      return {
+        width,
         height: Math.max(...parts.map((part) => part.height)),
-        items: parts.flatMap((part) => part.items),
+        items: parts.flatMap((part) =>
+          part.items.map((item) => moved(item, (width - part.width) / 2, 0, undefined)),
+        ),
       };
     }
   }

@@ -208,9 +208,16 @@ describe("loadSpec", () => {
     expect(check({ marks: [{ type: "rule", y: true }] })).toThrow(
       /marks\[0\]\.y: expected a finite number or a field name/,
     );
-    expect(check({ marks: [{ type: "text", x: 1, y: 2, anchor: "left", label: "a" }] })).toThrow(
-      /marks\[0\]\.anchor: expected "start", "middle", or "end"; received "left"/,
+    expect(
+      check({
+        marks: [{ type: "text", x: 1, y: 2, label: { text: "a", style: { align: "left" } } }],
+      }),
+    ).toThrow(
+      /marks\[0\]\.label\.style\.align: expected "start", "center", or "end"; received "left"/,
     );
+    expect(
+      check({ marks: [{ type: "text", x: { fraction: 2, scale: "y" }, y: 2, label: "a" }] }),
+    ).toThrow(/marks\[0\]\.x\.scale: expected absent for fractions and pixels/);
     expect(check({ marks: [null] })).toThrow(/marks\[0\]: expected an object; received null/);
     expect(check({ x: { type: "polar" }, marks: [] })).toThrow(/spec\.x\.type: expected "linear"/);
     expect(
@@ -234,9 +241,9 @@ describe("loadSpec", () => {
     expect(
       check({
         data: { t: { columns: { c: ["a"], v: [1] } } },
-        marks: [{ type: "bar", x: "c", y: "v", labels: { maximumFractionDigits: -1 } }],
+        marks: [{ type: "bar", x: "c", y: "v", labels: { format: { maximumFractionDigits: -1 } } }],
       }),
-    ).toThrow(/marks\[0\]\.labels: /);
+    ).toThrow(/marks\[0\]\.labels\.format: /);
     expect(check({ interaction: { brush: "z" }, marks: [] })).toThrow(
       /spec\.interaction\.brush: expected "x", "y", "xy", or "lasso"; received "z"/,
     );
@@ -459,10 +466,16 @@ describe("loadSpec", () => {
       },
       marks: [
         { type: "line", data: "metrics", x: "t", y: "v" },
-        { type: "rule", data: "deploys", x: "at", textField: "version" },
+        { type: "rule", data: "deploys", x: "at", label: { field: "version" } },
         { type: "rule", y: 1.5, label: "limit" },
         { type: "region", x1: start, x2: start + 600_000, label: "warmup" },
-        { type: "text", data: "metrics", x: "t", y: "v", textField: "v", dy: -8 },
+        {
+          type: "text",
+          data: "metrics",
+          x: "t",
+          y: { field: "v", offset: -8 },
+          label: { field: "v" },
+        },
       ],
     });
     // Constant annotations read no table, even when the spec has several.

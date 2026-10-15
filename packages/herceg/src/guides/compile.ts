@@ -37,10 +37,14 @@ function compile(kit: GuideKit, config: ChartConfig): CompiledGuides {
   });
   // The model merged `scales` into the short forms; their settings are named where they are set.
   const { scales } = config;
-  for (const name of Object.keys(scales ?? {}))
-    if (!SCALES.includes(name as ScaleName))
+  // Other scales are categories' (the feature compiler's).
+  for (const [name, scale] of Object.entries(scales ?? {}))
+    if (
+      !SCALES.includes(name as ScaleName) &&
+      (scale as { type?: string } | undefined)?.type !== "ordinal"
+    )
       throw new Error(
-        `chart scales.${name}: marks place values on x, y, and yRight only; name one of those`,
+        `chart scales.${name}: marks place values on x, y, and yRight; name one of those, or give type: "ordinal" for a scale of categories`,
       );
   for (const scale of SCALES) note(scales?.[scale], `scales.${scale}`);
   let read = config;

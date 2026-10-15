@@ -57,12 +57,19 @@ function rectPath(mark: RectGeometry): string {
 }
 
 function rectElements(mark: RectGeometry): SvgElement[] {
-  return [
-    {
-      tag: "path",
-      attributes: { d: rectPath(mark), fill: mark.fill, "fill-opacity": String(mark.fillOpacity) },
-    },
-  ];
+  const attributes: Record<string, string> = {
+    d: rectPath(mark),
+    fill: mark.fill,
+    "fill-opacity": String(mark.fillOpacity),
+  };
+  const edge = mark.edge;
+  if (edge) {
+    attributes.stroke = edge.stroke;
+    attributes["stroke-width"] = String(edge.width);
+    if (edge.opacity !== 1) attributes["stroke-opacity"] = String(edge.opacity);
+    if (edge.dash?.length) attributes["stroke-dasharray"] = edge.dash.join(" ");
+  }
+  return [{ tag: "path", attributes }];
 }
 
 export const rectDrawing: Drawing<RectGeometry> = {
@@ -75,6 +82,15 @@ export const rectDrawing: Drawing<RectGeometry> = {
     context.globalAlpha = mark.fillOpacity;
     context.fillStyle = mark.fill;
     context.fill();
+    const edge = mark.edge;
+    if (edge) {
+      context.globalAlpha = edge.opacity;
+      context.strokeStyle = edge.stroke;
+      context.lineWidth = edge.width;
+      context.setLineDash((edge.dash ?? []) as number[]);
+      context.stroke();
+      context.setLineDash([]);
+    }
     context.globalAlpha = 1;
   },
 };

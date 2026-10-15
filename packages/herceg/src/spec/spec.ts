@@ -7,7 +7,17 @@
 // columns can travel as binary buffers next to the JSON (see `BinaryColumnSpec`).
 
 import type { Expression } from "../data/expression.ts";
+import type {
+  BarLabelsSpec,
+  ContinuitySpec,
+  EncodingsSpec,
+  LabelSpec,
+  MarkStyleSpec,
+  StackSpec,
+  SymbolName,
+} from "./encoding.ts";
 import type { FormatSpec, GuideSpec, LegendOptionsSpec, ScalesSpec, TicksSpec } from "./guides.ts";
+import type { Coordinate, Position } from "./place.ts";
 import type {
   AxisStyles,
   Halo,
@@ -19,6 +29,7 @@ import type {
 } from "./style.ts";
 
 export type { Expression, Operator } from "../data/expression.ts";
+export type * from "./encoding.ts";
 export type * from "./guides.ts";
 export type * from "./place.ts";
 export type * from "./style.ts";
@@ -37,7 +48,11 @@ export type Field = string;
  * time, since a mark's caches depend on it. Change a chart by giving it new
  * marks (`chart.update({ marks })`), not by editing a mark's spec.
  */
-export type Frozen<T> = T extends object ? { readonly [K in keyof T]: Frozen<T[K]> } : T;
+export type Frozen<T> = T extends Expression
+  ? T
+  : T extends object
+    ? { readonly [K in keyof T]: Frozen<T[K]> }
+    : T;
 
 export interface ChartSpec {
   /** Spec format version; 1, the only one so far, when omitted. */
@@ -823,9 +838,29 @@ export interface LineSpec extends SeriesBase, RowTooltip {
   strokeWidth?: number;
   /** Pixel dash array, or a matplotlib style scaled by strokeWidth. */
   dash?: Dash;
+  /** From 0 to 1: the whole mark's, markers included. */
+  opacity?: number;
+  /** From 0 to 1: the line's stroke's. */
+  strokeOpacity?: number;
   curve?: Curve;
   /** Legend and tooltip name for a single-field line without `series`. */
   label?: string;
+  /**
+   * The lines' color: a category field's value (constant within each
+   * series) through the chart's "color" scale, or a color. The short form
+   * of `encode.color`; `stroke` wins over it.
+   */
+  color?: string;
+  /** Channels: color, stroke, dash, strokeWidth, and opacity, each constant within a series. */
+  encode?: Pick<EncodingsSpec, "color" | "stroke" | "dash" | "strokeWidth" | "opacity">;
+  /** Looks by series (`by`) and the markers' look. */
+  style?: Pick<MarkStyleSpec, "by" | "marker">;
+  /** A marker at each observation drawn: a circle (`true`) or the shape named. */
+  markers?: boolean | SymbolName;
+  /** Which observations the lines connect. */
+  continuity?: ContinuitySpec;
+  /** Rows the lines leave out, as gaps: they draw only where it holds. */
+  where?: Expression;
 }
 
 interface AreaStyle extends SeriesBase, RowTooltip {
@@ -841,6 +876,20 @@ interface AreaStyle extends SeriesBase, RowTooltip {
   stroke?: string;
   /** Outline width in pixels; the theme's line width by default. */
   strokeWidth?: number;
+  /** From 0 to 1: the outline's. */
+  strokeOpacity?: number;
+  /** From 0 to 1: the whole mark's. */
+  opacity?: number;
+  /** The areas' fill: a category field (constant within each series) through the chart's "color" scale, or a color. */
+  color?: string;
+  /** Channels, each constant within a series: color, fill, stroke, and opacity. */
+  encode?: Pick<EncodingsSpec, "color" | "fill" | "stroke" | "opacity">;
+  /** Looks by series (`by`). */
+  style?: Pick<MarkStyleSpec, "by">;
+  /** Which observations the areas connect (areas that do not stack). */
+  continuity?: ContinuitySpec;
+  /** Rows the areas leave out, as gaps (areas that do not stack). */
+  where?: Expression;
   curve?: Curve;
   label?: string;
 }
@@ -875,10 +924,8 @@ export type AreaSpec = AreaStyle &
         /** Values filled to zero (one field or several), or with `orient: "y"` the positions. */
         y: Field | readonly Field[];
         series?: Field;
-        stack?: AreaStack;
-        stackOrder?: StackOrder;
-        /** With `stack` and `series`: what a series counts as where it has no row. */
-        stackGaps?: StackGaps;
+        /** Pile the areas up: `true`, a mode, or its parts (`offset`, `order`, `gaps`). */
+        stack?: AreaStack | StackSpec;
         y1?: never;
         y2?: never;
         x1?: never;
@@ -895,8 +942,6 @@ export type AreaSpec = AreaStyle &
         x2?: never;
         series?: never;
         stack?: never;
-        stackOrder?: never;
-        stackGaps?: never;
       }
     | {
         y: Field;
@@ -909,8 +954,6 @@ export type AreaSpec = AreaStyle &
         y2?: never;
         series?: never;
         stack?: never;
-        stackOrder?: never;
-        stackGaps?: never;
       }
   );
 
@@ -921,23 +964,42 @@ export type AreaSpec = AreaStyle &
  */
 export type AnnotationValue = number | Field;
 
+/**
+ * A place along an axis as annotations take it: a value (a number, or a
+ * field's name), or any coordinate: `{ data }` (a category's value too),
+ * `{ field }`, `{ fraction }` of the plot, or `{ px }`, each with an offset
+ * in pixels.
+ */
+export type AnnotationPosition = AnnotationValue | Coordinate;
+
 /** Where rules stand: at `x` (vertical) or at `y` (horizontal). */
 export type RulePosition<P> = { x: P; y?: never } | { y: P; x?: never };
 
 /** Horizontal (y) or vertical (x) reference lines. */
-export type RuleSpec = RuleStyle & RulePosition<AnnotationValue>;
+export type RuleSpec = RuleStyle & RulePosition<AnnotationPosition>;
 
-interface RuleStyle extends MarkBase {
+/** What annotations have besides their places. */
+interface AnnotationBase extends MarkBase {
+  /**
+   * Whether the annotation's values count toward the axes' domains, so the
+   * view widens to keep them in it; false by default, so annotations show
+   * where the data is. Fractions and pixels never count.
+   */
+  contributeDomain?: boolean;
+}
+
+interface RuleStyle extends AnnotationBase {
   type: "rule";
   stroke?: string;
   strokeWidth?: number;
   dash?: Dash;
-  /** Text drawn by every rule. */
-  label?: string;
-  /** Category or number field with each rule's text, for rules from data. */
-  textField?: Field;
+  /** From 0 to 1. */
+  strokeOpacity?: number;
+  /** Where along the other axis the rule runs, from one place to the other; the plot's whole extent by default. */
+  span?: readonly [Coordinate, Coordinate];
+  /** Text drawn by every rule: constant, or each row's `field`, placed and styled as it says. */
+  label?: string | LabelSpec;
 }
-
 /** A SciPy-layout linkage tree, whose leaves stand on category bands. */
 export interface DendrogramSpec extends Omit<MarkBase, "axis"> {
   type: "dendrogram";
@@ -964,9 +1026,9 @@ export type RegionRange<P> =
  * `y2` across its width, or rectangles with both. Drawn in mark order, so
  * list them before the marks they highlight to draw them underneath.
  */
-export type RegionSpec = RegionStyle & RegionRange<AnnotationValue>;
+export type RegionSpec = RegionStyle & RegionRange<AnnotationPosition>;
 
-interface RegionStyle extends MarkBase {
+interface RegionStyle extends AnnotationBase {
   /**
    * The outline that keeps the mark's text readable over what it is drawn
    * on: "auto" (the default), false for none, or a color of its own.
@@ -977,36 +1039,28 @@ interface RegionStyle extends MarkBase {
   fill?: string;
   /** Default 0.15. */
   fillOpacity?: number;
-  /** Text drawn in the top left corner of every region. */
-  label?: string;
-  /** Category or number field with each region's text. */
-  textField?: Field;
+  /** Text drawn in every region (in its top left corner by default), constant or each row's `field`. */
+  label?: string | LabelSpec;
 }
 
 /**
- * Text at (x, y): `label` for one constant text, or `textField` for a field with
- * each row's text. Labels are drawn above the data and left out when their
- * point is outside the plot.
+ * Text at a place (`at`, or `x` and `y`): constant `label` text, or each
+ * row's `label.field`. Labels are drawn above the data and left out when
+ * their place is outside the plot.
  */
-export interface TextSpec extends MarkBase {
+export interface TextSpec extends AnnotationBase {
   /**
    * The outline that keeps the mark's text readable over what it is drawn
    * on: "auto" (the default), false for none, or a color of its own.
    */
   halo?: Halo;
   type: "text";
-  x: AnnotationValue;
-  y: AnnotationValue;
-  label?: string;
-  /** Category or number field with each label's text. */
-  textField?: Field;
-  /** Defaults to the theme's text color. */
-  fill?: string;
-  /** Which end of the text is at the point. Default "middle". */
-  anchor?: "start" | "middle" | "end";
-  /** Pixel offsets from the point; positive dy moves down. */
-  dx?: number;
-  dy?: number;
+  /** Short forms of `at`'s coordinates. */
+  x?: AnnotationPosition;
+  y?: AnnotationPosition;
+  /** Where the text is: a coordinate on each axis, of any kinds (a fraction of the plot's width at a data value). */
+  at?: Position;
+  label: string | LabelSpec;
   /**
    * Labels that would cover an earlier one of this mark: drawn anyway
    * ("show", the default), left out ("hide"), or, where their place is taken
@@ -1014,6 +1068,8 @@ export interface TextSpec extends MarkBase {
    * fits ("move").
    */
   overlap?: "show" | "hide" | "move";
+  /** The look of lines from moved labels back to their points. */
+  style?: Pick<MarkStyleSpec, "leader">;
 }
 
 /**
@@ -1032,17 +1088,35 @@ export interface BarSpec extends SeriesBase, RowTooltip {
   x: Field | readonly Field[];
   y: Field | readonly Field[];
   series?: Field;
-  /** Stack series instead of placing them side by side. */
+  /** Pile series up at each position. */
   stack?: BarStack;
+  /**
+   * Place series side by side in each position, as grouped bars: true by
+   * default for series that do not stack; false overlaps them. `color`
+   * alone makes no series, so never places bars apart.
+   */
+  dodge?: boolean;
   fill?: string;
   fillOpacity?: number;
+  /** Edges: an outline of every bar. */
+  stroke?: string;
+  strokeWidth?: number;
+  strokeOpacity?: number;
+  dash?: Dash;
+  /** From 0 to 1: the bars', fill and edges. */
+  opacity?: number;
+  /** The bars' fill: a category field through the chart's "color" scale, or a color (see `encode.color`). */
+  color?: string;
+  /** Channels per bar: color, fill, stroke, strokeWidth, and opacity. */
+  encode?: Pick<EncodingsSpec, "color" | "fill" | "stroke" | "strokeWidth" | "opacity">;
+  /** Looks by value: by series, or with `field`, by each bar's value. */
+  style?: Pick<MarkStyleSpec, "by">;
   label?: string;
   /**
-   * Write each bar's value at its end (or, stacked, inside each segment), as
-   * a number or with these Intl.NumberFormat options. Labels that do not fit
-   * are left out.
+   * Write each bar's value at its end (or, stacked, inside each segment):
+   * `true`, or how. Labels that do not fit are left out.
    */
-  labels?: boolean | Intl.NumberFormatOptions;
+  labels?: boolean | BarLabelsSpec;
 }
 
 /** Individual observations as short ticks standing at a plot edge. */

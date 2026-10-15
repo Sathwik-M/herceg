@@ -11,7 +11,10 @@ export interface TraceSource {
   length: number;
 }
 
-export type TraceColumns = Pick<TraceSource, "x" | "y" | "y0" | "length">;
+/** A series' points copied: their columns, and each position's row of the table (`sources`). */
+export type TraceColumns = Pick<TraceSource, "x" | "y" | "y0" | "length"> & {
+  sources: ArrayLike<number> | undefined;
+};
 export type TraceBuffers = (key: string, stage: string, length: number) => Float64Array;
 
 export interface PositionLookup {
@@ -28,6 +31,9 @@ export function copyTrace(
   const x = buffers(s.key, "placed", n);
   const y = buffers(s.key, "placed-values", n);
   const y0 = s.y0 && buffers(s.key, "placed-bases", n);
+  // Each copy's row, for the series whose features read rows (`where`, continuity).
+  const own = s as { features?: { trace?: unknown }; sources?: ArrayLike<number> };
+  const sources = own.features?.trace ? buffers(s.key, "placed-rows", n) : undefined;
   let length = 0;
   for (let k = 0; k < n; k++) {
     const row = s.rows ? s.rows[k]! : k;
@@ -35,7 +41,8 @@ export function copyTrace(
     x[length] = places ? places.at(s.x[row]!) : s.x[row]!;
     y[length] = s.y[row]!;
     if (y0) y0[length] = s.y0![row]!;
+    if (sources) sources[length] = own.sources?.[k] ?? row;
     length++;
   }
-  return { x, y, y0, length };
+  return { x, y, y0, length, sources };
 }

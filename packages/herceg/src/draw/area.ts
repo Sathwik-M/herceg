@@ -76,6 +76,7 @@ function areaElements(area: AreaGeometry): SvgElement[] {
         "stroke-width": String(area.strokeWidth),
         "stroke-linejoin": "round",
         ...(isolated && { "stroke-linecap": "round" }),
+        ...(area.strokeOpacity !== undefined && { "stroke-opacity": String(area.strokeOpacity) }),
       },
     });
   }
@@ -99,6 +100,8 @@ export const areaDrawing: Drawing<AreaGeometry> = {
     traceAreaOutline(context, area);
     context.strokeStyle = area.stroke ?? area.fill;
     context.lineWidth = area.strokeWidth;
+    context.globalAlpha = area.strokeOpacity ?? 1;
     context.stroke();
+    context.globalAlpha = 1;
   },
 };

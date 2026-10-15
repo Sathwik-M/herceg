@@ -218,7 +218,9 @@ describe("bar labels", () => {
 
   it("write values after horizontal bars, before negative ones, with Intl options", () => {
     const { scene } = build({
-      marks: [bar(sales, { x: "q2", y: "region", labels: { minimumFractionDigits: 1 } })],
+      marks: [
+        bar(sales, { x: "q2", y: "region", labels: { format: { minimumFractionDigits: 1 } } }),
+      ],
     });
     const [after, before] = texts(scene);
     expect([after!.anchor, after!.labels]).toEqual(["start", ["5.0", "15.0"]]);
@@ -322,7 +324,11 @@ describe("bar labels", () => {
       x: Float64Array.from({ length: 20_000 }, (_, i) => i),
       v: new Float64Array(20_000).fill(5),
     });
-    const counting = bar(many, { x: "x", y: "v", labels: { maximumFractionDigits: 0 } });
+    const counting = bar(many, {
+      x: "x",
+      y: "v",
+      labels: { format: { maximumFractionDigits: 0 } },
+    });
     const prototype = Intl.NumberFormat.prototype as unknown as { readonly format: unknown };
     const format = vi.spyOn(prototype, "format", "get");
     try {
@@ -342,7 +348,12 @@ describe("bar labels", () => {
             x: "region",
             y: ["a", "b"],
             stack: true,
-            labels: { numberingSystem: "fullwide", useGrouping: false } as Intl.NumberFormatOptions,
+            labels: {
+              format: {
+                numberingSystem: "fullwide",
+                useGrouping: false,
+              } as Intl.NumberFormatOptions,
+            },
           }),
         ],
       },

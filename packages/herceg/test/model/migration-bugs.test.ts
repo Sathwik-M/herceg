@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { table } from "../../src/data/table.ts";
 import { areaPath } from "../../src/draw/area.ts";
-import { labelHalo } from "../../src/draw/text.ts";
+import { labelHalo } from "../../src/draw/label-halo.ts";
 import { timeTickLabels } from "../../src/format/format.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { area } from "../../src/marks/area.ts";

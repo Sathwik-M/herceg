@@ -19,7 +19,8 @@ import {
   sum,
   variance,
 } from "../../src/data/derive.ts";
-import { col, compileExpression, type Expression, when } from "../../src/data/expression.ts";
+import { col, when } from "../../src/data/expr.ts";
+import { compileExpression, type Expression } from "../../src/data/expression.ts";
 import { quantile } from "../../src/data/quantile.ts";
 import { type Schema, type Table, table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";

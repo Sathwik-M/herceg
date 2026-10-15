@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ColumnInput } from "../../src/data/column.ts";
 import { time } from "../../src/data/column.ts";
-import { col, compileExpression, type Expression } from "../../src/data/expression.ts";
+import { col } from "../../src/data/expr.ts";
+import { compileExpression, type Expression } from "../../src/data/expression.ts";
 import { RowSet } from "../../src/data/row-set.ts";
 import { rowView } from "../../src/data/row-view.ts";
 import { type DataSelection, selectionStore, selectRows } from "../../src/data/selection.ts";
@@ -27,6 +28,7 @@ import {
   cursorRows,
   type Brushed as Selection,
 } from "../../src/model/selected-rows.ts";
+import { staticCompilers } from "../../src/render/compilers.ts";
 import type { AreaGeometry, PointGeometry, RectGeometry } from "../../src/scene/scene.ts";
 
 /** Tables as charts read them, whatever their fields. */
@@ -105,6 +107,28 @@ describe("brushes as conditions", () => {
     // A live condition: an appended row inside the range joins.
     source.append({ x: [3.2], y: [9] });
     expect(rowsOf(selection, source)).toEqual([1, 2, 4]);
+  });
+
+  it("leave out rows that where and continuity.defined leave out", () => {
+    const source = table({ x: [1, 2, 3, 4], y: [1, -2, 3, 4], ok: [1, 1, 1, 0] });
+    const model = new ChartModel(
+      {
+        locale: "en-US",
+        marks: [
+          line(source, {
+            x: "x",
+            y: "y",
+            where: col("y").gt(0),
+            continuity: { defined: col("ok").eq(1) },
+          }),
+        ],
+      },
+      undefined,
+      ...staticCompilers(),
+    );
+    model.setSize(600, 400, 1);
+    model.scene(estimateText);
+    expect(rowsOf(brushedRows(model, source, xRange([0, 5]), null), source)).toEqual([0, 2]);
   });
 
   it("bound times in epoch milliseconds", () => {

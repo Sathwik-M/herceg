@@ -114,7 +114,7 @@ area(band, { x: "x", y: "low", y1: "low", y2: "high" });
 area(band, { x: "x", y1: "low", y2: "high", stack: true });
 // Areas of a series field stack too, zero or interpolated where a series has no row.
 bar(readings, { x: "stage", y: "cpu", stack: "fill" });
-area(readings, { x: "at", y: "cpu", stack: "wiggle", stackOrder: "inside-out" });
+area(readings, { x: "at", y: "cpu", stack: { offset: "wiggle", order: "inside-out" } });
 area(readings, { x: "cpu", y: "at", orient: "y", stack: "center" });
 // @ts-expect-error stream offsets belong to areas
 bar(readings, { x: "stage", y: "cpu", stack: "center" });
@@ -122,9 +122,9 @@ bar(readings, { x: "stage", y: "cpu", stack: "center" });
 area(band, { x: "x", y1: "low", y2: "high", stackOrder: "inside-out" });
 const usage = table({ t: [0], cpu: [1], host: ["a"] });
 area(usage, { x: "t", y: "cpu", series: "host", stack: true });
-area(usage, { x: "t", y: "cpu", series: "host", stack: true, stackGaps: "interpolate" });
+area(usage, { x: "t", y: "cpu", series: "host", stack: { gaps: "interpolate" } });
 // @ts-expect-error gaps are zero or interpolated
-area(usage, { x: "t", y: "cpu", series: "host", stack: true, stackGaps: "linear" });
+area(usage, { x: "t", y: "cpu", series: "host", stack: { gaps: "linear" } });
 // @ts-expect-error bands have no gaps to fill
 area(band, { x: "x", y1: "low", y2: "high", stackGaps: "zero" });
 errorBar(band, { x: "x", y1: "low", y2: "high" });

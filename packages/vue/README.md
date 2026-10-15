@@ -40,7 +40,7 @@ share a chart with each other, projected by its `projection` prop, and
 `<Point3D>`, `<Line3D>`, and `<Surface>` a 3D chart seen from its `camera`
 prop. Annotations
 (`<Rule>`, `<Region>`, `<Text>`) take `data` only when they draw one item per
-row: `<Rule :data="deploys" x="time" textField="version" />`. Marks built with
+row: `<Rule :data="deploys" x="time" :label="{ field: 'version' }" />`. Marks built with
 herceg's functions can also be passed as a `marks` prop. Options may be
 written in kebab-case (`:stroke-width="2"`), and boolean options as bare
 attributes (`<Area stack />`). The slot holds mark components directly:
@@ -167,18 +167,19 @@ export const latencyMarks = (data: Table) => [
 ## Normalized stacks and streamgraphs
 
 ```vue
-<Area :data="usage" x="time" :y="['user', 'system']" stack="wiggle" stack-order="inside-out" />
-<Bar :data="sales" x="region" :y="['q1', 'q2']" stack="fill" :labels="{ style: 'percent' }" />
+<Area :data="usage" x="time" :y="['user', 'system']" :stack="{ offset: 'wiggle', order: 'inside-out' }" />
+<Bar :data="sales" x="region" :y="['q1', 'q2']" stack="fill" :labels="{ format: { style: 'percent' } }" />
 ```
 
 `Area` accepts `:stack="true"`, `"fill"`, `"center"`, and
-`"wiggle"`; `Bar` accepts true or `"fill"`. Fill normalizes nonnegative values
+`"wiggle"`, or a stack object `{ offset, order, gaps }` with those offsets;
+`Bar` accepts true or `"fill"`. Fill normalizes nonnegative values
 at each position to shares on a 0–1 value axis; its `format: { style: "percent" }`
 shows percent ticks. Center and wiggle keep raw thickness with shifted baselines
-and raw axis extents. `stack-order="inside-out"` applies to
-the three nonnegative area modes. Negative values require ordinary `stack: true`.
-Missing values keep their layer's gaps and count as zero. `stackGaps` resolves
-absent rows before offsets. These options also work for areas with `orient="y"`
+and raw axis extents. `order: "inside-out"` applies to
+the three nonnegative area offsets. Negative values require ordinary `stack: true`.
+Missing values keep their layer's gaps and count as zero. `gaps: "interpolate"`
+fills absent rows by straight lines before offsets. These options also work for areas with `orient="y"`
 and horizontal bars. Tooltips and keyboard text show both share and raw value
 for fill; bar labels show shares. Streams report raw values. Legend toggles,
 facets, subplots, zoom, streaming, and static export use the core engine's stack.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
-import { col } from "../../src/data/expression.ts";
+import { col } from "../../src/data/expr.ts";
 import { rowView } from "../../src/data/row-view.ts";
 import { type Table, table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";

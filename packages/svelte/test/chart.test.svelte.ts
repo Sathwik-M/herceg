@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EXPORT_SCENE, type ExportsScene } from "../../herceg/src/render/export-scene.ts";
 import Annotations from "./Annotations.svelte";
 import Dendrograms from "./Dendrograms.svelte";
+import Encodings from "./Encodings.svelte";
 import Faulty from "./Faulty.svelte";
 import Fields from "./Fields.svelte";
 import Formats from "./Formats.svelte";
@@ -101,8 +102,7 @@ describe("<Chart>", () => {
       render(Stacks, props);
       expect(props.chart!.toSVG()).toContain('fill-opacity="0.85"');
       expect(optionsOf(props.chart!).marks[0]!.spec).toMatchObject({
-        stack,
-        stackOrder: "inside-out",
+        stack: { offset: stack, order: "inside-out" },
       });
       const before = props.chart!.toSVG();
       props.chart!.setVisibility(props.chart!.getLegend()[0]!.key, false);
@@ -110,6 +110,15 @@ describe("<Chart>", () => {
       expect(props.chart!.toSVG()).not.toBe(before);
     });
   }
+  it("passes encodings, markers, conditions, and label objects through Svelte", async () => {
+    const props = $state({ chart: null as HercegChart | null });
+    render(Encodings, props);
+    await props.chart!.loading;
+    const svg = props.chart!.toSVG();
+    expect(svg).toContain('stroke="#00ab41"');
+    expect(svg).toContain(">Goal<");
+  });
+
   it("draws dendrogram components and updates reactive leaf labels", async () => {
     const props = $state({ leaves: ["a", "b"] });
     render(Dendrograms, props);

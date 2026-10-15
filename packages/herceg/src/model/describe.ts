@@ -93,7 +93,8 @@ export function describeChart(model: ChartModel): string {
       return `${s.label} (${onRight ? "right" : "left"} axis${unit ? `, ${unit}` : ""})`;
     };
     for (const s of series.slice(0, MAX_SERIES)) {
-      const drawn = model.parts(s);
+      // Rows continuity and `where` leave out are not read either.
+      const drawn = model.parts(s).map((part) => part.features?.shown?.(part) ?? part);
       const mark = model.markOf(s);
       const y = mark && model.yScaleOf(mark);
       const sentence =

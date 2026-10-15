@@ -157,8 +157,10 @@ describe("areas stacked by a series field", () => {
     expect(Array.from(missing().edges!.top)).toEqual([5]);
   });
 
-  it("interpolate a series between its rows with stackGaps", () => {
-    const { model } = sceneOf({ marks: [stacked(requests(), { stackGaps: "interpolate" })] });
+  it("interpolate a series between its rows with stack.gaps", () => {
+    const { model } = sceneOf({
+      marks: [stacked(requests(), { stack: { gaps: "interpolate" } })],
+    });
     expect(Array.from(model.series()[1]!.edges!.top)).toEqual([11, 17, 23, 30]);
   });
 
@@ -166,7 +168,7 @@ describe("areas stacked by a series field", () => {
     // b has no row at x = 1, where a peaks: b's top there is a's 100 plus
     // b's interpolated 50.
     const data = table({ x: [0, 1, 2, 0, 2], y: [1, 100, 1, 50, 50], s: category([..."aaabb"]) });
-    const mark = area(data, { x: "x", y: "y", series: "s", stack: true, stackGaps: "interpolate" });
+    const mark = area(data, { x: "x", y: "y", series: "s", stack: { gaps: "interpolate" } });
     const { model } = sceneOf({ marks: [mark] });
     expect(model.yScale()!.domain[1]).toBeGreaterThanOrEqual(150);
   });
@@ -236,20 +238,19 @@ describe("areas stacked by a series field", () => {
     expect(Array.from(model.parts(model.series()[1]!)[0]!.edges!.top)).toEqual([10, 20]);
   });
 
-  it("load from specs, which refuse stackGaps without a series stack", () => {
+  it("load from specs, which refuse stack.gaps without a series field", () => {
     const spec = (mark: Record<string, unknown>) =>
       ({
         data: { t: { columns: { x: [0, 1], y: [1, 2], s: ["a", "b"] } } },
         marks: [{ type: "area", x: "x", y: "y", ...mark }],
       }) as never;
-    const { config } = loadSpec(spec({ series: "s", stack: true, stackGaps: "interpolate" }));
-    expect(config.marks[0]!.spec).toMatchObject({ stack: true, stackGaps: "interpolate" });
-    expect(() => loadSpec(spec({ series: "s", stackGaps: "zero" }))).toThrow(/stackGaps/);
-    expect(() => loadSpec(spec({ stack: true, series: "s", stackGaps: "linear" }))).toThrow(
-      /stackGaps/,
+    const { config } = loadSpec(spec({ series: "s", stack: { gaps: "interpolate" } }));
+    expect(config.marks[0]!.spec).toMatchObject({ stack: { gaps: "interpolate" } });
+    expect(() => loadSpec(spec({ stack: { gaps: "zero" } }))).toThrow(
+      "area stack.gaps: for stacks by a series field; give series, or drop gaps",
     );
-    expect(() => area(requests(), { x: "minute", y: "count", stackGaps: "zero" } as never)).toThrow(
-      /stackGaps/,
+    expect(() => loadSpec(spec({ series: "s", stack: { gaps: "linear" } }))).toThrow(
+      /stack\.gaps: expected "zero" or "interpolate"/,
     );
   });
 });
@@ -335,7 +336,7 @@ describe("stacks of series over streaming tables", () => {
     ["areas", <S extends Schema>(data: Table<S>) => stacked(data)],
     [
       "interpolated areas",
-      <S extends Schema>(data: Table<S>) => stacked(data, { stackGaps: "interpolate" }),
+      <S extends Schema>(data: Table<S>) => stacked(data, { stack: { gaps: "interpolate" } }),
     ],
     [
       "bars",

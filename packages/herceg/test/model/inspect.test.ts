@@ -1,7 +1,7 @@
 // Inspected points name their mark, their series, and the row of the mark's
 // table they are, so applications can act on the record under the pointer.
 import { describe, expect, it } from "vitest";
-import { col } from "../../src/data/expression.ts";
+import { col } from "../../src/data/expr.ts";
 import { type FeatureCollection, fromGeoJSON } from "../../src/data/geojson.ts";
 import { rowView } from "../../src/data/row-view.ts";
 import { table } from "../../src/data/table.ts";

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { type ColumnInput, time } from "../../src/data/column.ts";
-import { col, compileExpression, type Expression } from "../../src/data/expression.ts";
+import { col } from "../../src/data/expr.ts";
+import { compileExpression, type Expression } from "../../src/data/expression.ts";
 import { RowSet } from "../../src/data/row-set.ts";
 import { selectionStore, selectRows, selectWhere } from "../../src/data/selection.ts";
 import { type Table, table as typed } from "../../src/data/table.ts";
@@ -19,6 +20,7 @@ import { facet } from "../../src/model/facet.ts";
 import { DIM, Highlighter, membership } from "../../src/model/highlight.ts";
 import { ChartModel } from "../../src/model/model.ts";
 import { rowSelection } from "../../src/model/row-selection.ts";
+import { staticCompilers } from "../../src/render/compilers.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import { renderSvg } from "../../src/render/svg.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
@@ -49,6 +51,102 @@ function highlighted(source: Table, marks: ChartMark[]) {
 
 const ofKind = <G extends Geometry>(geometry: Geometry[], kind: string) =>
   geometry.filter((g) => g.kind === kind) as G[];
+
+describe("highlighting marks' features", () => {
+  function featured(source: Table, marks: ChartMark[]) {
+    const store = selectionStore(source);
+    const highlighter = new Highlighter([{ table: source, store, channel: "focus" }]);
+    const model = new ChartModel(
+      { marks, locale: "en-US", timeZone: "UTC" },
+      undefined,
+      ...staticCompilers(),
+    );
+    model.setSize(600, 400, 1);
+    model.highlight = (mark, series, frame, key) =>
+      highlighter.geometry(mark, series, frame, key) ?? mark.geometry(series, frame, key);
+    return { store, geometry: () => model.scene(estimateText).panels[0]!.marks };
+  }
+
+  it("draws no dot for a selected row `where` leaves out, and lights markers in the selection", () => {
+    const source = table({ x: [0, 1, 2, 3, 4], y: [1, 2, -1, 3, 4] });
+    const { store, geometry } = featured(source, [
+      line(source, { x: "x", y: "y", where: col("y").gt(0), markers: true }),
+    ]);
+    store.set("focus", selectRows(new RowSet(source).add(2)));
+    const points = ofKind<PointGeometry>(geometry(), "point");
+    // Only the markers, dimmed outside the (empty) selected spans: no dot at row 2.
+    expect(points.every((p) => p.key.includes("|markers"))).toBe(true);
+    store.set("focus", selectRows(new RowSet(source).addAll([0, 1])));
+    const lit = ofKind<PointGeometry>(geometry(), "point");
+    // The markers drawn twice: dimmed outside the selected run, as drawn inside it.
+    expect(lit.filter((p) => p.key.includes("|markers")).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("lights whole markers, at lone selected rows too, which take no dot", () => {
+    const sorted = table({ x: [0, 1, 2, 3, 4], y: [1, 2, 3, 4, 5] });
+    const { store, geometry } = featured(sorted, [line(sorted, { x: "x", y: "y", markers: true })]);
+    const markers = () =>
+      ofKind<PointGeometry>(geometry(), "point").map((p) => [p.key.endsWith("on"), p.count]);
+    store.set("focus", selectRows(new RowSet(sorted).addAll([0, 1])));
+    expect(markers()).toEqual([
+      [false, 3],
+      [true, 2],
+    ]);
+    store.set("focus", selectRows(new RowSet(sorted).add(3)));
+    expect(markers()).toEqual([
+      [false, 4],
+      [true, 1],
+    ]);
+    // A lone row's marker only, not a neighbor's at the same x.
+    const close = table({ x: [0, 0.01, 100], y: [1, 5, 3] });
+    const near = featured(close, [line(close, { x: "x", y: "y", markers: true })]);
+    near.store.set("focus", selectRows(new RowSet(close).add(0)));
+    expect(
+      ofKind<PointGeometry>(near.geometry(), "point").map((p) => [p.key.endsWith("on"), p.count]),
+    ).toEqual([
+      [false, 2],
+      [true, 1],
+    ]);
+    // Unsorted lines draw selected rows over the dimmed line: their markers, no dots.
+    const unsorted = table({ x: [0, 2, 1, 3], y: [1, 3, 2, 4] });
+    const fallback = featured(unsorted, [line(unsorted, { x: "x", y: "y", markers: true })]);
+    fallback.store.set("focus", selectRows(new RowSet(unsorted).addAll([0, 2])));
+    const points = ofKind<PointGeometry>(fallback.geometry(), "point");
+    expect(points.map((p) => [p.key.includes("|markers"), p.count])).toEqual([
+      [true, 4],
+      [true, 2],
+    ]);
+  });
+
+  it("draws selected values and lone rows at the line's own opacity", () => {
+    const unsorted = table({ x: [0, 2, 1, 3], y: [1, 3, 2, 4] });
+    const half = featured(unsorted, [line(unsorted, { x: "x", y: "y", opacity: 0.5 })]);
+    half.store.set("focus", selectWhere(true));
+    const alphas = ofKind<LineGeometry>(half.geometry(), "line").map((g) => g.draw.opacity ?? 1);
+    const [under, top] = [Math.min(...alphas), Math.max(...alphas)];
+    expect(top + under * (1 - top)).toBeCloseTo(0.5);
+    // Its markers too, and their outlines.
+    const marked = featured(unsorted, [
+      line(unsorted, {
+        x: "x",
+        y: "y",
+        markers: true,
+        style: { marker: { opacity: 0.5, stroke: "#000000" } },
+      }),
+    ]);
+    marked.store.set("focus", selectWhere(true));
+    const [dimmed, lit] = ofKind<PointGeometry>(marked.geometry(), "point");
+    const shown = (a: number, b: number) => a + b * (1 - a);
+    expect(shown(lit!.fillOpacity, dimmed!.fillOpacity)).toBeCloseTo(0.5);
+    expect(shown(lit!.ring!.opacity!, dimmed!.ring!.opacity!)).toBeCloseTo(0.5);
+    // An invisible line's lone selected row stays invisible.
+    const sorted = table({ x: [0, 1, 2, 3, 4], y: [1, 2, 3, 4, 5] });
+    const unseen = featured(sorted, [line(sorted, { x: "x", y: "y", opacity: 0 })]);
+    unseen.store.set("focus", selectRows(new RowSet(sorted).add(2)));
+    const dots = ofKind<PointGeometry>(unseen.geometry(), "point");
+    expect(dots.map((p) => p.fillOpacity)).toEqual([0]);
+  });
+});
 
 describe("highlighting", () => {
   it("draws every row as usual while the channel holds no selection", () => {

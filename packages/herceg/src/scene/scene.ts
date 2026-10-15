@@ -92,6 +92,8 @@ export interface Geometry {
   readonly draw: Drawing<any>;
   /** What the drawing is cut to, as its mark's `clip` says; see `clipOf`. */
   readonly clip?: Clip | undefined;
+  /** For geometry of a series with a key of its own (a line's markers), the series' key. */
+  readonly of?: string | undefined;
 }
 
 /**
@@ -189,6 +191,8 @@ export interface AreaGeometry extends Geometry {
   /** Outline color for the top edge, or null for none. */
   stroke: string | null;
   strokeWidth: number;
+  /** The outline's opacity, from 0 to 1; 1 when absent. */
+  strokeOpacity?: number | undefined;
   /**
    * For layers of a monotone band or stack in scenes of charts that animate
    * changed values: how the mark curves their shared edges together, which
@@ -213,6 +217,8 @@ export interface RuleGeometry extends Geometry {
   stroke: string;
   strokeWidth: number;
   dash: readonly number[] | undefined;
+  /** The stroke's opacity, from 0 to 1; 1 when absent. */
+  opacity?: number | undefined;
   x1: number;
   y1: number;
   x2: number;
@@ -236,6 +242,16 @@ export interface TextGeometry extends Geometry {
   count: number;
 }
 
+/**
+ * Labels in styles of their own (fonts, sizes, boxes behind them), placed:
+ * text items as guides draw them, which renderers draw as they are.
+ */
+export interface LabelsGeometry extends Geometry {
+  kind: "labels";
+  draw: Drawing<LabelsGeometry>;
+  items: readonly TextItem[];
+}
+
 /** Line segments of one series, such as error bars: x1, y1, x2, y2 per segment. */
 export interface SegmentGeometry extends Geometry {
   kind: "segments";
@@ -256,6 +272,8 @@ export interface RectGeometry extends Geometry {
   draw: Drawing<RectGeometry>;
   fill: string;
   fillOpacity: number;
+  /** An outline of every rectangle (bars' edges): its color, width, opacity, and dash. */
+  edge?: { stroke: string; width: number; opacity: number; dash: readonly number[] | undefined };
   rects: Float32Array;
   count: number;
   /**
@@ -670,6 +688,7 @@ export type MarkGeometry =
   | AreaGeometry
   | RuleGeometry
   | TextGeometry
+  | LabelsGeometry
   | RectGeometry
   | PointGeometry
   | RasterGeometry

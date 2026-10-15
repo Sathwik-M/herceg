@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
-import { col } from "../../src/data/expression.ts";
+import { col } from "../../src/data/expr.ts";
 import { geometry } from "../../src/data/geometry.ts";
 import { rowView } from "../../src/data/row-view.ts";
 import { table } from "../../src/data/table.ts";

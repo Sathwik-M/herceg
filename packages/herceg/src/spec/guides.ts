@@ -4,6 +4,7 @@
 // `legend` options are their short forms (see docs/architecture.md,
 // "Scales and guides").
 
+import type { OrdinalScaleSpec } from "./encoding.ts";
 import type { Place, Side } from "./place.ts";
 import type { ScaleScope } from "./spec.ts";
 import type { AxisStyles, LegendStyles, TextStyle } from "./style.ts";
@@ -123,11 +124,16 @@ export interface ScaleSpec {
   tooltipFormat?: FormatSpec;
 }
 
-/** The position scales a chart can name: x, the left y, and the right y. */
+/**
+ * The chart's scales by name: the position scales x, the left y, and the
+ * right y, and scales of categories ("color", which color fields read
+ * unless they name another, "symbol", "dash", or names marks give).
+ */
 export interface ScalesSpec {
   x?: ScaleSpec;
   y?: ScaleSpec;
   yRight?: ScaleSpec;
+  readonly [name: string]: ScaleSpec | OrdinalScaleSpec | undefined;
 }
 
 /**

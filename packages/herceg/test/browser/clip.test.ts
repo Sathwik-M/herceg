@@ -77,8 +77,7 @@ describe("clip", () => {
       text(values, {
         x: "x",
         y: "y",
-        textField: "name",
-        fill: "#00aa00",
+        label: { field: "name", style: { color: "#00aa00" } },
         ...(clip !== undefined && { clip }),
       });
     const chart = createChart(host, { renderer: "canvas", legend: false, marks: [labels()] });

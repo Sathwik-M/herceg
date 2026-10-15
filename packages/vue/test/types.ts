@@ -44,15 +44,15 @@ Point({ data: metrics, x: "service", y: "p50", size: "service" });
 const unwrap = <T>(value: T) => value;
 
 Rule({ y: 250, label: "SLO" });
-Rule({ data: unwrap(deploys), x: "at", textField: "version" });
+Rule({ data: unwrap(deploys), x: "at", label: { field: "version" } });
 // @ts-expect-error rule positions from data are number or time fields
 Rule({ data: unwrap(deploys), x: "version" });
 // @ts-expect-error with data, text is a field of it, also next to constant positions
-Rule({ data: unwrap(deploys), x: 5, textField: "missing" });
-Text({ x: Date.now(), y: 100, label: "now", anchor: "end" });
+Rule({ data: unwrap(deploys), x: 5, label: { field: "missing" } });
+Text({ x: Date.now(), y: 100, label: { text: "now", style: { align: "end" } } });
 // @ts-expect-error constant text needs a label
 Text({ x: 1, y: 2 });
-// @ts-expect-error text from data needs a label or a text field
+// @ts-expect-error text from data needs a label
 Text({ data: unwrap(deploys), x: "at", y: 1 });
 
 // `draw` is typed from the table when there is one.

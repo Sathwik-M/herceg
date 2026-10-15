@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { type ColumnInput, category } from "../../src/data/column.ts";
 import { kde, partDensity } from "../../src/data/density.ts";
-import { col } from "../../src/data/expression.ts";
+import { col } from "../../src/data/expr.ts";
 import { boxStats } from "../../src/data/quantile.ts";
 import { RowSet } from "../../src/data/row-set.ts";
 import { selectionStore, selectRows, selectWhere } from "../../src/data/selection.ts";

@@ -6,13 +6,15 @@ import { table } from "../../src/data/table.ts";
 import { SYMBOLS, type SymbolName, symbolPath, symbolReach } from "../../src/draw/symbols.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
+import { line } from "../../src/marks/line.ts";
 import { PointMark, point } from "../../src/marks/point.ts";
 import { describeChart } from "../../src/model/describe.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
+import { staticCompilers } from "../../src/render/compilers.ts";
 import { renderSvg } from "../../src/render/svg.ts";
 import { SequentialScale } from "../../src/scale/color.ts";
 import { rdbu, scheme, viridis } from "../../src/scale/schemes.ts";
-import type { PointGeometry, RasterGeometry } from "../../src/scene/scene.ts";
+import type { LineGeometry, PointGeometry, RasterGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ChartSpec } from "../../src/spec/spec.ts";
 import { LIGHT } from "../../src/theme.ts";
@@ -23,7 +25,11 @@ const legendShape = (symbol: SymbolName) =>
   symbolPath(symbol, 0, 0, Math.min(4.5, 6 / symbolReach(symbol)));
 
 function build(config: ChartConfig, width = 600, height = 300) {
-  const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
+  const model = new ChartModel(
+    { locale: "en-US", timeZone: "UTC", ...config },
+    undefined,
+    ...staticCompilers(),
+  );
   model.setSize(width, height, 1);
   return { model, scene: model.scene(estimateText) };
 }
@@ -382,7 +388,7 @@ describe("point color by field", () => {
 describe("point color by category", () => {
   const colorOf = (g: PointGeometry, i: number) => g.colors!.palette[g.colors!.index[i]!];
 
-  it("gives each value the theme's next color, in order of appearance, with a color key", () => {
+  it("gives each value the color scale's next color, in the field's order, with a color key", () => {
     const { scene, model } = build({
       marks: [point(cities, { x: "x", y: "y", color: "region" })],
     });
@@ -454,11 +460,7 @@ describe("point color by category", () => {
 
   it("keeps a value's color as the table streams", () => {
     const stream = table({ x: [0], y: [0], kind: ["k0"] }, { maxRows: 2 });
-    const model = new ChartModel({
-      locale: "en-US",
-      marks: [point(stream, { x: "x", y: "y", color: "kind" })],
-    });
-    model.setSize(600, 300, 1);
+    const { model } = build({ marks: [point(stream, { x: "x", y: "y", color: "kind" })] });
     const colors = new Map<string, string>();
     for (let i = 1; i < 40; i++) {
       stream.append({ x: [i], y: [i], kind: [`k${i}`] });
@@ -469,7 +471,7 @@ describe("point color by category", () => {
     }
   });
 
-  it("follows the rows' order of appearance, not the dictionary's", () => {
+  it("follows the field's dictionary (a pandas Categorical's order), not the rows'", () => {
     const flipped = table({
       x: [1, 2],
       y: [1, 2],
@@ -477,33 +479,62 @@ describe("point color by category", () => {
     });
     const { scene } = build({ marks: [point(flipped, { x: "x", y: "y", color: "kind" })] });
     expect(keysOf(scene)[0]!.entries.map((e) => [e.label.text, e.fill])).toEqual([
-      ["B", LIGHT.palette[0]],
-      ["A", LIGHT.palette[1]],
+      ["A", LIGHT.palette[0]],
+      ["B", LIGHT.palette[1]],
     ]);
   });
 
-  it("keeps the keys of marks coloring the same values differently apart", () => {
+  it("give a value one color across marks and lines, through the chart's color scale", () => {
     const first = table({ x: [1, 2], y: [1, 2], kind: ["a", "b"] });
     const second = table({ x: [1, 2, 3], y: [1, 2, 3], kind: ["c", "a", "b"] });
-    const model = new ChartModel({
-      locale: "en-US",
+    const { model, scene } = build({
+      scales: { color: { type: "ordinal", map: { b: "#00ab41" } } },
       marks: [
         point(first, { x: "x", y: "y", color: "kind" }),
         point(second, { x: "x", y: "y", color: "kind" }),
+        line(second, { x: "x", y: "y", series: "kind", color: "kind" }),
       ],
     });
-    model.setSize(600, 300, 1);
-    expect(keysOf(model.scene(estimateText))).toHaveLength(2);
-    // Without c, the second mark's a and b keep the colors they had.
+    const fills = (s: typeof scene) =>
+      keysOf(s).map((key) => key.entries.map((e) => [e.label.text, e.fill]));
+    const a = LIGHT.palette[0];
+    const c = LIGHT.palette[2];
+    expect(fills(scene)).toEqual([
+      [
+        ["a", a],
+        ["b", "#00ab41"],
+      ],
+      [
+        ["a", a],
+        ["b", "#00ab41"],
+        ["c", c],
+      ],
+    ]);
+    const lines = scene.panels[0]!.marks.filter((m): m is LineGeometry => m.kind === "line");
+    expect(lines.map((l) => l.stroke)).toEqual([c, a, "#00ab41"]);
+    // Without c, the second mark's a and b keep their colors, and the keys, now alike, merge.
     second.dropFirst(1);
-    const keys = keysOf(model.scene(estimateText));
-    expect(keys.map((key) => key.entries.map((e) => e.fill))).toEqual([
-      [LIGHT.palette[0], LIGHT.palette[1]],
-      [LIGHT.palette[1], LIGHT.palette[2]],
+    expect(fills(model.scene(estimateText))).toEqual([
+      [
+        ["a", a],
+        ["b", "#00ab41"],
+      ],
     ]);
   });
 
-  it("cycles through at most 255 colors, as the points and the key read them", () => {
+  it("take values outside an explicit domain in the scale's unknown color", () => {
+    const { scene } = build({
+      scales: { color: { type: "ordinal", domain: ["s", "n"], unknown: "#999999" } },
+      marks: [point(cities, { x: "x", y: "y", color: "region" })],
+    });
+    expect(keysOf(scene)[0]!.entries.map((e) => [e.label.text, e.fill])).toEqual([
+      ["s", LIGHT.palette[0]],
+      ["n", LIGHT.palette[1]],
+      ["e", "#999999"],
+    ]);
+  });
+
+  it("cycles through at most 254 colors and the muted one, as the points and the key read them", () => {
     const palette = Array.from({ length: 300 }, (_, i) => `#${i.toString(16).padStart(6, "0")}`);
     const many = table({
       x: Array.from({ length: 260 }, (_, i) => i),
@@ -515,11 +546,41 @@ describe("point color by category", () => {
       marks: [point(many, { x: "x", y: "y", color: "kind" })],
     });
     const [g] = scene.panels[0]!.marks as PointGeometry[];
-    expect(g!.colors!.palette).toHaveLength(255);
+    expect(g!.colors!.palette).toHaveLength(254);
     const fills = keysOf(scene)[0]!.entries.map((e) => e.fill);
-    expect(fills[255]).toBe(palette[0]);
-    const at = model.inspect(model.xScale()!.map(255), model.yScale()!.map(255))!;
+    expect(fills[254]).toBe(palette[0]);
+    const at = model.inspect(model.xScale()!.map(254), model.yScale()!.map(254))!;
     expect(at.points[0]!.color).toBe(palette[0]);
+  });
+
+  it("refuse a color scale whose unknown output is not a color", () => {
+    expect(() =>
+      build({
+        scales: { color: { type: "ordinal", domain: ["n"], unknown: 3 } },
+        marks: [point(cities, { x: "x", y: "y", color: "region" })],
+      }),
+    ).toThrow("chart scales.color.unknown (read by point (mark 0) color): expected a color");
+  });
+
+  it("keep each value's color slot as values come and go", () => {
+    const palette = Array.from({ length: 300 }, (_, i) => `#${i.toString(16).padStart(6, "0")}`);
+    const map = Object.fromEntries(palette.slice(0, 256).map((c, i) => [`k${i}`, c]));
+    const stream = table({
+      x: Array.from({ length: 256 }, (_, i) => i),
+      y: Array.from({ length: 256 }, (_, i) => i),
+      kind: Array.from({ length: 256 }, (_, i) => `k${i}`),
+    });
+    const { model } = build({
+      scales: { color: { type: "ordinal", map } },
+      marks: [point(stream, { x: "x", y: "y", color: "kind" })],
+    });
+    const colorOf = (label: string) =>
+      keysOf(model.scene(estimateText))[0]!.entries.find((e) => e.label.text === label)!.fill;
+    // Past 254 mapped colors, the rest take the muted color, and keep it.
+    expect(colorOf("k255")).toBe(LIGHT.muted);
+    stream.dropFirst(10);
+    expect(colorOf("k255")).toBe(LIGHT.muted);
+    expect(colorOf("k20")).toBe(palette[20]);
   });
 
   it("refuses ramp options for a category color", () => {

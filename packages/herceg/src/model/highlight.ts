@@ -40,6 +40,7 @@ import {
   type SelectionDrawing,
 } from "../marks/mark.ts";
 import { placeAt, rowOf, type Series } from "../marks/series.ts";
+import { alphaOf } from "../scale/color.ts";
 import {
   type AreaGeometry,
   CLOUD_POINTS,
@@ -393,7 +394,7 @@ export class Highlighter {
     // Series spans cannot say: their selected rows' values draw over them instead.
     const others: Series[] = [];
     for (const g of drawn) {
-      const s = byKey.get(g.key);
+      const s = byKey.get(g.of ?? g.key);
       // Line ends are round caps, half a stroke past the last vertex.
       const stroke =
         g.kind === "line"
@@ -408,17 +409,29 @@ export class Highlighter {
       if (!spans && s && !frame.hidden.has(s.key) && !others.includes(s)) others.push(s);
     }
     const lit = new Map<string, Geometry[]>();
+    // Geometry of a series with a key of its own (markers) by its series and kind.
+    const litKey = (g: Geometry, on = "") =>
+      g.of === undefined ? g.key + on : `${g.of}${on}|${g.kind}`;
     if (others.length > 0)
       for (const g of mark.geometry(
         others.map((s) => masked(s, selected, along === "y")),
         own(ON),
         key,
       ))
-        lit.set(g.key, [...(lit.get(g.key) ?? []), ...over(g)]);
+        lit.set(litKey(g), [...(lit.get(litKey(g)) ?? []), ...over(g)]);
     // In the mark's order, each part as it paints it: an area's fill, then its outline.
     const out: Geometry[] = [];
+    const shift = (s: Series) => shiftOf(mark, s, frame);
     for (const g of drawn) {
       const spans = spansFor.get(g);
+      // Markers are lit whole, where their observations are in the selected
+      // runs or are lone selected rows, which they mark in place of dots.
+      if (spans && g.of !== undefined && g.kind === "point") {
+        const lone = loneRows(byKey.get(g.of)!, runs, frame, shift);
+        const [inside, outside] = pointsIn(g as PointGeometry, spans, lone, along);
+        out.push(...dimLayer(outside), inside);
+        continue;
+      }
       if (spans) {
         // Each pixel is painted once: dimmed outside the selected runs, as drawn inside them.
         for (const dimmed of dimLayer(g))
@@ -427,15 +440,85 @@ export class Highlighter {
         continue;
       }
       // Dimmed, then its selected rows' values over it, part by part.
-      const [under, values] = [dimLayer(g), lit.get(g.key + ON) ?? []];
+      const [under, values] = [dimLayer(g), lit.get(litKey(g, ON)) ?? []];
       for (let i = 0; i < Math.max(under.length, values.length); i++) {
         if (under[i]) out.push(under[i]!);
         if (values[i]) out.push(values[i]!);
       }
     }
-    if (type === "line") out.push(...dots(series, runs, frame, (s) => shiftOf(mark, s, frame)));
+    // Dots at the opacity each series' line is drawn at, for series without markers.
+    const opacity = new Map(
+      drawn.filter((g) => g.kind === "line").map((g) => [g.key, g.draw.opacity ?? 1] as const),
+    );
+    const marked = new Set(drawn.map((g) => (g.kind === "point" ? g.of : undefined)));
+    if (type === "line")
+      out.push(
+        ...dots(
+          series.filter((s) => !marked.has(s.key)),
+          runs,
+          frame,
+          shift,
+          (s) => opacity.get(s.key) ?? 1,
+        ),
+      );
     return out;
   }
+}
+
+/**
+ * Points split by whether they stand at selected rows: their centers along
+ * `along` in `spans` (ascending pixel pairs), or within half a pixel of a
+ * lone selected row's place (`lone`, x, y pairs). Those in, and the others.
+ */
+function pointsIn(
+  g: PointGeometry,
+  spans: readonly number[],
+  lone: readonly number[],
+  along: "x" | "y",
+): [PointGeometry, PointGeometry] {
+  const a = along === "x" ? 0 : 1;
+  // Lone rows in order along, each found by a search.
+  const order = Array.from({ length: lone.length / 2 }, (_, i) => i).sort(
+    (i, j) => lone[i * 2 + a]! - lone[j * 2 + a]!,
+  );
+  const places = order.map((i) => lone[i * 2 + a]!);
+  const across = order.map((i) => lone[i * 2 + 1 - a]!);
+  const ends = spans.filter((_, j) => j % 2 === 1);
+  /** The first of ascending `values` at or past `v`. */
+  const search = (values: readonly number[], v: number) => {
+    let [lo, hi] = [0, values.length];
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (values[mid]! < v) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  const parts = [new Float32Array(g.count * 2), new Float32Array(g.count * 2)];
+  const counts = [0, 0];
+  for (let i = 0; i < g.count; i++) {
+    const p = g.coords[i * 2 + a]!;
+    const q = g.coords[i * 2 + 1 - a]!;
+    // The span ending at or after p, which holds p if it starts by then.
+    const k = search(ends, p);
+    let inside = k < ends.length && spans[k * 2]! <= p;
+    for (
+      let j = search(places, p - 0.5);
+      !inside && j < places.length && places[j]! <= p + 0.5;
+      j++
+    )
+      inside = Math.abs(across[j]! - q) <= 0.5;
+    const part = inside ? 0 : 1;
+    parts[part]!.set(g.coords.subarray(i * 2, i * 2 + 2), counts[part]! * 2);
+    counts[part]!++;
+  }
+  const part = (j: number): PointGeometry => ({
+    ...g,
+    key: `${g.key}${j ? "" : ON}`,
+    coords: parts[j]!,
+    count: counts[j]!,
+  });
+  return [part(0), part(1)];
 }
 
 /** How far a mark draws a line's or area's series from its values' place (dodged series). */
@@ -678,6 +761,8 @@ function runsOf(
     const row = rowOf(s, at(i));
     const position = placeAt(s, along, row);
     if (!onAlong(position) || breaks?.hides(placeAt(s, "x", row))) return false;
+    // Rows `where` and `continuity.defined` leave out.
+    if (s.features?.drawn?.(row) === false) return false;
     return (
       edges !== undefined ||
       (onAcross(placeAt(s, across, row)) && (bases === undefined || onAcross(bases[row]!)))
@@ -849,31 +934,43 @@ function clipped(
 
 type DataCanvas = Extract<Drawing<Geometry>, { canvas: unknown }>["canvas"];
 
+/** Where a series draws its runs of one selected row, which no span shows: x, y pixels per row. */
+function loneRows(
+  s: Series,
+  runs: (s: Series) => Runs,
+  frame: Frame,
+  shift: (s: Series) => readonly [number, number],
+): number[] {
+  const coords: number[] = [];
+  const found = runs(s);
+  const [dx, dy] = shift(s);
+  for (let r = 0; r < found.runs.length; r += 2) {
+    if (found.runs[r] !== found.runs[r + 1]) continue;
+    const row = rowOf(s, found.at(found.runs[r]!));
+    coords.push(frame.x.map(placeAt(s, "x", row)) + dx, frame.y.map(placeAt(s, "y", row)) + dy);
+  }
+  return coords;
+}
+
 /** Dots at runs of one row drawn, which no span shows, where `shift` says each series is drawn. */
 function dots(
   series: readonly Series[],
   runs: (s: Series) => Runs,
   frame: Frame,
   shift: (s: Series) => readonly [number, number],
+  opacity: (s: Series) => number,
 ): PointGeometry[] {
   const out: PointGeometry[] = [];
   for (const s of series) {
     if (frame.hidden.has(s.key)) continue;
-    const coords: number[] = [];
-    const found = runs(s);
-    const [dx, dy] = shift(s);
-    for (let r = 0; r < found.runs.length; r += 2) {
-      if (found.runs[r] !== found.runs[r + 1]) continue;
-      const row = rowOf(s, found.at(found.runs[r]!));
-      coords.push(frame.x.map(placeAt(s, "x", row)) + dx, frame.y.map(placeAt(s, "y", row)) + dy);
-    }
+    const coords = loneRows(s, runs, frame, shift);
     if (coords.length === 0) continue;
     out.push({
       kind: "point",
       draw: pointDrawing,
       key: `${s.key}${ON}-dots`,
       fill: s.color,
-      fillOpacity: 1,
+      fillOpacity: opacity(s),
       opaque: false,
       radius: Math.max(2.5, frame.theme.style.line.strokeWidth * 1.5),
       symbol: "circle",
@@ -899,7 +996,12 @@ function dim(geometry: Geometry): Geometry {
   }
   if (geometry.kind === "rect") {
     const rects = geometry as RectGeometry;
-    const dimmed: RectGeometry = { ...rects, fillOpacity: rects.fillOpacity * DIM };
+    const { edge } = rects;
+    const dimmed: RectGeometry = {
+      ...rects,
+      fillOpacity: rects.fillOpacity * DIM,
+      ...(edge && { edge: { ...edge, opacity: edge.opacity * DIM } }),
+    };
     return dimmed;
   }
   let draw = dimmedDrawings.get(geometry.draw);
@@ -923,12 +1025,13 @@ function dimLayer(geometry: Geometry): Geometry[] {
   return area.stroke ? [fill, dim(outlineOf(area))] : [fill];
 }
 
-/** An area's outline as a line of its own, which areas otherwise paint opaque. */
+/** An area's outline as a line of its own, which areas otherwise paint opaque, at its own opacity. */
 function outlineOf(area: AreaGeometry): LineGeometry {
+  const opacity = area.strokeOpacity ?? 1;
   return {
     kind: "line",
     key: `${area.key}-outline`,
-    draw: lineDrawing,
+    draw: opacity === 1 ? lineDrawing : (faded(lineDrawing as Drawing<Geometry>, opacity) as never),
     stroke: area.stroke!,
     strokeWidth: area.strokeWidth,
     dash: undefined,
@@ -948,7 +1051,10 @@ function faded(draw: Drawing<Geometry>, fraction: number): Drawing<Geometry> {
       ((geometry, context) =>
         elements(geometry, context)?.map(({ tag, attributes }) => ({
           tag,
-          attributes: { ...attributes, opacity: String(fraction) },
+          attributes: {
+            ...attributes,
+            opacity: String(fraction * Number(attributes.opacity ?? 1)),
+          },
         }))),
     ...(!draw.guide && {
       canvas(context, geometry, options) {
@@ -974,7 +1080,8 @@ function over(geometry: Geometry): Geometry[] {
   const at = (a: number) => (a >= 1 ? 1 : ((1 - DIM) * a) / (1 - DIM * a));
   if (geometry.kind === "line") {
     const line = geometry as LineGeometry;
-    const c = alphaOf(line.stroke);
+    // The line's alpha: its color's, at the opacity it is drawn at.
+    const c = alphaOf(line.stroke) * (line.draw.opacity ?? 1);
     return [
       c >= 1 || c <= 0
         ? line
@@ -982,6 +1089,21 @@ function over(geometry: Geometry): Geometry[] {
             ...line,
             draw: faded(line.draw as Drawing<Geometry>, at(c) / c) as LineGeometry["draw"],
           },
+    ];
+  }
+  if (geometry.kind === "point") {
+    // Markers: their fill and ring, each at its own alpha.
+    const points = geometry as PointGeometry;
+    const fill = alphaOf(points.fill);
+    const ring = points.ring;
+    const edge = ring && alphaOf(ring.color);
+    return [
+      {
+        ...points,
+        fillOpacity: fill > 0 ? at(points.fillOpacity * fill) / fill : points.fillOpacity,
+        ...(ring &&
+          edge! > 0 && { ring: { ...ring, opacity: at((ring.opacity ?? 1) * edge!) / edge! } }),
+      } as PointGeometry,
     ];
   }
   if (geometry.kind !== "area") return [geometry];
@@ -993,25 +1115,4 @@ function over(geometry: Geometry): Geometry[] {
     stroke: null,
   };
   return area.stroke ? [fill, ...over(outlineOf(area))] : [fill];
-}
-
-/**
- * A CSS color's own alpha: of `transparent`, `#rgba` and `#rrggbbaa`, and
- * functions with one (`rgba(…)`, `rgb(… / a)`, `oklch(… / a)`); 1 for
- * others, named colors and variables, which are taken as opaque.
- */
-function alphaOf(color: string): number {
-  const c = color.trim().toLowerCase();
-  if (c === "transparent") return 0;
-  const hex = /^#(?:[0-9a-f]{3}([0-9a-f])|[0-9a-f]{6}([0-9a-f]{2}))$/.exec(c);
-  if (hex)
-    return hex[1] ? Number.parseInt(hex[1] + hex[1], 16) / 255 : Number.parseInt(hex[2]!, 16) / 255;
-  const args = /^[a-z-]+\((.*)\)$/.exec(c)?.[1];
-  if (args === undefined) return 1;
-  const slash = args.lastIndexOf("/");
-  const parts = args.split(",");
-  const alpha = slash >= 0 ? args.slice(slash + 1) : parts.length === 4 ? parts[3]! : undefined;
-  if (alpha === undefined) return 1;
-  const value = Number.parseFloat(alpha) / (alpha.trim().endsWith("%") ? 100 : 1);
-  return value >= 0 && value <= 1 ? value : 1;
 }

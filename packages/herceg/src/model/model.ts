@@ -42,7 +42,7 @@ import {
 } from "../marks/mark.ts";
 import { type Series, samePositions } from "../marks/series.ts";
 import type { FieldReaders } from "../marks/tooltip-fields.ts";
-import { unionExtent } from "../marks/trace.ts";
+import { domainExtent, unionExtent } from "../marks/trace.ts";
 import type { TimeBreaks } from "../scale/breaks.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
@@ -76,7 +76,8 @@ import {
 } from "./axis.ts";
 import { axisGuide, TICK } from "./axis-guide.ts";
 import type { Facet } from "./facet.ts";
-import type { AxesState, CompiledGuides, GuideCompiler } from "./guides.ts";
+import { type CompiledFeatures, type FeatureCompiler, needsFeatures } from "./features.ts";
+import { type AxesState, type CompiledGuides, type GuideCompiler, needsGuides } from "./guides.ts";
 import type { ItemPanel, ItemViews } from "./item-views.ts";
 import {
   EDGE,
@@ -262,6 +263,9 @@ export class ChartModel {
   /** What plans guides beyond the default, when the chart has it; and its plan of the configuration. */
   #guides: GuideCompiler | undefined;
   #compiled: CompiledGuides | undefined;
+  /** What draws the marks' features (see model/features.ts), when the chart has it, and its compilation. */
+  #features: FeatureCompiler | undefined;
+  #featured: CompiledFeatures | undefined;
   /** The chart's marks along axes, and its layout marks. */
   #marks: readonly Mark[] = [];
   #layouts: readonly LayoutMark[] = [];
@@ -343,10 +347,18 @@ export class ChartModel {
   /**
    * `page` resolves themes that follow the page: "auto" and CSS variables.
    * `guides` plans guides beyond the default: a configuration that needs it
-   * (see `needsGuides`) draws as it asks only with it.
+   * (see `needsGuides`) draws as it asks only with it. `features` draws the
+   * marks' features: a configuration that needs it (see `needsFeatures`)
+   * draws no scene without it.
    */
-  constructor(config: ChartConfig, page?: ThemeEnvironment, guides?: GuideCompiler) {
+  constructor(
+    config: ChartConfig,
+    page?: ThemeEnvironment,
+    guides?: GuideCompiler,
+    features?: FeatureCompiler,
+  ) {
     this.#guides = guides;
+    this.#features = features;
     this.#source = this.#config = this.#configure(config);
     this.#style(page);
   }
@@ -366,12 +378,24 @@ export class ChartModel {
     this.#compiled = this.#guides?.compile(config);
     const read = this.#compiled?.config ?? config;
     [this.#marks, this.#layouts, this.#positions] = validate(read);
+    this.#featured = this.#features?.compile(read, this.#marks, this.#featured);
     return read;
   }
 
-  /** Plans guides with `guides` from now on, resolving styles in `page`. */
-  useGuides(guides: GuideCompiler, page?: ThemeEnvironment): void {
-    this.#guides = guides;
+  /** Which of the guide compiler and the feature compiler the configuration needs and the model lacks. */
+  lacks(): [boolean, boolean] {
+    const config = this.#source;
+    return [!this.#guides && needsGuides(config), !this.#features && needsFeatures(config)];
+  }
+
+  /**
+   * Plans guides with `guides` and draws features with `features` from now
+   * on (each when given), resolving styles in `page`; throws for what they
+   * refuse of the configuration.
+   */
+  use(guides?: GuideCompiler, features?: FeatureCompiler, page?: ThemeEnvironment): void {
+    this.#guides ||= guides;
+    this.#features ||= features;
     this.#config = this.#configure(this.#source);
     this.#style(page);
   }
@@ -569,6 +593,7 @@ export class ChartModel {
       zone: this.#config.timeZone ?? "local",
       locale: this.#config.locale,
       theme: this.#theme,
+      features: this.#featured,
     };
   }
 
@@ -630,10 +655,12 @@ export class ChartModel {
   #resolveSeries(bands: Bands, context: BandContext): MarkSeries[] {
     const layout = this.#panels;
     const { hidden } = this;
+    this.#featured?.update(this.#theme);
     return this.#marks.map((mark, index) => {
       const group = mark.spec.legendGroup;
+      const features = this.#featured?.of(mark);
       // A legend group's series take their colors by name.
-      const palette: Palette =
+      let palette: Palette =
         group === undefined
           ? this.#palette
           : (key, label, color) => {
@@ -641,6 +668,7 @@ export class ChartModel {
               hidden.groups.set(key, entry);
               return this.#palette(entry, label, color);
             };
+      if (features) palette = features.palette(palette);
       const series = mark.series(
         mark.spec.id ?? this.#positions[index]!,
         palette,
@@ -649,6 +677,7 @@ export class ChartModel {
         context,
         layout?.splits(mark),
       );
+      if (features) for (const s of series) features.attach(s);
       return { mark, series };
     });
   }
@@ -675,10 +704,11 @@ export class ChartModel {
     const context = this.#context();
     const marks = this.#split(this.#resolveSeries(this.#bands, context), context).all;
     const breaks = this.#xBreaks(type, context.zone);
-    return unionExtent(
-      marks.map(({ mark, series, rows }) =>
+    return domainExtent(
+      marks.map(({ mark, series, rows }) => [
+        mark,
         mark.xExtent(this.#xSeries(mark, series), type === "log", breaks, rows),
-      ),
+      ]),
     );
   }
 
@@ -713,12 +743,12 @@ export class ChartModel {
   ): [number, number] | undefined {
     const log = type === "log";
     let stands = false;
-    const data = unionExtent(
+    const data = domainExtent(
       parts.flatMap(({ marks, x0, x1, breaks }) =>
         marks.map(({ mark, series, rows }) => {
           const visible = series.filter((s) => !this.hidden.has(s.key));
           if (mark.zero === "y" && (visible.length > 0 || mark.seriesless)) stands = true;
-          return mark.yExtent(visible, x0, x1, log, breaks, rows);
+          return [mark, mark.yExtent(visible, x0, x1, log, breaks, rows)] as const;
         }),
       ),
     );
@@ -828,6 +858,7 @@ export class ChartModel {
     this.#items?.clear();
     const theme = this.#theme;
     const { width, height } = this;
+    const chart = { x: 0, y: 0, width, height };
     const context = this.#context();
     const { zone, locale } = context;
     // The categories of every mark placing them along an axis. Scale types
@@ -960,10 +991,11 @@ export class ChartModel {
       }
       const log = type === "log";
       const breaks = xContexts[h]!.breaks;
-      let dataX = unionExtent(
-        xMarks[h]!.map(({ mark, series, rows }) =>
+      let dataX = domainExtent(
+        xMarks[h]!.map(({ mark, series, rows }) => [
+          mark,
           mark.xExtent(this.#xSeries(mark, series), log, breaks, rows),
-        ),
+        ]),
       );
       if ((spec?.zero ?? xMeasures[h]) && !log) dataX = unionExtent([dataX, [0, 0]]);
       xHas[h] = dataX !== undefined;
@@ -1872,6 +1904,16 @@ export class ChartModel {
         clouds,
         measure,
         keyed,
+        features: this.#featured,
+        chart,
+        // Beside the first and last columns, marks' labels go in their tracks;
+        // elsewhere, beyond the panel's y labels.
+        outside: [
+          (column === 0 && head.labels[0]) ||
+            plot.x - (leftLabels.labeled[i] ? leftLabels.room : 0) - GAP,
+          (column === columns - 1 && head.labels[1]) ||
+            plot.x + plot.width + (rightLabels.labeled[i] ? rightLabels.room : 0) + GAP,
+        ],
         ...this.#pools(i),
       };
       // Marks on the right axis draw with its scale.
@@ -2078,6 +2120,16 @@ export class ChartModel {
           gap: (along || auto ? 8 : 16) + (place.offset ?? 0),
         });
       }
+    // Marks' labels outside the plots (rules' names) stand innermost, beside the y axes.
+    const outside = [0, 0];
+    for (const { mark } of marks)
+      mark.room?.(measure, theme, config.locale, this.#featured).forEach((size, i) => {
+        outside[i] = Math.max(outside[i]!, size);
+      });
+    outside.forEach((size, i) => {
+      if (size)
+        requests.push({ key: `labels${i}`, side: i ? "right" : "left", size, gap: auto ? 0 : GAP });
+    });
     const bottomEdge = height - (auto ? 4 : pb);
     const stacked = stackTracks(requests, {
       top: auto ? (title && titleSide === "top" ? 6 : Math.ceil(theme.fontSize / 2) + 2) : pt,
@@ -2141,6 +2193,7 @@ export class ChartModel {
           : measured.place(at, alignedAt(align, top, floor - top, measured.height))),
       );
     }
+    const track = (i: number) => tracks.get(`labels${i}`);
     return {
       guides,
       inside,
@@ -2149,6 +2202,7 @@ export class ChartModel {
       lift,
       left,
       right,
+      labels: [outside[0] && track(0)! + outside[0], track(1)],
       box: {
         x: auto ? EDGE + left : left,
         y: top,
@@ -2549,9 +2603,11 @@ interface Furniture {
   top: number;
   /** The room under the plots' axes: the bottom's padding, legend, and title. */
   lift: number;
-  /** The room beside the plots' axes on each side: padding and a legend. */
+  /** The room beside the plots' axes on each side: padding, a legend, and marks' labels. */
   left: number;
   right: number;
+  /** Where marks' labels outside the plots end on the left and start on the right, in their tracks. */
+  labels: [number | undefined, number | undefined];
   /** The room left for a chart of one layout mark, which has no axes. */
   box: Rect;
 }

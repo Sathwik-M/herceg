@@ -9,16 +9,17 @@
 // over the strip (dom/navigator.ts) move the window; they load on demand.
 
 import type { NumericArray } from "../data/column.ts";
+import { labelHalo } from "../draw/label-halo.ts";
 import { escapeXml, n } from "../draw/markup.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
-import { labelHalo, textDrawing } from "../draw/text.ts";
+import { textDrawing } from "../draw/text.ts";
 import { mapValue } from "../lod/m4.ts";
 import { Polyline } from "../lod/polyline.ts";
 import type { BarMark } from "../marks/bar.ts";
 import { isLayoutMark, tablesOf, viewOf } from "../marks/layout-mark.ts";
 import type { Frame, Mark } from "../marks/mark.ts";
 import { rowOf, type Series, visibleRange } from "../marks/series.ts";
-import { unionExtent } from "../marks/trace.ts";
+import { domainExtent, unionExtent } from "../marks/trace.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type {
   Drawing,
@@ -452,8 +453,8 @@ function railPlan(
   const log = type === "log";
   // As the model finds an unzoomed x domain: no mark is placed along y, so
   // every series counts, and zero only when the axis asks for it.
-  let data = unionExtent(
-    marks.map(({ mark, series, rows }) => mark.xExtent(series, log, breaks, rows)),
+  let data = domainExtent(
+    marks.map(({ mark, series, rows }) => [mark, mark.xExtent(series, log, breaks, rows)]),
   );
   if (spec?.zero && !log) data = unionExtent([data, [0, 0]]);
   let domain = usableDomain(spec?.domain ?? data, type);

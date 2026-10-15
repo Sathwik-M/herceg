@@ -33,8 +33,7 @@ Area(internals, {
   data: metrics,
   x: "time",
   y: ["p50", "p99"],
-  stack: "wiggle",
-  stackOrder: "inside-out",
+  stack: { offset: "wiggle", order: "inside-out" },
 });
 Bar(internals, { data: metrics, x: "time", y: ["p50", "p99"], stack: "fill" });
 // @ts-expect-error bars refuse stream offsets
@@ -61,22 +60,21 @@ Area(internals, {
   x: "time",
   y: "p50",
   series: "service",
-  stack: true,
-  stackGaps: "interpolate",
+  stack: { gaps: "interpolate" },
 });
 // @ts-expect-error gaps are zero or interpolated
-Area(internals, { data: metrics, x: "time", y: "p50", stack: true, stackGaps: "linear" });
+Area(internals, { data: metrics, x: "time", y: "p50", stack: { gaps: "linear" } });
 
 Rule(internals, { y: 250, label: "SLO" });
-Rule(internals, { data: deploys, x: "at", textField: "version" });
+Rule(internals, { data: deploys, x: "at", label: { field: "version" } });
 // @ts-expect-error rule positions from data are number or time fields
 Rule(internals, { data: deploys, x: "version" });
 // @ts-expect-error with data, text is a field of it, also next to constant positions
-Rule(internals, { data: deploys, x: 5, textField: "missing" });
-Text(internals, { x: Date.now(), y: 100, label: "now", anchor: "end" });
+Rule(internals, { data: deploys, x: 5, label: { field: "missing" } });
+Text(internals, { x: Date.now(), y: 100, label: { text: "now", style: { align: "end" } } });
 // @ts-expect-error constant text needs a label
 Text(internals, { x: 1, y: 2 });
-// @ts-expect-error text from data needs a label or a text field
+// @ts-expect-error text from data needs a label
 Text(internals, { data: deploys, x: "at", y: 1 });
 
 // `draw` is typed from the table when there is one.

@@ -2833,7 +2833,12 @@ it("paints isolated line and area rows with stroke-sized round caps in PDF", () 
 it("uses the surface for saturated text halos in PDF and honors halo:false", () => {
   const data = table({ x: [1], y: [1] });
   for (const halo of ["auto", false] as const) {
-    const mark = text({ x: 1, y: 1, label: "contrast", fill: "#e06600", halo });
+    const mark = text({
+      x: 1,
+      y: 1,
+      label: { text: "contrast", style: { color: "#e06600" } },
+      halo,
+    });
     const config = { marks: [line(data, { x: "x", y: "y" }), mark], width: 300, height: 150 };
     const { content } = readPdf(renderToPDF(config));
     expect(content.includes("/ActualText ()")).toBe(halo !== false);

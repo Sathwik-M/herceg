@@ -43,7 +43,7 @@ describe("charts with planned guides", () => {
     if (loading) {
       // Nothing is drawn before the compiler is here, and nothing exported.
       expect(tickLabels()).toEqual([]);
-      expect(() => chart.toSVG()).toThrow(/the guide compiler has not loaded; await chart.loading/);
+      expect(() => chart.toSVG()).toThrow(/chart: its code has not loaded; await chart.loading/);
       await loading;
     }
     expect(tickLabels()).toContain("12:00");

@@ -76,10 +76,15 @@ describe("format patterns", () => {
 });
 
 describe("scales and guides", () => {
-  it("take the position scales x, y, and yRight", () => {
+  it("take the position scales x, y, and yRight, and scales of categories by other names", () => {
     expect(valid({ scales: { y: { domain: [0, 100], scope: "panel" } } })).not.toThrow();
+    expect(
+      valid({ scales: { site: { type: "ordinal", domain: ["a"], map: { a: "#000000" } } } }),
+    ).not.toThrow();
     const other = { marks, scales: { temperature: { domain: [0, 1] } } } as unknown as ChartSpec;
-    expect(checkSpec(other)).toEqual(["spec.scales.temperature"]);
+    expect(() => validateSpec(other)).toThrow(
+      'spec.scales.temperature.type: expected "ordinal" (scales other than x, y, and yRight are scales of categories); received undefined',
+    );
   });
 
   it("check each guide by its type, and its ids", () => {

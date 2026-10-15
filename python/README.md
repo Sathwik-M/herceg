@@ -27,7 +27,8 @@ matplotlib names in unknown-option errors suggest the options that callable take
 | `ax.bar(categories, heights)` | `hg.bar(data, x="category", y="height")` with those columns |
 | `ax.fill_between(xs, low, high)` | `chart.area(x="x", y1="low", y2="high")` with those columns |
 | `ax.axhline(value)` / `ax.axvline(value)` | `chart.rule(y=value)` / `chart.rule(x=value)` |
-| `ax.text(x, y, text)` / `ax.annotate(text, (x, y))` | `chart.text(x=x, y=y, label=text)`; `dx`/`dy` offset text in pixels |
+| `ax.text(x, y, text)` / `ax.annotate(text, (x, y))` | `chart.text(x=x, y=y, label=text)`; `hg.DataPosition(y, offset=-6)` moves it in pixels |
+| `ax.text(0.03, 1.7, text, transform=ax.get_yaxis_transform())` | `chart.text(at=hg.Position(x=hg.Fraction(0.03), y=1.7), label=text)` |
 | `plt.subplots(...)` | `hg.Chart(data, panels=["a", "b"], panel_columns=2)`; marks name `panel="a"` or `"b"` |
 | `ax.twinx()` | `hg.Chart(data, y_right=hg.AxisOptions(...))`; supported marks use `axis="right"` |
 | `ax.legend()` | `legend=True` on the chart (automatic for multiple series); `label` names a single series |
@@ -41,9 +42,9 @@ matplotlib names in unknown-option errors suggest the options that callable take
 | `fig.savefig(path)` | `chart.save(path)` for HTML, SVG, PNG, or PDF |
 | `linewidth` / `lw` | `stroke_width` on lines, rules, and other outlined marks |
 | `linestyle` / `ls` | `dash` on 2D lines and rules |
-| `marker`, `markersize` / `ms` | Points use `symbol` and `radius` (CSS pixels; matplotlib's `markersize` is a diameter in points); `size` names a column for area encoding |
-| `color` / `c`, `edgecolor`, `facecolor` | Lines use `stroke`; bars use `fill`; points use `fill` for a constant or `color` for a column, plus `stroke` for outlines |
-| `alpha` | `fill_opacity` on marks that take it; no line opacity option |
+| `marker`, `markersize` / `ms` | Points use `symbol` and `radius` (CSS pixels; matplotlib's `markersize` is a diameter in points); `size` names a column for area encoding; lines take `markers=True` or a shape |
+| `color` / `c`, `edgecolor`, `facecolor` | `color` is a CSS color or a column (through the chart's color scale) on lines, areas, bars, and points; `stroke` and `fill` set those paints themselves, and `stroke` outlines bars and points |
+| `alpha` | `opacity` on lines, areas, and bars; `fill_opacity` on filled marks |
 | `cmap`, `vmin` / `vmax` | `colors="viridis"` and `color_domain=(low, high)` on color-scaled marks |
 | `bins`, `density=True` | `hg.histogram(data, x="y", bins=20, normalize="density")` |
 | `ax.set_xlim(...)` / `ax.set_ylim(...)` | `hg.Chart(data, x=hg.AxisOptions(domain=(low, high)), y=hg.AxisOptions(domain=(low, high)))`; helpers use `x_axis` / `y_axis` |
@@ -57,8 +58,7 @@ uses CSS pixels without scaling. Specs keep the string, so theme widths
 apply when drawing; `herceg.express.pointplot` uses the same patterns for
 its line styles.
 
-There is no pyplot state, combined plot format string (`"ro--"`), line
-marker option (compose `.line(...)` and `.point(...)`), arbitrary `zorder`,
+There is no pyplot state, combined plot format string (`"ro--"`), arbitrary `zorder`,
 annotation arrows, second x scale (`twiny`; `hg.axis` puts the same x on
 top), formatter callbacks (`FuncFormatter`; Python functions cannot travel
 in a chart, so write a `hg.Format` pattern), or matplotlib's full artist
@@ -74,8 +74,8 @@ hg.line(df, x="time", y="latency", series="service")
 hg.line(casts, x="temperature", y="depth", orient="y")  # along y: a depth profile
 hg.area(df, x="time", y=["user", "system"], stack=True)
 hg.area(responses, x="minute", y="count", series="status", stack=True)  # long format
-hg.area(cpu, x="time", y="load", series="host", stack=True, stack_gaps="interpolate")
-hg.bar(sales, x="region", y=["q1", "q2"])
+hg.area(cpu, x="time", y="load", series="host", stack=hg.Stack(gaps="interpolate"))
+hg.bar(sales, x="region", y=["q1", "q2"])  # grouped: side by side
 hg.bar(sales, x="q1", y="region")  # a category y gives horizontal bars
 hg.bar(sales, x="region", y="q1", labels=True)  # values at the bar ends
 hg.Chart(stats).bar(x="group", y="mean").error_bar(x="group", y="mean", y_error="se")
@@ -363,8 +363,8 @@ updates), so type checkers catch misspelled ones; `None` takes an option's
 default. At run time, a helper (or an express function) refuses an option it
 does not take by its own name, with the closest it does take, including
 other libraries' names for herceg's: `hg.line(df, x="time", y="p99",
-color="host")` raises `TypeError: line: no option 'color'; did you mean
-'series' or 'stroke'?`.
+c="red")` raises `TypeError: line: no option 'c'; did you mean 'color' or
+'stroke'?`.
 
 Tooltips show the position and each series' value, written as the axis'
 `format` writes it; `hg.AxisOptions(tooltip_format=...)` writes tooltips' (and the
@@ -833,13 +833,116 @@ counts and ranges. Facets split rows, `facet="repeat"` repeats them, and
 `side="right"` places its ticks at the right edge. There is no one-call
 `hg.rug` helper.
 
+## Colors, encodings, and styles by series
+
+`color` names a column, whose values color the marks through the chart's
+`"color"` scale, or gives a CSS color. One value has one color in every mark
+and panel of the chart, panels showing subsets and hidden series included,
+and keeps it while the data streams. `scales` fixes colors by value:
+
+```python
+sites = hg.Scale(type="ordinal", map={"Site A": "#00ab41", "Average": "#222222"})
+hg.Chart(df, scales={"color": sites}, facet="region", facet_columns=3).line(
+    x="time",
+    y="gain",
+    series="site",
+    color="site",
+    style=hg.MarkStyle(by=hg.StyleMap(map={"Average": hg.SeriesStyle(dash="--", stroke_width=3)})),
+)
+# Another chart with the same scale gives each site the same color.
+hg.Chart(totals, scales={"color": sites}).bar(
+    x="site", y="gain", color="site", stroke="#222222", stroke_width=1
+)
+```
+
+| Option | What it does |
+| --- | --- |
+| `hg.Scale(type="ordinal", domain=, map=, unknown=)` | A scale of categories in `scales`: `map` fixes outputs by value; the others take the theme's palette by their place in `domain` (the given values in order, others `unknown`; or the columns' values, a categorical's own order first). Named scales other than `"color"` are read by `hg.Channel(scale=...)`. |
+| `color=` | A column through the color scale, or a CSS color: a line's stroke, a bar's, area's, or point's fill. `stroke` and `fill` win over it. |
+| `encode=hg.Encodings(...)` | Channels: `hg.Channel(field=, scale=)`, `hg.Channel(value=)`, or `hg.when(condition, then, otherwise)`. Lines take color, stroke, dash, stroke_width, and opacity; bars color, fill, stroke, stroke_width, and opacity; areas color, fill, stroke, and opacity. Lines and areas take one value per series. |
+| `style=hg.MarkStyle(by=hg.StyleMap(field=, map=))` | Looks by value: series whose `field` (or, without it, whose series value or wide value column) is a key of `map` take that `hg.SeriesStyle` (stroke, stroke_width, dash, opacity, fill, fill_opacity, stroke_opacity, marker). Bars read each row's value. |
+| `markers=True` / `"x"`, `style=hg.MarkStyle(marker=hg.MarkerStyle(...))` | A point at each observation a line keeps (after reduction), in its color unless styled. |
+| `opacity`, `stroke_opacity` | The whole mark's opacity, and its outline's. |
+
+`series` partitions rows into series, `color` styles them, `dodge` places
+them side by side, and `stack` piles them, on every mark that takes them;
+only the default for `dodge` differs. Bars' series stand side by side unless
+`dodge=False` overlaps them or `stack` piles them: `hg.bar(df, x="month",
+y="sales", series="region")` groups the regions' bars. Points, lines,
+areas, and error bars stand at their category's center unless `dodge=True`.
+Coloring bars by a column makes no series, so never places them apart: each
+bar keeps its whole band.
+
+Bars take `stroke` and `stroke_width` for outlines, and value labels as
+`hg.BarLabels(field=, format=, style=, min_length=, place=)`: a column's
+values instead of the bar's, an `hg.Format` or Intl options, an
+`hg.TextStyle`, the shortest bar in pixels that gets one, and
+`hg.LabelPlace(outside=False, attachment="end")` to put them inside the bars
+(at `"start"`, `"center"`, or `"end"`) instead of past their ends. Labels
+inside bars are white or black by contrast with the bar unless the style
+sets a color.
+
+## Line breaks and conditional bands
+
+```python
+hg.line(
+    df, x="time", y="value",
+    continuity=hg.Continuity(
+        defined=hg.col("quality") >= 0.8,
+        max_gap=hg.Duration(hours=1),
+        break_by="day",
+    ),
+)
+(
+    hg.Chart(df)
+    .area(x="time", y1="efficiency", y2="limit", where=hg.col("efficiency") < hg.col("limit"),
+          curve="step-after", continuity=hg.Continuity(break_by="day"))
+    .line(x="time", y="efficiency", curve="step-after", continuity=hg.Continuity(break_by="day"))
+)
+```
+
+| Option | What it does |
+| --- | --- |
+| `hg.Continuity(defined=)` | Rows the expression rejects are gaps. |
+| `max_gap=` | Neighbors farther apart along the line's positions are not connected: a number in their units, or for times an `hg.Duration` or `datetime.timedelta`. |
+| `break_by=` | A calendar unit (`"minute"`, `"hour"`, `"day"`, `"week"`, `"month"`, `"year"`, in the chart's `time_zone`), or `hg.col(name)`, a change of a column's value. |
+| `where=` | Rows where the condition fails are left out as gaps; lines and bands end where it changes (interpolated on linear curves, exact on step curves), so a band meets the line. |
+
+Breaks are decided before lines are reduced to the pixels they cover, so a
+reduced line never bridges one; a run of one observation draws a dot.
+Stacked areas refuse `where` and `continuity`.
+
+## Annotations
+
+```python
+(
+    hg.Chart(df)
+    .line(x="time", y="ms")
+    .rule(y=250, label=hg.Label(text="Threshold", place=hg.LabelPlace(attachment="start", outside=True)))
+    .rule(y=300, span=(hg.Fraction(0.5), hg.Fraction(1)), stroke_opacity=0.5)
+    .region(x1=start, x2=end, label=hg.Label(text="Incident", place={"side": "bottom"}))
+    .text(at=hg.Position(x=hg.Fraction(0.03), y=1.7), label=hg.Label(
+        text="Peak", style=hg.TextStyle(font_weight=600, background=hg.TextBox(fill="#ffffff"), padding=4)))
+    .text(data=peaks, x="time", y=hg.DataPosition(field="ms", offset=-8), label=hg.Label(field="name"))
+)
+```
+
+| Option | What it does |
+| --- | --- |
+| A place (`x`, `y`, `x1`, ..., `span`) | A number or datetime, a column name (one item per row), `hg.Fraction(f, frame=, offset=)` (0 at the left or bottom of the plot, or with `frame="chart"` the chart), `hg.Pixels(px, frame=, offset=)` (from the left or top), or `hg.DataPosition(value or field=, offset=)`, which takes a category's value too. Offsets are pixels, right and down. |
+| `at=hg.Position(x=, y=)` | Text's place, mixing kinds. |
+| `label=` | Text, or `hg.Label(text= or field=, format=, style=hg.TextStyle(...), place=hg.LabelPlace(...))`. |
+| `hg.LabelPlace(attachment=, side=, outside=, reserve=, offset=)` | Where on the rule or region: its start, center, or end (a region's along `side`); `outside=True` puts a horizontal rule's label beside the y axis, which makes room for it unless `reserve=False`. |
+| `contribute_domain=True` | The annotation's values widen the axes' domains. By default annotations show where the data is, and count only in charts with nothing else. |
+| `stroke_opacity`, `span` | A rule's outline opacity, and the part of the other axis it runs along. |
+
 ## Normalized stacks and streamgraphs
 
 ```python
 hg.area(usage, x="time", y=["user", "system"], stack="fill")
 hg.area(usage, x="time", y=["user", "system"], stack="center")
-hg.area(usage, x="time", y=["user", "system"], stack="wiggle", stack_order="inside-out")
-hg.bar(sales, x="region", y=["q1", "q2"], stack="fill", labels={"style": "percent"})
+hg.area(usage, x="time", y=["user", "system"], stack=hg.Stack(offset="wiggle", order="inside-out"))
+hg.bar(sales, x="region", y=["q1", "q2"], stack="fill", labels=hg.BarLabels(format={"style": "percent"}))
 ```
 
 The same options work on `hg.Chart(...).area(...)` and `.bar(...)`. Fill stacks
@@ -853,10 +956,10 @@ algebraically. It does not split positive and negative layers like d3's divergin
 offset; use `stack=True` for signed values. Bars refuse stream offsets and suggest using an area. All three modes refuse finite
 negative values, including mixed signs; `stack=True` keeps signed stacking.
 Missing values retain gaps and count as zero in totals; an all-zero position
-has zero thickness. `stack_gaps="interpolate"` on a series-column area resolves
+has zero thickness. `hg.Stack(gaps="interpolate")` on a series-column area resolves
 absent rows between finite bracketing rows before normalization or offsets.
 
-Area `stack_order="inside-out"` is available with fill, center, and wiggle;
+`hg.Stack(offset=..., order="inside-out")` is available with fill, center, and wiggle;
 colors and legend order stay fixed. `orient="y"` areas stack across x, and bars
 with a category y are horizontal. Tooltip and keyboard text show share and raw
 value for fill, and raw values for streams. Fill bar labels show shares,

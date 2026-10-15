@@ -2,10 +2,12 @@ import type { CategoryField, NumericField, PositionField, Schema, Table } from "
 import { lineDrawing } from "../draw/line.ts";
 import type { Breaks } from "../lod/m4.ts";
 import type { Polyline } from "../lod/polyline.ts";
-import type { LineGeometry } from "../scene/scene.ts";
-import type { Clip, Curve, Dash, Frozen, LineSpec } from "../spec/spec.ts";
+import { asksFeatures } from "../model/features.ts";
+import type { Geometry, LineGeometry } from "../scene/scene.ts";
+import type { Clip, Curve, Dash, Frozen, LineSpec, SymbolName } from "../spec/spec.ts";
 import { dashPattern } from "../style/style.ts";
 import { BandShares, STILL } from "./dodge.ts";
+import type { Condition, Continuity, CssColor, Encodings, MarkStyle } from "./encoding.ts";
 import {
   type Bands,
   buildSeries,
@@ -59,6 +61,29 @@ interface LineStyle<S extends Schema> {
   strokeWidth?: number;
   /** Pixel dash array, or a matplotlib style scaled by the stroke width. */
   dash?: Dash;
+  /** From 0 to 1: the whole mark's, markers included. */
+  opacity?: number;
+  /** From 0 to 1: the lines' strokes'. */
+  strokeOpacity?: number;
+  /**
+   * The lines' color: a category field (constant within each series)
+   * through the chart's "color" scale, or a color. The short form of
+   * `encode.color`; `stroke` wins over it.
+   */
+  color?: CategoryField<S> | CssColor;
+  /** Channels, each constant within a series: color, stroke, dash, strokeWidth, opacity. */
+  encode?: Pick<Encodings<S>, "color" | "stroke" | "dash" | "strokeWidth" | "opacity">;
+  /** Looks by series (`by`), and the markers' look. */
+  style?: Pick<MarkStyle<S>, "by" | "marker">;
+  /** A marker at each observation drawn: a circle (`true`) or the shape named. */
+  markers?: boolean | SymbolName;
+  /**
+   * Which observations the lines connect: not where `defined` fails, across
+   * more than `maxGap` along the positions, or across a `breakBy` boundary.
+   */
+  continuity?: Continuity<S>;
+  /** Rows to leave out, as gaps: the lines draw only where it holds. */
+  where?: Condition;
   curve?: Curve;
   /** Name of a single line in legends and tooltips. Defaults to the value field. */
   label?: string;
@@ -109,11 +134,23 @@ export type LineOptions<S extends Schema> = LineStyle<S> &
       }
   );
 
+/** Options only the feature compiler draws (see model/features.ts). */
+const FEATURES = [
+  "opacity",
+  "strokeOpacity",
+  "encode",
+  "style",
+  "markers",
+  "continuity",
+  "where",
+] as const;
+
 export class LineMark implements Mark<Frozen<LineSpec>> {
   declare readonly [MARK]: true;
   readonly spec: Frozen<LineSpec>;
   readonly table: Table<Schema>;
   readonly tooltip: "x" | "y";
+  readonly featured: boolean;
   readonly #roles: Roles;
   readonly #split: SeriesSplitter;
   readonly #indexes = new IndexUse();
@@ -126,6 +163,7 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     this.table = table;
+    this.featured = asksFeatures(spec, FEATURES, table);
     const roles = rolesOf(table, "line", spec.x, spec.y, spec.orient, spec.series);
     this.#roles = roles;
     this.tooltip = roles.orient;
@@ -167,7 +205,8 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
       positions,
       key,
       palette,
-      this.spec.stroke,
+      // A color in CSS syntax the mark draws itself; the feature compiler, others.
+      this.spec.stroke ?? (this.featured ? undefined : this.spec.color),
     );
     for (const s of series) {
       if (banded) {
@@ -186,7 +225,15 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
   }
 
   xExtent(series: readonly Series[], log: boolean) {
-    return unionExtent(series.map((s) => xExtent(s, log)));
+    // Along y, x holds values: those its features draw (see
+    // model/features.ts). Positions span all rows, so that a streaming
+    // window's domain does not jump with its last rows' values.
+    const along = this.#roles.orient === "y";
+    return unionExtent(
+      series.map((s) =>
+        along && s.features?.across ? s.features.across(s, s.x, log) : xExtent(s, log),
+      ),
+    );
   }
 
   yExtent(series: readonly Series[], x0: number, x1: number, log: boolean, breaks?: Breaks) {
@@ -200,9 +247,9 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
     );
   }
 
-  geometry(series: readonly Series[], frame: Frame): LineGeometry[] {
+  geometry(series: readonly Series[], frame: Frame): Geometry[] {
     const { spec } = this;
-    const out: LineGeometry[] = [];
+    const out: Geometry[] = [];
     this.#indexes.drew(frame.owner, frame.scene, this.table);
     // Parts of series (a highlight's selected rows) stand in their wholes' slots.
     if (!series.every((s) => s.whole)) this.#shares?.split(series, frame, spec.legendGroup, true);
@@ -210,7 +257,7 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
     const dash = dashPattern(spec.dash, strokeWidth);
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
-      out.push({
+      const line: LineGeometry = {
         kind: "line",
         draw: lineDrawing,
         key: s.key,
@@ -218,7 +265,9 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
         strokeWidth,
         dash,
         path: this.#trace(s, frame),
-      });
+      };
+      // The feature compiler restyles a series' line and adds its markers.
+      out.push(...(s.features?.geometry?.(line, s, frame) ?? [line]));
     }
     return out;
   }
@@ -299,8 +348,10 @@ export function line<S extends Schema>(
       "facet",
       "panel",
       "clip",
+      "color",
+      ...FEATURES,
     ]),
-  };
+  } as LineSpec;
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.
   return new LineMark(spec, table as unknown as Table);

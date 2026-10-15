@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { derive } from "../../src/data/derive.ts";
-import { col } from "../../src/data/expression.ts";
+import { col } from "../../src/data/expr.ts";
 import { type FeatureCollection, fromGeoJSON } from "../../src/data/geojson.ts";
 import { type GeometrySet, geometry, geometryBytes } from "../../src/data/geometry.ts";
 import { table } from "../../src/data/table.ts";

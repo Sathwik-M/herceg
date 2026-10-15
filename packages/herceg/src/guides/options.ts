@@ -11,6 +11,7 @@ import type {
   ColorbarSpec,
   FormatSpec,
   LegendGuideSpec,
+  OrdinalScaleSpec,
   PanelSpec,
   ScaleSpec,
   TickLayerSpec,
@@ -105,11 +106,15 @@ export type LegendGuideOptions = LegendGuideSpec;
 /** A guide in the chart's `guides`. */
 export type GuideOptions = AxisGuideOptions | LegendGuideOptions | ColorbarOptions;
 
-/** The chart's position scales by name, over the short forms' settings. */
+/**
+ * The chart's scales by name: its position scales, over the short forms'
+ * settings, and scales of categories (see `OrdinalScaleSpec`).
+ */
 export interface Scales {
   x?: ScaleOptions;
   y?: ScaleOptions;
   yRight?: ScaleOptions;
+  readonly [name: string]: ScaleOptions | OrdinalScaleSpec | undefined;
 }
 
 /**

@@ -631,7 +631,7 @@ area(usage, { x: "time", y: ["user", "system"], stack: true });
 // Long format: a layer per category value, stacked on every x any of them has.
 const responses = table({ minute: time(minutes), status: statusCodes, count: counts });
 area(responses, { x: "minute", y: "count", series: "status", stack: true });
-area(responses, { x: "minute", y: "count", series: "status", stack: true, stackGaps: "interpolate" });
+area(responses, { x: "minute", y: "count", series: "status", stack: { gaps: "interpolate" } });
 area(metrics, { x: "time", y1: "p50", y2: "p99" }); // band between two fields
 // A single area is outlined along its top in its own color; stacks and bands
 // are not unless `line: true`. `stroke` and `strokeWidth` style the outline and
@@ -649,17 +649,273 @@ area(casts, { x: "density", y: "depth", orient: "y" }); // filled to x = 0
 area(casts, { y: "depth", x1: "low", x2: "high" }); // a band along y
 ```
 
+### Colors and channels
+
+`color` is a mark's primary paint: a line's stroke, a bar's, area's, or
+point's fill. It names a category field, whose values color the marks
+through the chart's `"color"` scale, or gives a CSS color; `stroke` and
+`fill` set those paints themselves and win over it. A value has one color in
+every mark and panel of the chart, panels showing subsets and hidden series
+included, and keeps it while the data streams, so lines, areas, bars, and
+points colored by `"site"` agree. Fix colors by value with a scale of
+categories:
+
+```ts
+const scales = {
+  color: { type: "ordinal", map: { "Site A": "#00ab41", Average: "#222222" } },
+} as const;
+createChart(element, {
+  scales,
+  facet: facet("region", { columns: 3 }),
+  marks: [line(gains, { x: "time", y: "gain", series: "site", color: "site" })],
+});
+// Another chart with the same scale gives each site the same color.
+createChart(other, { scales, marks: [bar(totals, { x: "site", y: "gain", color: "site" })] });
+```
+
+Channels beyond these short forms go in `encode`: a field through a named
+scale, a constant, or a condition on each row, built with `col`:
+
+```ts
+bar(sites, {
+  x: "site",
+  y: "gain",
+  encode: {
+    color: { field: "site", scale: "sites" },
+    opacity: { condition: { when: col("provisional").eq(true), then: 0.45, otherwise: 1 } },
+  },
+});
+```
+
+| Channel form | Means |
+| --- | --- |
+| `{ field, scale? }` | A category field's values through the chart's scale `scale` (colors read `"color"`, dashes `"dash"`, shapes `"symbol"` by default). |
+| `{ value }` | A constant. |
+| `{ condition: { when, then, otherwise } }` | `then` on rows where the expression `when` holds, `otherwise` elsewhere. |
+
+Lines take `color`, `stroke`, `dash`, `strokeWidth`, and `opacity`
+channels; bars `color`, `fill`, `stroke`, `strokeWidth`, and `opacity`;
+areas `color`, `fill`, `stroke`, and `opacity`. A line or area has one look
+per series, so its channels read values constant within each series (a
+series field, or a field that follows it), and refuse others. Bars read
+each row's. Points take `color` (a category or number field), `symbol`,
+`size`, and `fillOpacity` as options of their own. The flat options
+(`stroke`, `fill`, `strokeWidth`, `dash`, `opacity`, `fillOpacity`,
+`strokeOpacity`) style the mark's body; `opacity` is the whole mark's, and
+`strokeOpacity` its outline's.
+
+| `scales` entry `{ type: "ordinal", ... }` | Means |
+| --- | --- |
+| `map` | Outputs by value: colors, shapes, dashes, or numbers. |
+| `domain` | The values in order, and only those: others take `unknown`. Without it, the values of the fields marks read, a field's dictionary order first (a `category()` column's, a pandas Categorical's, an Arrow dictionary's), then first seen. |
+| `unknown` | The output of values outside `domain`; the theme's muted color by default. |
+
+Values `map` leaves out take the theme's palette by their place in the
+domain. A value keeps its place once it has one, so streaming never recolors.
+`scales` with one of these settings for a series field does not recolor
+series that `color` does not name.
+
+### Styles by series and markers
+
+`style.by` gives series looks by value: each series whose `field` has a key
+of `map` takes that look. Without `field`, series are named by where they
+come from: a `series` field's value, or for wide data its value field.
+
+```ts
+line(sites, {
+  x: "time",
+  y: "gain",
+  series: "site",
+  color: "site",
+  style: { by: { map: { Average: { stroke: "#222222", strokeWidth: 3, dash: "--" } } } },
+});
+line(metrics, { x: "time", y: ["mean", "p95"], style: { by: { map: { p95: { dash: ":" } } } } });
+line(metrics, { x: "time", y: "p50", markers: true, style: { marker: { radius: 4 } } });
+```
+
+| `style` | Means |
+| --- | --- |
+| `by: { field?, map }` | Looks by value: `stroke`, `strokeWidth`, `dash`, `opacity`, `fill`, `fillOpacity`, `strokeOpacity`, and for lines `marker`. Bars read each row's value. |
+| `marker` | The markers' `symbol`, `radius` (3 pixels by default), `fill`, `stroke`, `strokeWidth`, and `opacity`. |
+| `leader` | Text marks' lines back to labels that moved (a stroke style). |
+
+`markers: true` (or a shape's name, including `"x"`) draws a point at each
+observation a line keeps after it is reduced to the pixels it covers, in the
+line's color; a series whose `style.by` look has a `marker` gets markers
+too. Crossings that `where` adds are not observations and get none. Legends
+with `swatches: "mark"` draw each series' look: a line's dash, width, and
+marker (its symbol and outline), an area's fill, and the outline of bars of
+one look.
+
+### Line breaks and conditional bands
+
+`continuity` decides which neighboring observations a line or area
+connects, before it is drawn or reduced, so reduction and the indexes that
+find the nearest point never bridge a break:
+
+```ts
+line(sensors, {
+  x: "time",
+  y: "value",
+  continuity: { defined: col("quality").ge(0.8), maxGap: { milliseconds: 3_600_000 }, breakBy: "day" },
+});
+area(plant, {
+  x: "time",
+  y1: "efficiency",
+  y2: "limit",
+  curve: "step-after",
+  where: col("efficiency").lt(col("limit")),
+  continuity: { breakBy: "day" },
+});
+```
+
+| `continuity` | Means |
+| --- | --- |
+| `defined` | An expression: rows where it fails are gaps. |
+| `maxGap` | Neighbors farther apart than this along the positions are not connected: in the positions' units, or for times `{ milliseconds }`. |
+| `breakBy` | A calendar unit (`"minute"`, `"hour"`, `"day"`, `"week"`, `"month"`, `"year"`, in the chart's `timeZone`), or `{ field }`: a change of the field's value. |
+
+`where` leaves rows out as gaps, as `defined` does, and ends each run where
+its condition changes: interpolated on linear curves for comparisons of
+numbers, and exact on step curves (a step-after run ends at the next row's
+position, where its step does), so a conditional band meets the line it is
+drawn against. Monotone curves refuse `where`; stacked areas refuse `where`
+and `continuity`. A run of one observation draws a dot. Tooltips and the
+text alternative leave out the rows these leave out, and the keyboard reads
+nothing at them. The values' domain leaves them out too, and counts the
+crossings; the positions' domain spans every row, so a streaming window's
+axis does not jump when its last rows are left out. On log scales crossings
+are found as the line is drawn there, between logs.
+
+### Bars: dodging, outlines, and labels
+
+`series` partitions rows, `color` styles them, `dodge` places series side
+by side, and `stack` piles them. They mean the same on every mark that takes
+them; only the default for `dodge` is the mark's own.
+
+| Option | Means | Default |
+| --- | --- | --- |
+| `series` | A category field: a series per value. Several value fields (`y: ["q1", "q2"]`) are series too. | One series |
+| `color` | Each bar's paint: a field through the "color" scale, or a color. It makes no series, so it never places bars apart: each keeps its whole band (marks of one `legendGroup` still share it, a series each). | The series' palette color |
+| `dodge` | Series side by side in each position, sharing its band; `false` overlaps them. Where `series` is the band field, each bar takes the whole band. | Bars: `true` unless stacked. Points, lines, areas, and error bars: `false` |
+| `stack` | Series piled up at each position (`dodge: true` with it is refused). | `false` |
+
+```ts
+bar(sales, { x: "month", y: "units", series: "region" }); // grouped: side by side
+bar(sales, { x: "month", y: "units", series: "region", dodge: false }); // overlapping
+bar(sales, { x: "month", y: "units", color: "region" }); // one bar a month, colored by its region
+bar(sales, {
+  x: "month",
+  y: "units",
+  stroke: "#1b3a6b",
+  strokeWidth: 1,
+  labels: { format: { number: ",.0f" }, minLength: 24, place: { outside: false } },
+});
+```
+
+| `labels` | Means |
+| --- | --- |
+| `true` | Each bar's value at its end (inside each segment of a stack). |
+| `field` | A category or number field's value instead. |
+| `format` | Intl options, or a pattern: `{ number: ",.0f" }`, `{ time }`. |
+| `style` | A text style. Labels inside bars are white or black, whichever contrasts with the bar (white wherever it reaches 3:1), unless `style.color` is set. |
+| `minLength` | Bars shorter than this many pixels get no label. |
+| `place` | `{ outside: false, attachment }` puts labels inside the bars at their root, middle, or tip (`"start"`, `"center"`, `"end"`, the default); by default they go past each bar's end (just inside where that would leave the plot), and inside stacked bars' segments, centered. |
+
+Bars take `stroke`, `strokeWidth`, `strokeOpacity`, and `dash` for
+outlines, drawn along each bar's edge.
+
+### Annotations
+
+Rules, regions, and text take places along each axis. A place is a value
+(a number, or a `Date` on a time axis), a field (one item per row of the
+table given), or a coordinate:
+
+| Coordinate | Means |
+| --- | --- |
+| `{ data, scale?, offset? }` | A value on the axis' scale; a string is a category's value. |
+| `{ field, offset? }` | Each row's value of a field. |
+| `{ fraction, frame?, offset? }` | A share of the plot (or with `frame: "chart"`, the chart): 0 at its left or bottom, 1 at its right or top. |
+| `{ px, frame?, offset? }` | Pixels from the plot's (or the chart's) left or top edge, down for y. |
+
+`offset` moves the place that many pixels, right for x and down for y. A
+rule takes a place on one axis and a `span` of two places along the other
+(the plot's extent by default); a region one or two pairs of places; text
+`at: { x, y }`, or the short forms `x` and `y`.
+
+```ts
+rule({ y: 250, label: { text: "Threshold", place: { attachment: "start", outside: true } } });
+rule({ y: 300, span: [{ fraction: 0.5 }, { fraction: 1 }], strokeOpacity: 0.5 });
+rule(deploys, { x: "time", label: { field: "version" } }); // a vertical rule per deploy
+region({ x1: start, x2: end, label: { text: "Maintenance", place: { side: "bottom" } } });
+region({ y1: 200, y2: 300 }); // a shaded y range; with x1 and x2 too, a rectangle
+text({ at: { x: { fraction: 0.03 }, y: { data: 1.7 } }, label: "Note" });
+text(peaks, {
+  x: "time",
+  y: { field: "value", offset: -10 },
+  label: { field: "value", format: { number: ".1f" }, style: { fontWeight: 600 } },
+  overlap: "move",
+});
+```
+
+| `label` | Means |
+| --- | --- |
+| `"text"` | Constant text: short for `{ text }`. |
+| `text` or `field` | Constant text, or each row's value of a category or number field. |
+| `format` | How numbers are written: Intl options, or `{ number }` / `{ time }` patterns. |
+| `style` | A text style: `fontSize`, `fontWeight`, `color`, `halo`, `background` (a box: `fill`, `stroke`, `radius`), `padding`, and for text `align` (`"start"`, `"center"`, `"end"` at its point). |
+| `place.attachment` | Where on a rule (`"start"`, `"center"`, `"end"`, left to right or top to bottom; the end by default) or along a region's side. |
+| `place.side` | A region's edge the label goes along (top by default). |
+| `place.outside` | A rule's label outside the plot, beside the axis at its start or end; the chart keeps room for it there unless `reserve: false`. A region's label outside its edge. |
+| `place.offset` | Pixels away from its place. |
+
+Annotations count toward the axes' domains only with `contributeDomain:
+true`, so by default they show where the data is; thresholds meant to stay
+in view say so, or the chart sets a domain. An annotation in a chart with
+nothing else gives the axes its values. On a category axis, a number is a
+band index (0 is the first band's center, -0.5 its edge); `{ data: "Feb" }`
+places at a band by its value.
+
+Regions are drawn in mark order (list them first to shade underneath the
+data); rules and text are drawn above the data, as SVG even when the data
+is on a canvas. Text and region labels have halos to stay readable over
+lines (see Text halos). Annotations outside the view are left out. Text
+labels that would cover an earlier label of the same mark, in row order,
+are drawn anyway by default. With `overlap: "hide"` they are left out. With
+`overlap: "move"`, a label goes where its place and `align` put it if that
+is free and in the plot; otherwise it tries above, below, after, before,
+and at the corners of its point, a few pixels away and off the other rows'
+points, then the same places a label's height or two farther out, with a
+thin line back to its point (`style.leader`) that crosses no other label,
+point, or line, and is left out if none of those is free. Every label tries
+its near places before any goes farther out, so sorting the table sets which
+labels win within each of the two rounds. Empty labels take no room.
+Placement measures text with the browser's fonts on screen and with
+estimated widths in static SVG and PDF output, so the two can place labels
+differently. Text is meant for annotations and labeling a few hundred
+points, not every point of a large series. In charts with facets,
+annotations over a table draw each row in its own row's panel, and labels
+keep off the labels of their own panel only (see [Small
+multiples](#small-multiples)).
+
+Charts that use channels beyond constants, scales of categories, styles by
+value, markers, continuity, `where`, or label patterns load the feature
+compiler, as charts with listed axes load the guide
+compiler: a live chart draws once it is here (`chart.loading` settles with
+that frame), and static output brings it along. Other charts never load it.
+
 ### Normalized stacks and streamgraphs
 
-Areas accept `stack: true | false | "fill" | "center" | "wiggle"`; bars accept
-`true | false | "fill"`. Histogram `stack: "fill"` has the same meaning: each
+Areas accept `stack: true | false | "fill" | "center" | "wiggle"`, or a stack
+object `{ offset, order, gaps }` (`offset` is `"zero"`, the default, or one of
+those three); bars accept `true | false | "fill"`. Histogram `stack: "fill"` has the same meaning: each
 position's visible layers share its total.
 
 ```ts
 area(usage, { x: "time", y: ["user", "system"], stack: "fill" });
 area(usage, { x: "time", y: ["user", "system"], stack: "center" });
-area(usage, { x: "time", y: ["user", "system"], stack: "wiggle", stackOrder: "inside-out" });
-bar(sales, { x: "region", y: ["q1", "q2"], stack: "fill", labels: { style: "percent" } });
+area(usage, { x: "time", y: ["user", "system"], stack: { offset: "wiggle", order: "inside-out" } });
+bar(sales, { x: "region", y: ["q1", "q2"], stack: "fill", labels: { format: { style: "percent" } } });
 ```
 
 `"fill"` divides each finite contribution by the visible total at its position.
@@ -682,14 +938,14 @@ as nonnegative thicknesses: it rejects signed inputs that d3's silhouette offset
 accepts algebraically. It does not separate positive and negative layers as
 d3's diverging offset does; use `stack: true` for signed values.
 
-The default `stackOrder: "input"` keeps field or legend order. For these three
+The default `order: "input"` keeps field or legend order. For these three
 nonnegative area modes, `"inside-out"` orders layers by their peak's position
 and balances their totals on either side; legend identities and colors stay
 in input order. Geometric ordering uses the retained data, independent of zoom.
 
 All modes work over number, time, and category positions, along x or with
 `orient: "y"` along y; horizontal bars normalize across x. Series-field areas
-resolve `stackGaps` before totals and offsets: absent rows are zero, or linearly
+resolve `gaps` before totals and offsets: absent rows are zero, or linearly
 interpolated between finite bracketing rows at actual position distances, zero
 beyond the ends. Interpolation does not bridge explicit missing values. Tooltips
 and keyboard readings report observed rows only. For fill, their text shows the
@@ -711,7 +967,7 @@ ordering can change, and areas along y retain their existing immediate updates.
 Stacks put the first layer at the bottom: fields in the order given, a
 series field's values in the order of its legend. Areas of a series field
 stack on every x any shown series has a row at. At an x where a series has
-no row it counts as zero (`stackGaps: "zero"`, the default, right for counts
+no row it counts as zero (`gaps: "zero"`, the default, right for counts
 a query leaves out), or with `"interpolate"` as the straight line between
 its rows on either side (right for series sampled at different times), and
 as zero beyond its first and last rows. A missing value draws nothing and
@@ -752,52 +1008,14 @@ its stroke width. Areas show the dot on their upper edge, in the outline
 color when present and otherwise the fill color. This applies to step and
 smooth curves, either orientation, reduced data, and SVG, Canvas, and PDF.
 
-Annotations take constant positions (numbers, or `Date`s on time axes), or
-draw one item per row of a table when a position is a field. `label` is
-constant text; `textField` names a category or number field with each item's text.
-
-```ts
-rule({ y: 250, label: "SLO" }); // horizontal reference line
-rule(deploys, { x: "time", textField: "version" }); // a vertical rule per deploy
-
-region({ x1: start, x2: end, label: "Maintenance" }); // shaded x range
-region(incidents, { x1: "start", x2: "end", textField: "title" });
-region({ y1: 200, y2: 300 }); // shaded y range; with x1/x2 too, a rectangle
-
-text({ x: launch, y: 120, label: "Launch", anchor: "start", dx: 6 });
-text(peaks, { x: "time", y: "value", textField: "value", dy: -10 });
-text(cities, { x: "gdp", y: "growth", textField: "name", dy: -10, overlap: "move" });
-```
-
-Annotation positions count toward the axis domains, so thresholds and events
-stay in view; on a category axis, a constant position is a band index (0 is
-the first band, -0.5 its edge). Regions are drawn in mark order (list them first to shade
-underneath the data); rules and text are drawn above the data, as SVG even
-when the data is on a canvas. Text and region labels have halos to stay
-readable over lines (see Text halos).
-Annotations outside the view are left out. Text labels that would
-cover an earlier label of the same mark, in row order, are drawn anyway by
-default. With `overlap: "hide"` they are left out. With `overlap: "move"`,
-a label goes where `anchor`, `dx`, and `dy` put it if that is free and in
-the plot; otherwise it tries above, below, after, before, and at the corners
-of its point, a few pixels away and off the other rows' points, then the same
-places a label's height or two farther out, with a thin line back to its
-point that crosses no other label, point, or line, and is left out if none
-of those is free. Every label tries its near places before any goes farther
-out, so sorting the table sets which labels win within each of the two
-rounds.
-Empty labels take no room. Placement measures text with the browser's fonts
-on screen and with estimated widths in static SVG and PDF output, so the two
-can place labels differently. Text is meant for annotations and labeling a
-few hundred points, not every point of a large series. In charts with
-facets, annotations over a table draw each row in its own row's panel, and
-labels keep off the labels of their own panel only (see [Small
-multiples](#small-multiples)).
+Annotations (rules, regions, and text) are described in
+[Annotations](#annotations).
 
 When a bar's `series` is its category position field (`x` for vertical bars,
 `y` for horizontal bars), categories retain their colors and legend entries
 and each bar occupies the full band. Value labels use that full band's room;
-series of another field still stand side by side.
+series of another field stand side by side unless `dodge: false` (see
+[Bars](#bars-dodging-outlines-and-labels)).
 
 Bars, points, error bars, heatmaps, contours, candlesticks, histograms, box plots, letter-value (boxen) plots, and violins:
 
@@ -982,16 +1200,16 @@ with a key of round values below the legend. A mark takes `radius` or `size`,
 not both. `fillOpacity` names a field mapped from
 0.15 to opaque. `color` names a number or time field colored on a continuous
 scale, with a color legend, or a category field whose values take the
-theme's palette in order of appearance (cycling through at most its first
-255 colors), keeping their colors while they stay in the table, with a key of
-colors below the legend; series then appear in
-the legend in a neutral color (a `color` naming the `series` field keeps the
-series' colors). Marks with the same color scale, or the same key of sizes,
+chart's `"color"` scale (see [Colors and channels](#colors-and-channels): its
+fixed map, else the theme's palette in the field's order, cycling through at
+most its first 254 colors), keeping their colors as the data streams, with
+a key of colors below the legend; series then appear in the legend in a
+neutral color (a `color` naming the `series` field colors the series so). Marks with the same color scale, or the same key of sizes,
 shapes, or colors, share one legend.
 `symbol` is one shape (`"circle"`, `"square"`, `"triangle"`, `"diamond"`,
-`"cross"`, `"star"`, `"wye"`, `"triangle-down"`) or a category field whose
-values take the shapes in that order, with a key unless the field also splits
-series: `{ field: "origin" }`, or the field's name. A name that is both a
+`"cross"` (a plus), `"star"`, `"wye"`, `"triangle-down"`, `"x"`) or a category
+field whose values take the first eight shapes in that order, with a key
+unless the field also splits series: `{ field: "origin" }`, or the field's name. A name that is both a
 shape and a field is refused rather than guessed at; `{ field }` encodes the
 field, and specs always name fields that way. Every shape covers the area of a circle of the same radius. Points
 missing a value they encode are not drawn, and tooltips name the encoded
@@ -1455,6 +1673,11 @@ the notes), — not yet (refused with an error), · not applicable.
 
 - Lines, rules, and custom shapes support all four dash strings on SVG,
   Canvas (for data marks), and static SVG/PDF export.
+- Lines, areas, and bars take channels (`color`, `encode`), scales of
+  categories, and looks by value (`style.by`); lines and areas take
+  `continuity` and `where`, and lines markers, on every renderer and export.
+  Points take category colors through the color scale but no `encode`;
+  annotations take label objects and coordinates but no channels.
 - Line and area gaps preserve isolated finite rows as stroke-sized dots on
   every renderer and export. Bars colored by their own category keep full
   bands, labels, and category legends. Text halos take a color or turn off
@@ -3277,6 +3500,7 @@ bring it with them. Other charts never load it.
 | `scales` | Description |
 | --- | --- |
 | `x`, `y`, `yRight` | `type`, `domain`, `nice`, `zero`, `scope`, `tooltipFormat`, over the short form's (marks place values on these three). |
+| any other name | `{ type: "ordinal", domain?, map?, unknown? }`: a scale of categories that marks' channels read by name; `"color"` is the one color fields read (see [Colors and channels](#colors-and-channels)). |
 
 #### Ticks
 
@@ -3342,9 +3566,9 @@ The short form `legend` and `legend({ ... })` take:
 | `columns`, `rows` | Entries in a grid of this many columns, or rows; one of them. |
 | `order` | `"row"` fills row by row (the default with `columns`), `"column"` down each column (the default with `rows`). |
 | `title` | A string, or `{ text, style? }`, above the entries. |
-| `entries` | Entries of your own in place of the series': `[{ key, label, swatch? \| sample?: { mark }, targets?: [{ mark }] }]`. A `swatch` is `{ type: "line", stroke, strokeWidth?, dash? }`, `{ type: "rect", fill, stroke? }`, `{ type: "circle", fill, stroke?, size? }` (lines, boxes, and circles take `opacity`), or `{ type: "composite", parts }`; `sample` draws a mark's look, its symbol for points; entries with `targets` hide and show those marks, others explain. |
+| `entries` | Entries of your own in place of the series': `[{ key, label, swatch? \| sample?: { mark }, targets?: [{ mark }] }]`. A `swatch` is `{ type: "line", stroke, strokeWidth?, dash? }`, `{ type: "rect", fill, stroke? }`, `{ type: "circle", fill, stroke?, size? }` (lines, boxes, and circles take `opacity`), or `{ type: "composite", parts }`, drawn over one another and centered; `sample` draws a mark's look, its symbol for points; entries with `targets` hide and show those marks, others explain. |
 | `merge` | `"semantic"`: one entry for the series several marks (across panels too) show of the same value of the same field, or with the same name, toggling them together. |
-| `swatches` | `"mark"`: swatches that look like the marks: a line of a line's width and dash, a box of an area's or bar's fill, a point's symbol. |
+| `swatches` | `"mark"`: swatches that look like the marks: a line of a line's width and dash, with its markers, a box of an area's or bar's fill (a bar's outline and opacity too), a point's symbol. |
 | `style` | `legendLabel`, `legendTitle`, `tickLabel`. |
 | `scales` | (`legend()` only) The scales it lists, `[{ mark, channel }]` with a mark's `id` and `"series"`, `"color"`, `"size"`, or `"symbol"`; every one by default, in place of the automatic legend. |
 | `id`, `show` | (`legend()` only) A name of its own; `false` draws none. |

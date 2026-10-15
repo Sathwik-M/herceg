@@ -1,11 +1,21 @@
 import type { NumericField, Schema, Table } from "../data/table.ts";
+import { labelHalo } from "../draw/label-halo.ts";
 import { guideSegmentDrawing } from "../draw/segments.ts";
-import { labelHalo, textDrawing } from "../draw/text.ts";
 import { LabelBoxes, segmentMeetsBox, segmentsMeet } from "../layout/label-boxes.ts";
-import type { SegmentGeometry, TextGeometry } from "../scene/scene.ts";
-import type { Clip, Frozen, TextSpec } from "../spec/spec.ts";
-import type { Halo } from "../spec/style.ts";
-import { AnnotationData, position, readsTable, type TextField, valueAt } from "./annotation.ts";
+import type { Geometry, SegmentGeometry } from "../scene/scene.ts";
+import type { FormatSpec } from "../spec/guides.ts";
+import type { AnnotationPosition, Clip, Frozen, TextSpec } from "../spec/spec.ts";
+import type { Halo, StrokeStyle, TextStyle as TextStyleSpec } from "../spec/style.ts";
+import { dashPattern } from "../style/style.ts";
+import {
+  AnnotationData,
+  labelOf,
+  type PlaceOption,
+  position,
+  readsTable,
+  type TextField,
+} from "./annotation.ts";
+import { labelPaint, labelsGeometry, type PlacedLabel, plainText, textGeometry } from "./labels.ts";
 import { definedFields } from "./line.ts";
 import {
   type AxisFormat,
@@ -30,13 +40,6 @@ interface TextStyle {
   clip?: Clip;
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
-  /** Defaults to the theme's text color. */
-  fill?: string;
-  /** Which end of the text is at the point. Default "middle". */
-  anchor?: "start" | "middle" | "end";
-  /** Pixel offsets from the point; positive dy moves down. */
-  dx?: number;
-  dy?: number;
   /**
    * Labels that would cover an earlier one of this mark, in row order:
    * drawn anyway ("show", the default), left out ("hide"), or moved
@@ -46,8 +49,25 @@ interface TextStyle {
    * and left out when nothing fits.
    */
   overlap?: "show" | "hide" | "move";
+  /** How the lines from moved labels back to their points look. */
+  style?: { leader?: StrokeStyle };
+  /** Whether the text's places count toward the axes' domains; false by default. */
+  contributeDomain?: boolean;
   id?: string;
 }
+
+/** Text's label: its text, or each row's `field`, styled (`style`: color, font, size, box, `align`). */
+export type TextLabel<F extends string = string> =
+  | string
+  | (({ text: string; field?: never } | { field: F; text?: never }) & {
+      format?: FormatSpec;
+      style?: TextStyleSpec;
+    });
+
+/** Where text is: `at`, or its short forms `x` and `y`. */
+type TextPlace<F extends string> =
+  | { x: PlaceOption<F>; y: PlaceOption<F>; at?: never }
+  | { at: { x: PlaceOption<F>; y: PlaceOption<F> }; x?: never; y?: never };
 
 /** Room kept around each label against others, in pixels, at least: a default halo reaches 1.5. */
 const LABEL_GAP = 2;
@@ -71,21 +91,12 @@ const AROUND: readonly (readonly [number, number])[] = [
   [1, 1],
   [-1, 1],
 ];
-/** One label at constant values. */
-export interface TextOptions extends TextStyle {
-  x: number | Date;
-  y: number | Date;
-  label: string;
-}
+/** One label at a constant place. */
+export type TextOptions = TextStyle & TextPlace<never> & { label: TextLabel<never> };
 
-/**
- * Labels from a table, one per row; positions may also be constants. The
- * text is a field (`textField`) or the same for every row (`label`).
- */
-export type TextDataOptions<S extends Schema> = TextStyle & {
-  x: NumericField<S> | number | Date;
-  y: NumericField<S> | number | Date;
-} & ({ textField: TextField<S>; label?: never } | { label: string; textField?: never });
+/** Labels from a table, one per row; places may also be constants. */
+export type TextDataOptions<S extends Schema> = TextStyle &
+  TextPlace<NumericField<S>> & { label: TextLabel<TextField<S>> };
 
 /**
  * Text labels at data positions. They are drawn as SVG above the data and
@@ -96,22 +107,34 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
   declare readonly [MARK]: true;
   readonly spec: Frozen<TextSpec>;
   readonly tooltip = "x";
+  readonly featured: boolean;
+  readonly domainFallback: boolean;
   readonly #data: AnnotationData;
+  /** Its place on each axis: `at`'s, or the short forms'. */
+  readonly #x: Frozen<AnnotationPosition>;
+  readonly #y: Frozen<AnnotationPosition>;
 
   constructor(input: TextSpec, table?: Table) {
     this.spec = frozen(input);
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
-    if (spec.x === undefined || spec.y === undefined) throw new Error("text: needs x and y");
-    if ((spec.label === undefined) === (spec.textField === undefined))
-      throw new Error("text: needs exactly one of label and textField");
-    this.#data = new AnnotationData(
-      table,
-      { x: spec.x, y: spec.y },
-      spec.label,
-      spec.textField,
-      "text",
-    );
+    this.domainFallback = spec.contributeDomain !== true;
+    if (spec.at && (spec.x !== undefined || spec.y !== undefined))
+      throw new Error("text at: a place, or its short forms x and y, not both; drop at or x and y");
+    const x = spec.at?.x ?? spec.x;
+    const y = spec.at?.y ?? spec.y;
+    if (x === undefined || y === undefined) throw new Error("text: needs a place: at, or x and y");
+    if (spec.label === undefined)
+      throw new Error("text label: required; give its text, or { field }");
+    this.#x = x;
+    this.#y = y;
+    const label = labelOf(spec.label);
+    this.#data = new AnnotationData(table, { x, y }, label, "text", {
+      x: "x",
+      y: spec.axis === "right" ? "yRight" : "y",
+    });
+    const format = label?.format as { number?: unknown; time?: unknown } | undefined;
+    this.featured = format?.number !== undefined || format?.time !== undefined;
   }
 
   get table(): Table | undefined {
@@ -119,7 +142,7 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
   }
 
   channelKind(axis: "x" | "y") {
-    return this.#data.kind(axis === "x" ? this.spec.x : this.spec.y);
+    return this.#data.kind(axis === "x" ? this.#x : this.#y);
   }
 
   series() {
@@ -127,24 +150,31 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
   }
 
   describe(format: AxisFormat, locale: string | undefined, rows?: RowParts): string | undefined {
-    const x = this.#data.channel(this.spec.x);
-    const y = this.#data.channel(this.spec.y);
-    return this.#data.summary(
+    const data = this.#data;
+    const x = data.place(this.#x);
+    const y = data.place(this.#y);
+    return data.summary(
       ["Label", "Labels"],
       locale,
       (i) => {
-        const at = valueAt(x, i);
-        const value = valueAt(y, i);
-        return Number.isFinite(at) && Number.isFinite(value)
-          ? `x ${format.x(at)}, y ${format.y(value)}`
-          : undefined;
+        const at = data.value(x, i);
+        const value = data.value(y, i);
+        // Places that are not values (fractions, pixels) say nothing of where the text is.
+        if (x.kind === "value" && !Number.isFinite(at)) return undefined;
+        if (y.kind === "value" && !Number.isFinite(value)) return undefined;
+        return [
+          x.kind === "value" && `x ${format.x(at)}`,
+          y.kind === "value" && `y ${format.y(value)}`,
+        ]
+          .filter(Boolean)
+          .join(", ");
       },
       rows,
     );
   }
 
   xExtent(_series: unknown, log: boolean, _breaks?: unknown, rows?: RowParts) {
-    return this.#data.extent([this.spec.x], log, undefined, rows);
+    return this.#data.extent([this.#x], log, undefined, rows);
   }
 
   yExtent(
@@ -156,14 +186,15 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
     rows?: RowParts,
   ) {
     // Only labels inside the x view count toward y.
-    const x = this.#data.channel(this.spec.x);
+    const x = this.#data.place(this.#x);
+    if (x.kind !== "value") return this.#data.extent([this.#y], log, undefined, rows);
     const lo = Math.min(x0, x1);
     const hi = Math.max(x0, x1);
     const inView = (i: number) => {
-      const value = valueAt(x, i);
+      const value = this.#data.value(x, i);
       return value >= lo && value <= hi;
     };
-    return this.#data.extent([this.spec.y], log, inView, rows);
+    return this.#data.extent([this.#y], log, inView, rows);
   }
 
   /**
@@ -171,33 +202,47 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
    * their order. Scratch is as large as the items drawn: a facet panel's,
    * not the table's.
    */
-  geometry(
-    _series: unknown,
-    frame: Frame,
-    key: MarkKey,
-    rows?: RowParts,
-  ): (SegmentGeometry | TextGeometry)[] {
+  geometry(_series: unknown, frame: Frame, key: MarkKey, rows?: RowParts): Geometry[] {
     const { spec } = this;
     const { plot, theme } = frame;
     const data = this.#data;
     const id = seriesKey(key, "text");
-    const x = data.channel(spec.x);
-    const y = data.channel(spec.y);
-    const anchor = spec.anchor ?? "middle";
-    const dx = spec.dx ?? 0;
-    const dy = spec.dy ?? 0;
+    const x = data.place(this.#x);
+    const y = data.place(this.#y);
+    const label = data.label!;
+    const paint = labelPaint(theme, theme.text, label.style);
+    const plain = plainText(paint, theme);
+    const align = label.style?.align;
+    const anchor = align === "start" ? "start" : align === "end" ? "end" : "middle";
+    const write = data.writer(frame.locale, frame.features?.of(this)?.format);
     const overlap = spec.overlap ?? "show";
     const placed = overlap === "show" ? undefined : new LabelBoxes();
     const moving = overlap === "move";
-    const font = `${theme.fontSize}px ${theme.font}`;
-    const halo = labelHalo(this.spec.halo, spec.fill ?? theme.text, frame);
+    const font = paint.css;
+    const haloOption = label.style?.halo ?? this.spec.halo;
+    const halo = labelHalo(haloOption, paint.color, frame);
     // Room around each label, which wider halos reach past.
     const room = Math.max(LABEL_GAP, (halo?.width ?? 0) / 2 + 0.5);
-    // Half a label's height, with the room kept around it.
-    const half = Math.ceil(theme.fontSize * 0.6) + room;
+    // Half a label's height, with the room kept around it: of a box (its
+    // line height and padding) for labels in boxes.
+    const [top, right, bottom, left] = paint.background ? paint.padding : [0, 0, 0, 0];
+    const half =
+      Math.ceil(
+        paint.background ? paint.lineHeight / 2 + Math.max(top, bottom) : paint.size * 0.6,
+      ) + room;
     const inPlot = (x0: number, y0: number, x1: number, y1: number) =>
       x0 >= plot.x && x1 <= plot.x + plot.width && y0 >= plot.y && y1 <= plot.y + plot.height;
-    const pointAt = (row: number) => [frame.x.map(valueAt(x, row)), frame.y.map(valueAt(y, row))];
+    // The points labels belong to, which must be in view; their places' offsets move the labels.
+    const dx = x.coordinate.offset ?? 0;
+    const dy = y.coordinate.offset ?? 0;
+    const [px, py] = [
+      { ...x, coordinate: { ...x.coordinate, offset: 0 } },
+      { ...y, coordinate: { ...y.coordinate, offset: 0 } },
+    ];
+    const pointAt = (row: number) => [
+      data.pixel(px, "x", row, frame.x, frame) ?? Number.NaN,
+      data.pixel(py, "y", row, frame.y, frame) ?? Number.NaN,
+    ];
     // Scratch is indexed by each item's place among those drawn, whose row
     // `rowAt` gives: a panel's rows are one part, read as they are.
     const size = data.size(rows);
@@ -283,64 +328,62 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
       const [px, py] = pointAt(row) as [number, number];
       // Labels are not clipped, so ones whose point is out of view are left out.
       if (!inPlot(px, py, px, py)) continue;
-      const label = data.text(row, frame.locale);
+      const label = data.text(row, frame.locale, write);
       if (!placed) {
         add(item, label, px + dx, py + dy);
         continue;
       }
       // Empty labels draw nothing, so they take no room.
       if (label === "") continue;
-      const width = frame.measure(label, font);
+      const width = frame.measure(label, font) + left + right;
       if (!place(item, label, width, 0, nearPlaces) && moving) later.push([item, label, width]);
     }
     // Then those go farther out, once every label that fits near its point
     // has its place, so lines never take a nearer label's room.
     for (const [item, label, width] of later)
       place(item, label, width, nearPlaces, nearPlaces + (RINGS - 1) * AROUND.length);
-    const coords = frame.floats(id, "text", size * 2);
-    const labels: string[] = [];
+    const drawn: PlacedLabel[] = [];
     for (let item = 0; item < size; item++) {
-      const label = texts[item];
-      if (label === undefined) continue;
-      coords[labels.length * 2] = at[item * 2]!;
-      coords[labels.length * 2 + 1] = at[item * 2 + 1]!;
-      labels.push(label);
+      const text = texts[item];
+      if (text === undefined) continue;
+      drawn.push({ text, x: at[item * 2]!, y: at[item * 2 + 1]!, anchor, baseline: "middle" });
     }
-    if (labels.length === 0) return [];
-    const out: (SegmentGeometry | TextGeometry)[] = [];
+    if (drawn.length === 0) return [];
+    const out: Geometry[] = [];
     if (leaders.length > 0) {
-      out.push({
+      const leader = spec.style?.leader;
+      const strokeWidth = leader?.strokeWidth ?? 1;
+      const segments: SegmentGeometry = {
         kind: "segments",
         draw: guideSegmentDrawing,
         key: `${id}|leaders`,
-        stroke: theme.muted,
-        strokeWidth: 1,
+        stroke: leader?.stroke ?? theme.muted,
+        strokeWidth,
         coords: Float32Array.from(leaders),
         count: leaders.length / 4,
-      });
+      };
+      const dash = dashPattern(leader?.dash, strokeWidth);
+      if (dash) segments.dash = dash;
+      if (leader?.opacity !== undefined) segments.opacity = leader.opacity;
+      out.push(segments);
     }
-    out.push({
-      kind: "text",
-      draw: textDrawing,
-      halo,
-      key: id,
-      fill: spec.fill ?? theme.text,
-      anchor,
-      coords,
-      labels,
-      count: labels.length,
-    });
+    out.push(
+      plain
+        ? textGeometry(id, drawn, paint.color, haloOption, frame)
+        : labelsGeometry(id, drawn, paint, haloOption, frame),
+    );
     return out;
   }
 }
 
 /**
- * Text at data positions: one label at constant values, or one per row of a
- * table.
+ * Text at a place: one label at a constant place, or one per row of a
+ * table. Places mix kinds: a fraction of the plot's width at a data value.
  *
  * ```ts
- * text({ x: launch, y: 120, label: "Launch", anchor: "start", dx: 6 })
- * text(peaks, { x: "time", y: "value", textField: "value", dy: -10 })
+ * text({ x: launch, y: 120, label: "Launch" })
+ * text({ at: { x: { fraction: 0.03 }, y: { data: 1.7 } }, label: { text: "Target", style: { align: "start" } } })
+ * text(peaks, { x: "time", y: { field: "value", offset: -10 }, label: { field: "value" } })
  * ```
  */
 export function text(options: TextOptions): ChartMark<Frozen<TextSpec>>;
@@ -354,28 +397,37 @@ export function text<S extends Schema>(
 ): ChartMark<Frozen<TextSpec>> {
   const table = second ? (first as Table<S>) : undefined;
   const options = (second ?? first) as TextDataOptions<S>;
-  const spec: TextSpec = {
+  // A position's places are coordinates in specs: values and fields tagged.
+  const tagged = (place: PlaceOption<string>) => {
+    const value = position(place);
+    return typeof value === "number"
+      ? { data: value }
+      : typeof value === "string"
+        ? { field: value }
+        : value;
+  };
+  const at = options.at && { x: tagged(options.at.x), y: tagged(options.at.y) };
+  const spec = {
     type: "text",
-    x: position(options.x),
-    y: position(options.y),
-    ...definedFields(options, [
+    ...definedFields({ ...options, x: position(options.x), y: position(options.y), at }, [
       "halo",
       "id",
+      "x",
+      "y",
+      "at",
       "label",
-      "textField",
-      "fill",
-      "anchor",
-      "dx",
-      "dy",
       "overlap",
+      "style",
+      "contributeDomain",
       "axis",
       "facet",
       "panel",
       "clip",
     ]),
-  };
-  if (table?.name !== undefined && readsTable([spec.x, spec.y], spec.textField)) {
+  } as unknown as TextSpec;
+  const field = typeof spec.label === "object" ? spec.label.field : undefined;
+  const places = spec.at ? [spec.at.x, spec.at.y] : [spec.x, spec.y];
+  if (table?.name !== undefined && readsTable(places as AnnotationPosition[], field))
     spec.data = table.name;
-  }
   return new TextMark(spec, table as unknown as Table | undefined);
 }

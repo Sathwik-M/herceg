@@ -1,11 +1,12 @@
 import type { RowView } from "../data/row-view.ts";
 import type { CategoryField, NumericField, PositionField, Schema, Table } from "../data/table.ts";
 import { pointDrawing } from "../draw/point.ts";
-import { SYMBOLS, type SymbolName, symbolPath, symbolReach } from "../draw/symbols.ts";
+import { CYCLE, SYMBOLS, type SymbolName, symbolPath, symbolReach } from "../draw/symbols.ts";
 import { formatNumber } from "../format/format.ts";
 import { GridIndex } from "../lod/grid-index.ts";
 import type { Breaks } from "../lod/m4.ts";
 import { insetDomain } from "../model/axis.ts";
+import type { CategoryColors } from "../model/features.ts";
 import type { LegendPart } from "../model/legend.ts";
 import {
   checkColorScale,
@@ -25,7 +26,7 @@ import {
 } from "../scene/scene.ts";
 import type { Clip, Frozen, PointSpec } from "../spec/spec.ts";
 import { surface, type Theme } from "../theme.ts";
-import { Appearance, categoryColors, categoryTones, colorKey } from "./appearance.ts";
+import { Appearance, scaleKey } from "./appearance.ts";
 import { BandShares, jitterOf, STILL } from "./dodge.ts";
 import { legendParts } from "./legend-parts.ts";
 import { definedFields } from "./line.ts";
@@ -198,6 +199,8 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
   readonly table: Table<Schema>;
   readonly view: RowView | undefined;
   readonly tooltip = "point";
+  /** A category `color` colors points through the chart's color scale (see model/features.ts). */
+  readonly featured: boolean = false;
   readonly inset: { x: number; y: number };
   readonly #split: SeriesSplitter;
   /** Which positions are categories: each row's band index places it. */
@@ -210,8 +213,8 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
   readonly #symbolField: string | undefined;
   /** A number or time `color`, colored on a continuous scale. */
   readonly #toneField: string | undefined;
-  /** A category `color` other than the series field, its values in order of appearance. */
-  readonly #colorField: Appearance | undefined;
+  /** A category `color` other than the series field, its values' colors through the chart's color scale. */
+  readonly #colorField: string | undefined;
   /** A category symbol field's values in order of appearance, which take the shapes in turn. */
   readonly #shapes: Appearance | undefined;
   /** The shape of every point when no field gives one. */
@@ -285,8 +288,12 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
         throw new Error(
           `point colors: "${spec.color}" is a category field, colored by the theme's palette; drop colors, colorDomain, and colorMidpoint`,
         );
-      // Colored by the series field, points keep their series' colors.
-      else if (spec.color !== spec.series) this.#colorField = new Appearance(spec.color);
+      // Colored by the series field, points keep their series' colors, which
+      // the chart's color scale gives them; other fields color each point.
+      else {
+        this.featured = true;
+        if (spec.color !== spec.series) this.#colorField = spec.color;
+      }
     }
     if (Array.isArray(spec.colors)) checkRamp(spec.colors, "point colors");
     checkColorScale(spec.colorDomain, spec.colorMidpoint, "point");
@@ -396,7 +403,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
   }
 
   geometry(series: readonly Series[], frame: Frame): PointGeometry[] {
-    const encoding = this.#encoding(frame.theme);
+    const encoding = this.#encoding(frame.theme, categoriesOf(series));
     // With no color value at all, no point has the value it encodes.
     if (this.#toneField !== undefined && !encoding.color) return [];
     const radius = this.#radius;
@@ -597,7 +604,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
   }
 
   /** How sizes, colors, and opacities follow their fields, with the current data. */
-  #encoding(theme: Theme): Encoding {
+  #encoding(theme: Theme, categories: CategoryColors | undefined): Encoding {
     const { table } = this;
     const out: Encoding = {};
     const radius = this.#radiusScale();
@@ -614,17 +621,11 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       out.color = color;
       out.palette = this.#palette(color);
     }
-    if (this.#colorField) {
-      const codes = table.categories(this.#colorField.field as never).codes;
-      out.categories = { codes, tones: this.#tonesByCode(theme) };
-      out.palette = categoryColors(theme);
+    if (categories) {
+      out.categories = { codes: categories.codes, tones: categories.tones };
+      out.palette = categories.colors;
     }
     return out;
-  }
-
-  /** The index into the theme's palette of each code of a category `color`; -1 for none. */
-  #tonesByCode(theme: Theme): Int32Array {
-    return categoryTones(this.#colorField!, this.table, theme);
   }
 
   /**
@@ -679,7 +680,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
           },
         ]
       : [];
-    return legendParts(ramps, this.#glyphKeys(series, theme, format));
+    return legendParts(ramps, this.#glyphKeys(series, format));
   }
 
   /**
@@ -703,7 +704,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     if (field !== this.spec.series) return "circle";
     const shapes = this.#shapes!;
     shapes.places(this.table);
-    return SYMBOLS[(shapes.of(s.label) ?? 0) % SYMBOLS.length]!;
+    return SYMBOLS[(shapes.of(s.label) ?? 0) % CYCLE]!;
   }
 
   /**
@@ -711,11 +712,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
    * value of a symbol field that does not also split series), and of colors
    * (each value of a category `color`).
    */
-  #glyphKeys(
-    series: readonly Series[],
-    theme: Theme,
-    format: (value: number) => string,
-  ): GlyphKey[] {
+  #glyphKeys(series: readonly Series[], format: (value: number) => string): GlyphKey[] {
     if (series.length === 0) return [];
     const out: GlyphKey[] = [];
     const radius = this.#radiusScale();
@@ -755,13 +752,14 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
         }),
       });
     }
-    if (this.#colorField) out.push(colorKey(this.#colorField, this.table, theme));
+    const categories = this.#colorField !== undefined ? categoriesOf(series) : undefined;
+    if (categories) out.push(scaleKey(categories));
     return out;
   }
 
   /** The shape (an index into SYMBOLS) of each code of the symbol field; -1 for none. */
   #shapesByCode(): Int32Array {
-    return this.#shapes!.tones(this.table, SYMBOLS.length);
+    return this.#shapes!.tones(this.table, CYCLE);
   }
 
   /** The stream identity of a series of whole columns, for GPU uploads that follow appends. */
@@ -805,7 +803,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       text += `, ${field} ${format.value(this.table.numbers(field as never)[row]!)}`;
     }
     const symbols = this.#symbolField !== this.spec.series ? this.#symbolField : undefined;
-    for (const field of [this.#colorField?.field, symbols]) {
+    for (const field of [this.#colorField, symbols]) {
       if (field === undefined) continue;
       const { codes, dictionary } = this.table.categories(field as never);
       text += `, ${field} ${dictionary[codes[row]!] ?? ""}`;
@@ -815,10 +813,10 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
 
   /** The color a row's point is drawn in: its series', or from the `color` field. */
   pointColor(s: Series, row: number, theme: Theme): string {
-    if (this.#colorField) {
-      const code = this.table.categories(this.#colorField.field as never).codes[row]!;
-      const tone = this.#tonesByCode(theme)[code] ?? NONE;
-      return tone < 0 ? s.color : categoryColors(theme)[tone]!;
+    const categories = this.#colorField !== undefined ? s.features?.categories : undefined;
+    if (categories) {
+      const tone = categories.tones[categories.codes[row]!] ?? NONE;
+      return tone < 0 ? s.color : categories.colors[tone]!;
     }
     if (this.#toneField === undefined) return s.color;
     return (
@@ -846,7 +844,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       finite(this.#toneField) &&
       finite(this.#opacityField) &&
       held(this.#symbolField) &&
-      held(this.#colorField?.field)
+      held(this.#colorField)
     );
   }
 
@@ -1165,4 +1163,9 @@ function legendGlyph(symbol: SymbolName): { glyph: string; reach: number } {
   const reach = symbolReach(symbol);
   const r = Math.min(LEGEND_RADIUS, LEGEND_REACH / reach);
   return { glyph: symbolPath(symbol, 0, 0, r), reach: r * reach };
+}
+
+/** Points' category colors, which every series of the mark shares (see the feature compiler). */
+function categoriesOf(series: readonly Series[]): CategoryColors | undefined {
+  return series[0]?.features?.categories;
 }

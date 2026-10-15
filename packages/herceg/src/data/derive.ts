@@ -21,14 +21,8 @@ import {
   type NumericArray,
   time,
 } from "./column.ts";
-import {
-  compileExpression,
-  type Expr,
-  type Expression,
-  expressionOf,
-  type Fields,
-  type KindOf,
-} from "./expression.ts";
+import { type Expr, expressionOf, type KindOf } from "./expr.ts";
+import { compileExpression, type Expression, type Fields } from "./expression.ts";
 import { type GeometrySet, geometryOf } from "./geometry.ts";
 import { rowComparator } from "./order.ts";
 import { quantile } from "./quantile.ts";

@@ -491,6 +491,7 @@ function paintMark(
         paint(page, top, {
           stroke: mark.stroke ?? mark.fill,
           strokeWidth: mark.strokeWidth,
+          strokeOpacity: mark.strokeOpacity,
           join: "round",
           cap: hasIsolated(mark.upper) ? "round" : "butt",
         });
@@ -508,7 +509,17 @@ function paintMark(
     }
     case "rect": {
       traceRects(path, mark);
-      paint(page, path, { fill: mark.fill, fillOpacity: mark.fillOpacity });
+      const { edge } = mark;
+      paint(page, path, {
+        fill: mark.fill,
+        fillOpacity: mark.fillOpacity,
+        ...(edge && {
+          stroke: edge.stroke,
+          strokeWidth: edge.width,
+          strokeOpacity: edge.opacity,
+          dash: edge.dash,
+        }),
+      });
       return;
     }
     case "segments": {
@@ -604,7 +615,12 @@ function paintMark(
     case "rule": {
       path.moveTo(mark.x1, mark.y1);
       path.lineTo(mark.x2, mark.y2);
-      paint(page, path, { stroke: mark.stroke, strokeWidth: mark.strokeWidth, dash: mark.dash });
+      paint(page, path, {
+        stroke: mark.stroke,
+        strokeWidth: mark.strokeWidth,
+        strokeOpacity: mark.opacity,
+        dash: mark.dash,
+      });
       if (mark.label) {
         const label = ruleLabel(mark, theme.fontSize);
         text(page, mark.label, label.x, label.y, {
@@ -631,6 +647,9 @@ function paintMark(
       }
       return;
     }
+    case "labels":
+      paintItems(page, mark.items);
+      return;
     default: {
       const unknown: never = mark;
       throw new Error(`PDF export cannot draw ${(unknown as Geometry).kind} geometry`);

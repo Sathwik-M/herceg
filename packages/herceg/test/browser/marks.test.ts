@@ -318,7 +318,9 @@ describe("new marks in the browser", () => {
 
   it("toggles bar series from the legend", () => {
     const sales = table({ region: ["N", "S"], a: [1, 2], b: [3, 4] });
-    const chart = createChart(host, { marks: [bar(sales, { x: "region", y: ["a", "b"] })] });
+    const chart = createChart(host, {
+      marks: [bar(sales, { x: "region", y: ["a", "b"] })],
+    });
     const paths = () => chart.root.querySelectorAll("svg g[clip-path] path");
     expect(paths()).toHaveLength(2);
     chart.root.querySelectorAll("button")[0]!.click();
@@ -329,7 +331,9 @@ describe("new marks in the browser", () => {
 
   it("follows the pointer along y over horizontal bars", async () => {
     const sales = table({ region: ["North", "South"], a: [1, 2], b: [3, 4] });
-    const chart = createChart(host, { marks: [bar(sales, { x: ["a", "b"], y: "region" })] });
+    const chart = createChart(host, {
+      marks: [bar(sales, { x: ["a", "b"], y: "region" })],
+    });
     const y = modelOf(chart).yScale()!;
     const [left, right] = modelOf(chart).xScale()!.range;
     hover(chart.root, right - 4, y.map(1) + 3);
@@ -473,7 +477,7 @@ describe("new marks in the browser", () => {
     const marks = [
       region({ x1: 1, x2: 2, label: "window" }),
       line(series, { x: "t", y: "v" }),
-      text({ x: 3, y: 4, label: "last", anchor: "end", dx: -6 }),
+      text({ x: { data: 3, offset: -6 }, y: 4, label: { text: "last", style: { align: "end" } } }),
     ];
     const svgChart = createChart(host, { marks, renderer: "svg" });
     const clipped = svgChart.root.querySelector("svg g[clip-path]")!;
@@ -498,7 +502,7 @@ describe("new marks in the browser", () => {
       marks: [
         line(series, { x: "t", y: "v" }),
         rule({ y: 2, label: "limit" }),
-        text(latest, { x: "t", y: "v", textField: "v" }),
+        text(latest, { x: "t", y: "v", label: { field: "v" } }),
       ],
       y: { domain: [0, 5] },
     });

@@ -31,6 +31,7 @@ import { axisGuide } from "../../src/model/axis-guide.ts";
 import { facet } from "../../src/model/facet.ts";
 import { GUIDE_KIT } from "../../src/model/guides.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
+import { staticCompilers } from "../../src/render/compilers.ts";
 import { renderSvg } from "../../src/render/svg.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
 import type { PositionScale } from "../../src/scale/scale.ts";
@@ -61,7 +62,11 @@ const BUILDERS = { planAxis, axisGuide, Polyline, monotonePolyline, measure: est
 
 /** A chart model drawn at 600 x 300 that animates values. */
 function chart(config: Partial<ChartConfig> & Pick<ChartConfig, "marks">) {
-  const model = new ChartModel({ locale: "en-US", animation: VALUES, ...config });
+  const model = new ChartModel(
+    { locale: "en-US", animation: VALUES, ...config },
+    undefined,
+    ...staticCompilers(),
+  );
   model.setSize(600, 300, 1);
   return model;
 }

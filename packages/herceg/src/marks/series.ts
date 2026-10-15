@@ -4,6 +4,7 @@ import type { Breaks, Mapping } from "../lod/m4.ts";
 import type { RangeExtremes, RangeIndex } from "../lod/minmax-index.ts";
 import type { TraceBuffers, TraceColumns, TraceSource } from "../lod/point-view.ts";
 import type { Polyline } from "../lod/polyline.ts";
+import type { SeriesFeatures } from "../model/features.ts";
 
 /**
  * One drawable series: x and y columns, optionally restricted to a subset of
@@ -66,6 +67,13 @@ export interface Series {
    * placed them by (see marks/dodge.ts).
    */
   whole?: Series | undefined;
+  /** What the feature compiler resolved for the series: its paint, tracing, and markers. */
+  features?: SeriesFeatures | undefined;
+  /**
+   * For a series of another's points copied in order (`traceSeries`), each
+   * position's row of the table, which `rows` no longer says.
+   */
+  sources?: ArrayLike<number> | undefined;
 }
 
 /**
@@ -252,6 +260,8 @@ export function yExtent(
   curved = false,
   breaks?: Breaks,
 ): [number, number] | undefined {
+  const own = series.features?.extent;
+  if (own) return own(series, x0, x1, y, log, index, curved, breaks);
   const lo = Math.min(x0, x1);
   const hi = Math.max(x0, x1);
   let [start, end] = visibleRange(series, x0, x1);

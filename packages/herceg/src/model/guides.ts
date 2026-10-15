@@ -5,6 +5,7 @@
 // configuration, and static output (SVG, PDF, specs) brings it with it, so
 // charts that use none of it carry none of it.
 
+import { markupOf, n } from "../draw/markup.ts";
 import {
   formatNumber,
   numberFormatter,
@@ -22,6 +23,7 @@ import {
   textItems,
   textWidth,
 } from "../layout/text.ts";
+import { mapValue } from "../lod/m4.ts";
 import { chooseInterval, timeTicks } from "../scale/time.ts";
 import { strokeKey } from "../scene/grid.ts";
 import { type AxisGuide, type Rect, tickLabelGap } from "../scene/scene.ts";
@@ -42,10 +44,10 @@ import type { ScaleName } from "./scales.ts";
 import type { ChartStyles } from "./styles.ts";
 
 /**
- * What the guide compiler uses of the chart's own code, handed to it
- * rather than imported: a module both the chart and the compiler's chunk
- * imported would move out of the chart's first chunk into a chunk of its
- * own (as esbuild splits code), which compresses worse.
+ * What the guide compiler and the feature compiler use of the chart's own
+ * code, handed to them rather than imported: a module both the chart and a
+ * compiler's chunk imported would move out of the chart's first chunk into
+ * a chunk of its own (as esbuild splits code), which compresses worse.
  */
 export const GUIDE_KIT = {
   formatNumber,
@@ -70,6 +72,9 @@ export const GUIDE_KIT = {
   aligned,
   textHalo,
   measureLegends,
+  n,
+  markupOf,
+  mapValue,
 };
 
 export type GuideKit = typeof GUIDE_KIT;
@@ -180,9 +185,9 @@ export interface AxesState {
  * and legend settings beyond its place and style.
  */
 export function needsGuides(config: ChartConfig): boolean {
-  const { x, y, yRight, legend, panels } = config;
+  const { x, y, yRight, legend, panels, scales } = config;
   return (
-    !!(config.guides || config.scales) ||
+    !!(config.guides || scales?.x || scales?.y || scales?.yRight) ||
     [x, y, yRight, ...(panels?.list.flatMap((p) => [p.x, p.y, p.yRight]) ?? [])].some(
       (axis) =>
         axis &&

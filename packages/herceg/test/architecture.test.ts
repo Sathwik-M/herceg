@@ -40,6 +40,42 @@ describe("architecture", () => {
     }
   });
 
+  // The feature compiler follows the same rule. What it imports besides its
+  // own modules no line chart's module imports: expression compilation (the
+  // builders `col` and `when` are data/expr.ts), symbols' shapes, and the
+  // guide compiler's pattern formats. Charts that import these themselves
+  // (grids the first, points the second) get them in a chunk of their own.
+  // Colors are told from names through the kit (FeatureKit.isColor).
+  it("the feature compiler imports only types from the line chart's modules", () => {
+    const features = join(SRC, "marks/features");
+    const allowed = ["data/expression.ts", "draw/symbol-shapes.ts", "format/patterns.ts"].map(
+      (path) => join(SRC, path),
+    );
+    for (const file of files(features)) {
+      const source = readFileSync(file, "utf8");
+      for (const [, path] of source.matchAll(/^import (?!type )[^;]*?from "([^"]+)"/gm)) {
+        const target = resolve(dirname(file), path!);
+        expect(
+          target.startsWith(features) || allowed.includes(target),
+          `${file} imports ${path}`,
+        ).toBe(true);
+      }
+    }
+    const runtime = (file: string) =>
+      [
+        ...readFileSync(join(SRC, file), "utf8").matchAll(
+          /^(?:import|export) (?!type )[^;]*?from "([^"]+)"/gm,
+        ),
+      ].map(([, path]) => resolve(dirname(join(SRC, file)), path!));
+    for (const file of ["index.ts", "draw/text.ts", "draw/symbols.ts"])
+      expect(
+        runtime(file).filter(
+          (path) => allowed.includes(path) && !path.endsWith("symbol-shapes.ts"),
+        ),
+        file,
+      ).toEqual([]);
+  });
+
   // Marks import their drawings, so drawings must load and write SVG without
   // a DOM. Canvas painting reaches the DOM only through the canvas it is
   // handed (rasters fall back to creating a canvas in its document).

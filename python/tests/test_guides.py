@@ -118,7 +118,9 @@ def test_guides_refuse_what_they_cannot_say_in_python_names():
         hg.Chart(WEEK, guides=[hg.legend(columns=2, rows=2)]).line(x="t", y="v").to_spec()
     with pytest.raises(TypeError, match=r"Chart guides\[0\]: expected hg.axis\(...\)"):
         hg.Chart(WEEK, guides=[{"type": "axis"}]).line(x="t", y="v").to_spec()
-    with pytest.raises(ValueError, match='Chart scales: "temperature" is not a scale'):
+    with pytest.raises(
+        ValueError, match='Chart scales temperature: expected type="ordinal", a scale of categories'
+    ):
         hg.Chart(WEEK, scales={"temperature": {}}).line(x="t", y="v").to_spec()
     with pytest.raises(ValueError, match="line legend: expected False"):
         hg.Chart(WEEK).line(x="t", y="v", legend=True)

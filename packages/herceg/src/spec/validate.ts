@@ -21,6 +21,20 @@ import { ruleFormError } from "../marks/rule.ts";
 import { treeFormError } from "../marks/tree-data.ts";
 import { GUIDE_KIT } from "../model/guides.ts";
 import { checkBreaks } from "../scale/breaks.ts";
+import type {
+  BarLabelPlaceSpec,
+  BarLabelsSpec,
+  ContinuitySpec,
+  EncodingsSpec,
+  LabelPlaceSpec,
+  LabelSpec,
+  MarkerStyle,
+  MarkStyleSpec,
+  OrdinalScaleSpec,
+  SeriesStyle,
+  StackSpec,
+  StyleMapSpec,
+} from "./encoding.ts";
 import {
   type AnimationSpec,
   type AxisGuideSpec,
@@ -1083,6 +1097,31 @@ const scaleSettings: Check = (v, path) => {
   } satisfies ChecksOf<ScaleSpec>);
 };
 
+/** A scale of categories in `scales`: its domain, fixed outputs, and output for others. */
+const ordinalScale: Check = (v, path) => {
+  object(v, path);
+  const output: Check = (o, at) => {
+    if (typeof o !== "string" && typeof o !== "number" && !Array.isArray(o))
+      fail(at, "a color, a shape, a dash, or a number", o);
+    if (Array.isArray(o)) numbers(o, at);
+  };
+  const type = (t: unknown, at: string) => {
+    if (t !== "ordinal")
+      fail(at, '"ordinal" (scales other than x, y, and yRight are scales of categories)', t);
+  };
+  type((v as { type?: unknown }).type, `${path}.type`);
+  properties(v as Record<string, unknown>, path, {
+    type,
+    domain: strings,
+    map: (m, at) => {
+      object(m, at);
+      for (const [key, value] of Object.entries(m as Record<string, unknown>))
+        output(value, `${at}.${JSON.stringify(key)}`);
+    },
+    unknown: output,
+  } satisfies ChecksOf<OrdinalScaleSpec>);
+};
+
 /** A tree's fields: a path of category fields, or node and parent fields. */
 function hierarchyChecks(): Record<
   "path" | "node" | "parent" | "value" | "labels" | "panel",
@@ -1136,6 +1175,185 @@ const tooltip: Check = (v, path) => {
   });
 };
 
+/** A coordinate: a value on a scale, a field, a fraction of a frame, or pixels, with an offset. */
+const coordinate: Check = (v, path) => {
+  object(v, path);
+  const c = v as Record<string, unknown>;
+  const kind = ["data", "field", "fraction", "px"].filter((key) => key in c);
+  if (kind.length !== 1)
+    fail(path, "one of { data }, { field }, { fraction }, or { px }, with an offset", v);
+  const frame = oneOf("plot", "chart");
+  properties(c, path, {
+    data: (d, at) => {
+      if (typeof d !== "string" && !(typeof d === "number" && Number.isFinite(d)))
+        fail(at, "a number or a category's value", d);
+    },
+    field,
+    fraction: finite,
+    px: finite,
+    scale: string,
+    frame,
+    offset: finite,
+  });
+  if ((kind[0] === "data" || kind[0] === "field") && "frame" in c)
+    fail(`${path}.frame`, "absent for values on a scale", c.frame);
+  if ((kind[0] === "fraction" || kind[0] === "px") && "scale" in c)
+    fail(`${path}.scale`, "absent for fractions and pixels", c.scale);
+};
+
+/** An annotation's place along an axis: a value, a field's name, or a coordinate. */
+const annotationPlace: Check = (v, path) => (isRecord(v) ? coordinate(v, path) : position(v, path));
+
+/** A label: its text, or a label object (text or field, format, style, place). */
+const label: Check = (v, path) => {
+  if (typeof v === "string") return;
+  object(v, path);
+  const l = v as Record<string, unknown>;
+  if ("text" in l === "field" in l) fail(path, "a label with one of text and field", v);
+  properties(l, path, {
+    text: string,
+    field,
+    format: axisFormat(undefined),
+    style: textStyle,
+    place: (p, at) => {
+      object(p, at);
+      properties(p as Record<string, unknown>, at, {
+        attachment: oneOf("start", "center", "end"),
+        side: oneOf("top", "right", "bottom", "left"),
+        outside: boolean,
+        reserve: boolean,
+        offset: finite,
+      } satisfies ChecksOf<LabelPlaceSpec>);
+    },
+  } satisfies ChecksOf<LabelSpec>);
+};
+
+/** The shapes points and markers take. */
+const SYMBOL_NAMES = [
+  "circle",
+  "square",
+  "triangle",
+  "diamond",
+  "cross",
+  "star",
+  "wye",
+  "triangle-down",
+  "x",
+];
+const symbolName = oneOf(...SYMBOL_NAMES);
+
+/** What each channel's values are. */
+const CHANNEL_VALUES = {
+  color: string,
+  fill: string,
+  stroke: string,
+  dash,
+  symbol: symbolName,
+  strokeWidth: width,
+  size: width,
+  opacity: fraction,
+} satisfies ChecksOf<EncodingsSpec>;
+
+/** A channel of values `value` checks: a field through a scale, a constant, or a condition. */
+function channel(value: Check): Check {
+  return (v, path) => {
+    object(v, path);
+    const c = v as Record<string, unknown>;
+    if ("field" in c) checkProperties(c, path, ["field"], { field, scale: string });
+    else if ("value" in c) checkProperties(c, path, ["value"], { value });
+    else if ("condition" in c)
+      checkProperties(c, path, ["condition"], {
+        condition: (w, at) => {
+          object(w, at);
+          checkProperties(w as Record<string, unknown>, at, ["when", "then", "otherwise"], {
+            when: expression,
+            // A condition's branch, not a promise's: specs hold no functions.
+            // biome-ignore lint/suspicious/noThenProperty: the spec's name for the branch.
+            then: value,
+            otherwise: value,
+          });
+        },
+      });
+    else fail(path, "{ field }, { value }, or { condition: { when, then, otherwise } }", v);
+  };
+}
+
+/** A mark's `encode`, of the channels `names` it takes. */
+function encodings(...names: readonly (keyof EncodingsSpec)[]): Check {
+  const checks = Object.fromEntries(names.map((name) => [name, channel(CHANNEL_VALUES[name])]));
+  return (v, path) => {
+    object(v, path);
+    properties(v as Record<string, unknown>, path, checks);
+  };
+}
+
+const markerStyle: Check = (v, path) => {
+  object(v, path);
+  properties(v as Record<string, unknown>, path, {
+    symbol: symbolName,
+    radius: positive,
+    fill: string,
+    stroke: string,
+    strokeWidth: width,
+    opacity: fraction,
+  } satisfies ChecksOf<MarkerStyle>);
+};
+
+const seriesStyle: Check = (v, path) => {
+  object(v, path);
+  properties(v as Record<string, unknown>, path, {
+    ...strokeChecks,
+    fill: string,
+    fillOpacity: fraction,
+    strokeOpacity: fraction,
+    marker: markerStyle,
+  } satisfies ChecksOf<SeriesStyle>);
+};
+
+/** A mark's `style`, of the parts `parts` it has. */
+function markStyle(...parts: readonly Exclude<keyof MarkStyleSpec, "by">[]): Check {
+  const checks: Record<string, Check> = {
+    by: (v, path) => {
+      object(v, path);
+      checkProperties(v as Record<string, unknown>, path, ["map"], {
+        field,
+        map: (m, at) => {
+          object(m, at);
+          for (const [key, style] of Object.entries(m as Record<string, unknown>))
+            seriesStyle(style, `${at}.${JSON.stringify(key)}`);
+        },
+      } satisfies ChecksOf<StyleMapSpec>);
+    },
+  };
+  for (const part of parts) checks[part] = part === "marker" ? markerStyle : strokeStyle;
+  return (v, path) => {
+    object(v, path);
+    properties(v as Record<string, unknown>, path, checks);
+  };
+}
+
+const continuity: Check = (v, path) => {
+  object(v, path);
+  properties(v as Record<string, unknown>, path, {
+    defined: expression,
+    maxGap: (g, at) => {
+      if (typeof g === "number") return width(g, at);
+      object(g, at);
+      checkProperties(g as Record<string, unknown>, at, ["milliseconds"], { milliseconds: width });
+    },
+    breakBy: (b, at) => {
+      if (typeof b === "string")
+        return oneOf("minute", "hour", "day", "week", "month", "year")(b, at);
+      object(b, at);
+      checkProperties(b as Record<string, unknown>, at, ["field"], { field });
+    },
+  } satisfies ChecksOf<ContinuitySpec>);
+};
+
+const markers: Check = (v, path) => {
+  if (typeof v !== "boolean") symbolName(v, path);
+};
+
 /**
  * The properties each mark takes, typed against its spec so that adding a
  * property to a spec without checking it here fails to compile.
@@ -1162,9 +1380,17 @@ const MARKS: MarkChecks = {
       stroke: string,
       strokeWidth: width,
       dash,
+      opacity: fraction,
+      strokeOpacity: fraction,
       curve,
       label: string,
       legendGroup: group,
+      color: string,
+      encode: encodings("color", "stroke", "dash", "strokeWidth", "opacity"),
+      style: markStyle("marker"),
+      markers,
+      continuity,
+      where: expression,
     },
   },
   area: {
@@ -1183,24 +1409,34 @@ const MARKS: MarkChecks = {
       series: field,
       dodge: boolean,
       stack: (v, path) => {
+        if (isRecord(v)) {
+          properties(v, path, {
+            offset: oneOf("zero", "fill", "center", "wiggle"),
+            order: oneOf("input", "inside-out"),
+            gaps: oneOf("zero", "interpolate"),
+          } satisfies ChecksOf<StackSpec>);
+          return;
+        }
         if (typeof v !== "boolean" && v !== "fill" && v !== "center" && v !== "wiggle")
           throw new Error(
-            `${path}: expected true, false, "fill", "center", or "wiggle"; choose a supported stack`,
+            `${path}: expected true, false, "fill", "center", "wiggle", or { offset, order, gaps }; choose a supported stack`,
           );
       },
-      stackOrder: (v, path) => {
-        if (v !== "input" && v !== "inside-out")
-          throw new Error(`${path}: expected "input" or "inside-out"; choose a supported order`);
-      },
-      stackGaps: oneOf("zero", "interpolate"),
       fill: string,
       fillOpacity: fraction,
       line: boolean,
       stroke: string,
       strokeWidth: width,
+      strokeOpacity: fraction,
+      opacity: fraction,
       curve,
       label: string,
       legendGroup: group,
+      color: string,
+      encode: encodings("color", "fill", "stroke", "opacity"),
+      style: markStyle(),
+      continuity,
+      where: expression,
     },
   },
   dendrogram: {
@@ -1232,13 +1468,18 @@ const MARKS: MarkChecks = {
     required: [],
     checks: {
       ...placement,
-      x: position,
-      y: position,
+      x: annotationPlace,
+      y: annotationPlace,
       stroke: string,
       strokeWidth: width,
       dash,
-      label: string,
-      textField: field,
+      strokeOpacity: fraction,
+      span: (v, path) => {
+        if (!Array.isArray(v) || v.length !== 2) fail(path, "two coordinates", v);
+        for (const [i, c] of v.entries()) coordinate(c, `${path}[${i}]`);
+      },
+      label,
+      contributeDomain: boolean,
     },
   },
   region: {
@@ -1246,30 +1487,34 @@ const MARKS: MarkChecks = {
     checks: {
       halo,
       ...placement,
-      x1: position,
-      x2: position,
-      y1: position,
-      y2: position,
+      x1: annotationPlace,
+      x2: annotationPlace,
+      y1: annotationPlace,
+      y2: annotationPlace,
       fill: string,
       fillOpacity: fraction,
-      label: string,
-      textField: field,
+      label,
+      contributeDomain: boolean,
     },
   },
   text: {
-    required: ["x", "y"],
+    required: ["label"],
     checks: {
       halo,
       ...placement,
-      x: position,
-      y: position,
-      label: string,
-      textField: field,
-      fill: string,
-      anchor: oneOf("start", "middle", "end"),
+      x: annotationPlace,
+      y: annotationPlace,
+      at: (v, path) => {
+        object(v, path);
+        checkProperties(v as Record<string, unknown>, path, ["x", "y"], {
+          x: coordinate,
+          y: coordinate,
+        });
+      },
+      label,
       overlap: oneOf("show", "hide", "move"),
-      dx: finite,
-      dy: finite,
+      style: markStyle("leader"),
+      contributeDomain: boolean,
     },
   },
   bar: {
@@ -1288,10 +1533,35 @@ const MARKS: MarkChecks = {
             `${path}: expected true, false, or "fill"; use an area for "center" or "wiggle"`,
           );
       },
+      dodge: boolean,
       fill: string,
       fillOpacity: fraction,
+      stroke: string,
+      strokeWidth: width,
+      strokeOpacity: fraction,
+      dash,
+      opacity: fraction,
+      color: string,
+      encode: encodings("color", "fill", "stroke", "strokeWidth", "opacity"),
+      style: markStyle(),
       label: string,
-      labels: (v, path) => (typeof v === "boolean" ? undefined : format("linear")(v, path)),
+      labels: (v, path) => {
+        if (typeof v === "boolean") return;
+        object(v, path);
+        properties(v as Record<string, unknown>, path, {
+          field,
+          format: axisFormat(undefined),
+          style: textStyle,
+          minLength: width,
+          place: (p, at) => {
+            object(p, at);
+            properties(p as Record<string, unknown>, at, {
+              attachment: oneOf("start", "center", "end"),
+              outside: boolean,
+            } satisfies ChecksOf<BarLabelPlaceSpec>);
+          },
+        } satisfies ChecksOf<BarLabelsSpec>);
+      },
       legendGroup: group,
     },
   },
@@ -2210,10 +2480,16 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
       legend,
       scales: (v, path) => {
         object(v, path);
-        properties(v as Record<string, unknown>, path, {
+        const named = v as Record<string, unknown>;
+        properties(named, path, {
           x: scaleSettings,
           y: scaleSettings,
           yRight: scaleSettings,
+          ...Object.fromEntries(
+            Object.keys(named)
+              .filter((name) => !["x", "y", "yRight"].includes(name))
+              .map((name) => [name, ordinalScale]),
+          ),
         });
       },
       guides: guideList((scale) => {
