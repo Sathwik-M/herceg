@@ -3,6 +3,7 @@ import {
   type ChartMark,
   type ChartUpdate,
   type Chart as HercegChart,
+  type Hydration,
   type Inspection,
   tablesOf,
   viewOf,
@@ -28,8 +29,18 @@ export interface ChartProps extends Omit<ChartUpdate, "marks" | "renderTooltip">
   style?: string | undefined;
   /** The underlying chart once mounted (`bind:chart`), for imperative calls such as `setViewport` or `toSVG`. */
   chart?: HercegChart | null | undefined;
+  /**
+   * The chart rendered on the server (`renderToSnapshot`, or Python's
+   * `to_snapshot`) from the same options, as `hydration(snapshot)`: server
+   * and first client renders show its markup, which the chart then takes
+   * over without drawing it again. Read when the chart mounts; later values
+   * are not.
+   */
+  initial?: Hydration | undefined;
   /** The view changed (zoom, pan, reset, sync): x, y, and right y ranges, each null when not zoomed. */
   onviewport?: ChartListener<"viewport"> | undefined;
+  /** The view came near an end of what `interaction.limits` allows, as to load more data. */
+  onedge?: ChartListener<"edge"> | undefined;
   /** The selection changed (`interaction.brush`): x and y ranges and a lasso's outline, null when cleared. */
   onselect?: ChartListener<"select"> | undefined;
   /** The data under the pointer or keyboard cursor changed, as for a tooltip of your own. */

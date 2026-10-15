@@ -56,7 +56,7 @@ async function mouse(
   type: "mousePressed" | "mouseMoved" | "mouseReleased" | "mouseWheel",
   x: number,
   y: number,
-  { shift = false, clickCount = 1, deltaY = 0 } = {},
+  { shift = false, clickCount = 1, deltaY = 0, ctrl = false } = {},
 ) {
   const at = origin(chart);
   const types = {
@@ -65,7 +65,7 @@ async function mouse(
     mouseReleased: "release",
     mouseWheel: "wheel",
   } as const;
-  await realMouse({ type: types[type], x: at.x + x, y: at.y + y, clickCount, deltaY, shift });
+  await realMouse({ type: types[type], x: at.x + x, y: at.y + y, clickCount, deltaY, shift, ctrl });
 }
 
 /** A drag from one pixel of the chart to another, in steps. */
@@ -173,7 +173,7 @@ describe("maps", () => {
     const [px, py] = [x.map(25 * radians), y.map(0)];
     const before = (chart.inspect(px, py) as ItemInspection).key;
     await mouse(chart, "mouseMoved", px, py);
-    await mouse(chart, "mouseWheel", px, py, { deltaY: -300 });
+    await mouse(chart, "mouseWheel", px, py, { deltaY: -300, ctrl: true });
     await frame();
     expect(views).toHaveLength(1);
     const zoomed = views[0]!;
@@ -239,6 +239,7 @@ describe("maps", () => {
     for (let i = 0; i < 2; i++)
       chart.root.dispatchEvent(
         new WheelEvent("wheel", {
+          ctrlKey: true,
           deltaY: -100,
           clientX: chart.root.getBoundingClientRect().left + px,
           clientY: chart.root.getBoundingClientRect().top + py,
@@ -862,7 +863,7 @@ describe("networks", () => {
       const views = heard(chart, "viewport");
       const before = plane(chart);
       const [px, py] = where(chart, "a");
-      await mouse(chart, "mouseWheel", px, py, { deltaY: -300 });
+      await mouse(chart, "mouseWheel", px, py, { deltaY: -300, ctrl: true });
       await frame();
       expect(plane(chart).zoom).toBeGreaterThan(1.5);
       expect(Math.abs(where(chart, "a")[0] - px)).toBeLessThan(1);
@@ -939,7 +940,7 @@ describe("networks", () => {
   it("drags nodes while zoomed and cancels a drag whose view changes", async () => {
     const chart = await network({ marks: [still], interaction: { zoom: true, drag: true } });
     const [ax, ay] = where(chart, "a");
-    await mouse(chart, "mouseWheel", ax, ay, { deltaY: -200 });
+    await mouse(chart, "mouseWheel", ax, ay, { deltaY: -200, ctrl: true });
     await frame();
     const views = heard(chart, "viewport");
     const moves = heard(chart, "itemMove");
@@ -981,7 +982,7 @@ describe("networks", () => {
       });
       const moved = heard(chart, "itemMove");
       const [x, y] = where(chart, "a");
-      await mouse(chart, "mouseWheel", x, y, { deltaY: -200 });
+      await mouse(chart, "mouseWheel", x, y, { deltaY: -200, ctrl: true });
       await frame();
       const start: [number, number] = [x - 12, y - 12];
       await mouse(chart, "mousePressed", ...start);

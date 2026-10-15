@@ -48,7 +48,8 @@ components of your own that render marks are not read.
 
 The chart fills its container's width and is 320 px tall unless `width`,
 `height`, or a style says otherwise; `class`, `style`, and other attributes
-go to the container element. Chart events are Vue events: `@viewport`,
+go to the container element. Chart events are Vue events: `@viewport`, `@edge`
+(the view came near an end of `interaction.limits`, as to load more data),
 `@select`, `@hover`, `@camera` (a 3D chart turned), `@drill` (a treemap or sunburst
 drilled into a node), `@item-move` (a network's node moved; with subplots, these and
 `@viewport` and `@select` events of a subplot's tree, map, or network name it in
@@ -78,8 +79,9 @@ const exportSvg = () => view.value?.chart?.toSVG();
 ```
 
 `<Graph>` uses the same `interaction` prop as maps: `zoom: true` (or
-`"xy"`) pans and zooms with wheel, drag, double-click, Shift+arrows,
-plus/minus/0, and a toolbar. `@viewport` reports x and y ranges in layout
+`"xy"`) pans and zooms with the wheel (Ctrl or ⌘ held, as trackpad pinches send it), drag,
+double-click, Shift+arrows, plus/minus/0, and a toolbar; `pan: true` pans
+without zooming. `@viewport` reports x and y ranges in layout
 coordinates (y increases downwards); node radii stay fixed in pixels.
 `brush: "lasso"` selects visible node centers through a `rowSelection`
 bound to the nodes table, including duplicate node rows, and dims unselected
@@ -110,6 +112,37 @@ alternatives retain their English language.
 as pixel arrays. String patterns scale with `strokeWidth` (the theme's
 line width when omitted on `Line`); arrays stay in CSS pixels. `Custom`
 shape styles accept the same values. See the engine's [dash patterns](../herceg/README.md#marks).
+
+## Server rendering
+
+`:initial` takes the chart rendered on the server by `renderToSnapshot` from
+`herceg` (or Python's `to_snapshot`), passed through `hydration(snapshot)`,
+which brings the code that adopts it, so pages that never hydrate carry
+none of it. Server rendering (`renderToString` from
+`vue/server-renderer`, as Nuxt does) and the first render in the browser
+write its markup, so hydrating finds no mismatch; the chart then takes the
+markup over without drawing it again, and attaches interaction after its
+first frame. Give `renderToSnapshot` the options the component gives the
+chart (marks built with herceg's functions, passed as `marks`, are the
+simplest to share), at the size the chart will have:
+
+```vue
+<script setup lang="ts">
+// latency.ts: export const latencyMarks = (rows) => [line(table(rows), { x: "time", y: "p50" })];
+// The server: renderToSnapshot({ title: "Request latency", marks: latencyMarks(rows) },
+//   { width: 640, height: 320, idPrefix: "latency" }), sent with the rows.
+const { rows, initial } = defineProps<{ rows: LatencyRows; initial: ChartSnapshot }>();
+const marks = latencyMarks(rows);
+</script>
+
+<template>
+  <Chart title="Request latency" :marks="marks" :width="640" :height="320" :initial="hydration(initial)" />
+</template>
+```
+
+`initial` is read when the chart mounts; later values are not. See herceg's
+[Server rendering](../herceg/README.md#server-rendering) for what the
+snapshot holds and what hydrating checks.
 
 ## Tooltips
 

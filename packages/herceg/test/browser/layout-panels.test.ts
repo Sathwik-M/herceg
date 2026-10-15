@@ -213,6 +213,7 @@ describe("a pie beside a line in subplots", () => {
       const rect = chart.root.getBoundingClientRect();
       chart.root.dispatchEvent(
         new WheelEvent("wheel", {
+          ctrlKey: true,
           bubbles: true,
           cancelable: true,
           deltaY: -100,

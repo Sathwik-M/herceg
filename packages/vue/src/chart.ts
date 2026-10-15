@@ -4,6 +4,7 @@ import {
   type ChartOptions,
   createChart,
   type Chart as HercegChart,
+  type Hydration,
   type Inspection,
   type RenderTooltip,
   tablesOf,
@@ -80,6 +81,8 @@ const UNSET = Object.fromEntries(OPTION_KEYS.map((key) => [key, undefined]));
 const emits = {
   /** The view changed (zoom, pan, reset, sync): x, y, and right y ranges, each null when not zoomed. */
   viewport: (_: ChartEvents["viewport"]) => true,
+  /** The view came near an end of what `interaction.limits` allows, as to load more data. */
+  edge: (_: ChartEvents["edge"]) => true,
   /** The selection changed (`interaction.brush`): x and y ranges and a lasso's outline, null when cleared. */
   select: (_: ChartEvents["select"]) => true,
   /** The data under the pointer or keyboard cursor changed, as for a tooltip of your own. */
@@ -218,6 +221,14 @@ export const Chart = defineComponent({
     ...optionProps,
     /** Marks built with herceg's functions; mark components in the slot are added after them. */
     marks: Array as PropType<readonly ChartMark[]>,
+    /**
+     * The chart rendered on the server (`renderToSnapshot`, or Python's
+     * `to_snapshot`) from the same options, as `hydration(snapshot)`:
+     * server and first client renders show its markup, which the chart then
+     * takes over without drawing it again. Read when the chart mounts; later
+     * values are not.
+     */
+    initial: Object as PropType<Hydration>,
   },
   emits,
   slots: Object as SlotsType<{
@@ -234,6 +245,14 @@ export const Chart = defineComponent({
   expose: ["chart"],
   setup(props, { emit, slots }) {
     const container = shallowRef<HTMLDivElement | null>(null);
+    // The server's markup, as setup found it: shown in a host of its own
+    // until the chart takes it over.
+    const snapshot = props.initial;
+    if (snapshot && typeof snapshot.hydrate !== "function")
+      throw new TypeError(
+        "Chart initial: expected hydration(snapshot), from herceg, of what renderToSnapshot wrote; pass the snapshot through it",
+      );
+    const snapshotHost = shallowRef<HTMLDivElement | null>(null);
     /** The underlying chart, for imperative calls such as `setViewport` or `toSVG`; null until mounted. */
     const chart = shallowRef<HercegChart | null>(null);
     /** What the last render described, applied once Vue has patched the DOM. */
@@ -275,8 +294,12 @@ export const Chart = defineComponent({
       const next = rendered!;
       const last = applied;
       if (!chart.value || !last) {
-        const created = createChart(container.value!, { ...next.options, marks: next.marks });
+        const config = { ...next.options, marks: next.marks };
+        const created = snapshot
+          ? snapshot.hydrate(snapshotHost.value!, config)
+          : createChart(container.value!, config);
         created.on("viewport", (event) => emit("viewport", event));
+        created.on("edge", (event) => emit("edge", event));
         created.on("select", (event) => emit("select", event));
         created.on("hover", (event) => emit("hover", event));
         created.on("click", (event) => emit("click", event));
@@ -336,7 +359,15 @@ export const Chart = defineComponent({
             ref: container,
             style: { width: px(props.width) ?? "100%", height: px(props.height) ?? "320px" },
           },
-          content ? [h(TooltipContent, { shown, render: content })] : [],
+          [
+            snapshot &&
+              h("div", {
+                ref: snapshotHost,
+                style: { width: "100%", height: "100%" },
+                innerHTML: snapshot.snapshot.html,
+              }),
+            content && h(TooltipContent, { shown, render: content }),
+          ],
         );
       },
     };

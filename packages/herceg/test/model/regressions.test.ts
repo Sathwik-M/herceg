@@ -11,6 +11,7 @@ import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { AreaGeometry, LineGeometry, Scene } from "../../src/scene/scene.ts";
 import { legendOf } from "../helpers/guides.ts";
+import { positionOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig, width = 600, height = 300) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -191,7 +192,7 @@ describe("inspect", () => {
     const data = table({ x: [0, 0, 1], y: [5, 6, 7] });
     const { model } = build({ marks: [line(data, { x: "x", y: "y" })] });
     const key = model.series()[0]!.key;
-    expect(model.inspectPosition(key, 1)!.points[0]!.value).toBe(6);
-    expect(model.inspectPosition(key, 2)!.value).toBe(1);
+    expect(positionOf(model, key, 1)!.points[0]!.value).toBe(6);
+    expect(positionOf(model, key, 2)!.value).toBe(1);
   });
 });

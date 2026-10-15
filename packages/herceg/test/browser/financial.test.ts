@@ -1,6 +1,6 @@
 // Financial charts in the browser: zooming, panning, brushing, tooltips, and
 // the keyboard on time axes with breaks, crosshair labels, and OHLC bars.
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, createChart } from "../../src/dom/chart.ts";
@@ -60,6 +60,7 @@ function wheel(chart: Chart, x: number, deltaY: number) {
   const rect = chart.root.getBoundingClientRect();
   chart.root.dispatchEvent(
     new WheelEvent("wheel", {
+      ctrlKey: true,
       deltaY,
       clientX: rect.left + x,
       clientY: rect.top + 150,
@@ -375,10 +376,12 @@ describe("time axes with breaks", () => {
 });
 
 describe("crosshair labels", () => {
-  const labels = (chart: Chart) =>
-    [...chart.root.querySelectorAll("svg g > g")]
-      .filter((g) => g.getAttribute("visibility") === "visible" && g.querySelector("rect"))
-      .map((g) => g.textContent);
+  // The boxes are HTML over the chart, each placed by a translation.
+  const boxes = (chart: Chart) =>
+    [...chart.root.querySelectorAll<HTMLElement>("div[aria-hidden='true'] > div")].filter(
+      (box) => box.style.display !== "none" && box.style.transform,
+    );
+  const labels = (chart: Chart) => boxes(chart).map((box) => box.textContent);
 
   it("label the inspected x on the x axis and the pointer's y on each y axis", async () => {
     const data = table({ t: time([utc(2025, 1, 6), utc(2025, 1, 7)]), a: [10, 20], b: [100, 200] });
@@ -404,6 +407,33 @@ describe("crosshair labels", () => {
     await frame();
     expect(labels(chart)).toHaveLength(0);
     expect(dashed.getAttribute("visibility")).toBe("hidden");
+    chart.destroy();
+  });
+
+  it("keep the boxes inside the chart at its edges, measuring no text as the pointer moves", async () => {
+    const data = table({ t: time([utc(2025, 1, 6), utc(2025, 1, 7)]), a: [10, 20] });
+    const chart = createChart(host, {
+      timeZone: "UTC",
+      locale: "en-US",
+      tooltip: { axisLabels: true },
+      marks: [line(data, { x: "t", y: "a" })],
+    });
+    await chart.loading;
+    const measure = vi.spyOn(CanvasRenderingContext2D.prototype, "measureText");
+    const x = modelOf(chart).xScale()!;
+    const y = modelOf(chart).yScale()!;
+    const root = chart.root.getBoundingClientRect();
+    for (const at of [utc(2025, 1, 6), utc(2025, 1, 7)]) {
+      pointer(chart.root, "pointermove", x.map(at), y.map(15));
+      await frame();
+      for (const box of boxes(chart)) {
+        const rect = box.getBoundingClientRect();
+        expect(rect.left).toBeGreaterThanOrEqual(root.left - 0.5);
+        expect(rect.right).toBeLessThanOrEqual(root.right + 0.5);
+      }
+    }
+    expect(measure).not.toHaveBeenCalled();
+    measure.mockRestore();
     chart.destroy();
   });
 

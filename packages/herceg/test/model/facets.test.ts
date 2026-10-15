@@ -16,6 +16,7 @@ import { renderToSVG } from "../../src/render/static.ts";
 import type { LineGeometry, Panel, RectGeometry, Scene } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import { headersOf, legendOf } from "../helpers/guides.ts";
+import { positionOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -163,7 +164,7 @@ describe("facets", () => {
     expect(hit.points.map((p) => p.text)).toEqual(["20"]);
     // Between panels, nothing.
     expect(model.inspect(s.plot.x - 4, s.plot.y + 10)).toBeUndefined();
-    const keyed = model.inspectPosition(model.panelSeries("E")[0]!.key, 2, "E")!;
+    const keyed = positionOf(model, model.panelSeries("E")[0]!.key, 2, "E")!;
     expect(keyed.panel).toBe("E");
     expect(keyed.points[0]!.text).toBe("300");
   });

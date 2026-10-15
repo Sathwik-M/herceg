@@ -4,6 +4,7 @@
 // `commands.name(...)` from "vitest/browser"; their types are in
 // packages/herceg/test/browser/helpers.ts.
 
+import { fileURLToPath } from "node:url";
 import type { BrowserCommand } from "vitest/node";
 import { accessibilityTree } from "./accessibility.ts";
 import { firefoxDevTools } from "./browsers.ts";
@@ -19,6 +20,8 @@ export interface MouseInput {
   clickCount?: number;
   deltaY?: number;
   shift?: boolean;
+  /** Control held, as the wheel zooms with it. */
+  ctrl?: boolean;
 }
 
 /** The event each input makes, which Firefox's input waits for. */
@@ -48,6 +51,7 @@ const mouse: BrowserCommand<[MouseInput]> = async (context, input) => {
   const type = EVENTS[input.type];
   const before = frame ? await frame.evaluate(seen, type) : 0;
   if (input.shift) await page.keyboard.down("Shift");
+  if (input.ctrl) await page.keyboard.down("Control");
   try {
     await page.mouse.move(input.x, input.y);
     const clickCount = input.clickCount ?? 1;
@@ -59,6 +63,7 @@ const mouse: BrowserCommand<[MouseInput]> = async (context, input) => {
         throw new Error(`mouse: no ${type} reached the test's frame at (${input.x}, ${input.y})`);
   } finally {
     if (input.shift) await page.keyboard.up("Shift");
+    if (input.ctrl) await page.keyboard.up("Control");
   }
 };
 
@@ -89,8 +94,29 @@ const collectGarbage: BrowserCommand<[]> = async (context) => {
   }
 };
 
+/**
+ * herceg's engine bundled into one file, as notebooks and pages that load
+ * it from a script embed it: an ES module, or a script setting the global
+ * `herceg` ("iife"), its lazily loaded modules inlined.
+ */
+const bundleHerceg: BrowserCommand<["esm" | "iife"]> = async (_context, format) => {
+  const { build } = await import("esbuild");
+  const result = await build({
+    entryPoints: [fileURLToPath(new URL("../../packages/herceg/src/index.ts", import.meta.url))],
+    bundle: true,
+    write: false,
+    format,
+    ...(format === "iife" && { globalName: "herceg" }),
+    target: "es2022",
+    define: { "process.env.NODE_ENV": '"production"' },
+    logLevel: "error",
+  });
+  return result.outputFiles[0]!.text;
+};
+
 export const commands = {
   accessibilityTree: accessibilityTree as BrowserCommand<[string, readonly string[]]>,
+  bundleHerceg,
   collectGarbage,
   mouse,
 };

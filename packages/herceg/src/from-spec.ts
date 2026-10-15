@@ -5,6 +5,7 @@ import { type Chart, createChart, MountedChart } from "./dom/chart.ts";
 import type { Fonts } from "./fonts/registry.ts";
 import type { MeasureText } from "./layout/text.ts";
 import { type PdfExportOptions, type PdfOptions, renderToPDF } from "./pdf.ts";
+import { type ChartSnapshot, renderToSnapshot, type SnapshotOptions } from "./render/snapshot.ts";
 import { renderToSVG } from "./render/static.ts";
 import type { SvgSizing } from "./render/svg.ts";
 import { type LoadedSpec, type LoadOptions, loadSpec, type SpecBuffer } from "./spec/load.ts";
@@ -12,6 +13,7 @@ import type { ChartSpec } from "./spec/spec.ts";
 
 export type { Fonts } from "./fonts/registry.ts";
 export type { PdfExportOptions, PdfPageOptions } from "./pdf.ts";
+export type { ChartSnapshot, SnapshotOptions } from "./render/snapshot.ts";
 export type * from "./spec/spec.ts";
 export { SPEC_VERSION } from "./spec/spec.ts";
 export { validateSpec } from "./spec/validate.ts";
@@ -65,6 +67,24 @@ export function specToSVG(
     ...options,
     width: config.width ?? 640,
     height: config.height ?? 320,
+  });
+}
+
+/**
+ * A spec rendered for a page to show and a browser to hydrate, without a
+ * DOM (see `renderToSnapshot`): at the spec's size, 640 x 320 CSS pixels
+ * when it has none, unless `options` give one.
+ */
+export function specToSnapshot(
+  spec: ChartSpec,
+  buffers: readonly SpecBuffer[],
+  options: Omit<SnapshotOptions, "width" | "height"> & { width?: number; height?: number },
+): ChartSnapshot {
+  const { config } = loadSpec(spec, buffers);
+  return renderToSnapshot(config, {
+    ...options,
+    width: options.width ?? config.width ?? 640,
+    height: options.height ?? config.height ?? 320,
   });
 }
 

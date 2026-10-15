@@ -117,3 +117,9 @@ export function describeChart(model: ChartModel): string {
   );
   return parts.filter(Boolean).join(" ");
 }
+
+/** A mounted chart's description: what it shows, and how keys read it. */
+export function chartDescription(model: ChartModel): string {
+  const hint = model.items?.hint;
+  return `${describeChart(model)} Focus the chart and use the arrow keys to read values.${hint ? ` ${hint}` : ""}`;
+}

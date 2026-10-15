@@ -45,6 +45,27 @@ export interface ChartEvents {
      */
     rows?: readonly RowSelectionChange[];
   };
+  /**
+   * The view came near an end of what `interaction.limits` lets its scale
+   * show: within `edge.threshold` of its span of the extent's end, or, on
+   * an x scale every panel shares, of the data's where the extent has none
+   * (while the view is zoomed or panned). Reported on coming near, once, until the view moves farther
+   * away again; what the application loads there (older history, say) it
+   * adds to the chart's data, and widens the extent.
+   */
+  edge: {
+    scale: "x" | "y" | "yRight";
+    /** The end: the scale's low values ("start") or high ones ("end"). */
+    side: "start" | "end";
+    /** What the view shows, ascending (epoch ms on time axes). */
+    domain: readonly [number, number];
+    /** The end it came near: the extent's, or the data's. */
+    bound: number;
+    /** In charts whose panels have scales of their own, the keys of the panels showing the scale. */
+    panels?: readonly string[];
+    /** What moved the view there, or moved the end. */
+    cause: ViewCause;
+  };
   /** The data under the pointer or cursor changed; undefined when there is none. */
   hover: { inspection: Inspection | undefined };
   /**
@@ -91,6 +112,12 @@ export interface ChartEvents {
 }
 
 export type ChartListener<K extends keyof ChartEvents> = (event: ChartEvents[K]) => void;
+
+/**
+ * What changed a view: a drag or pinch ("pointer"), the wheel, a key, the
+ * application (`setViewport`), a synced chart, the chart's data, or its options.
+ */
+export type ViewCause = "pointer" | "wheel" | "keyboard" | "api" | "sync" | "data" | "options";
 
 /** Listeners by event. A listener that throws is reported; the others still run. */
 export class Emitter {

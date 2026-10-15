@@ -15,6 +15,7 @@ import type { Scene, SegmentGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
 import { legendOf } from "../helpers/guides.ts";
+import { positionOf, stopsOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -95,12 +96,10 @@ describe("rug", () => {
       const before = build(config).model.yScale()!;
       const { model } = build({ ...config, marks: [...marks, rug(t, { x: "x" })] });
       expect(model.yScale()!.domain).toEqual(before.domain);
-      expect(model.inspectPosition(model.series().at(-1)!.key, 0)!.points.at(-1)!.text).toBe("1");
+      expect(positionOf(model, model.series().at(-1)!.key, 0)!.points.at(-1)!.text).toBe("1");
     }
     const withY = build({ marks: [rug(t, { y: "y" })], x: { type: "log", domain: [1000, 2000] } });
-    expect(withY.model.inspectPosition(withY.model.series()[0]!.key, 0)!.points[0]!.text).toBe(
-      "100",
-    );
+    expect(positionOf(withY.model, withY.model.series()[0]!.key, 0)!.points[0]!.text).toBe("100");
   });
 
   it.each(["x", "y"] as const)("skips missing, infinite and log-invalid %s values", (axis) => {
@@ -110,9 +109,9 @@ describe("rug", () => {
     expect(ticks(linear.scene)[0]!.count).toBe(4);
     const logged = build({ marks: [mark], [axis]: { type: "log" } });
     expect(ticks(logged.scene)[0]!.count).toBe(2);
-    const [stop] = logged.model.keyboardStops("");
+    const [stop] = stopsOf(logged.model, "");
     expect(stop!.length).toBe(2);
-    expect(logged.model.inspectPosition(stop!.key, 0)!.points[0]!.row).toBe(6);
+    expect(positionOf(logged.model, stop!.key, 0)!.points[0]!.row).toBe(6);
     expect(describeChart(logged.model)).toContain("2 values, from 1 to 10");
   });
 
@@ -128,8 +127,8 @@ describe("rug", () => {
         [axis]: { format: { maximumFractionDigits: 1 } },
       });
       expect(model.tooltipMode()).toBe(axis === "x" ? "nearest-x" : "nearest-y");
-      const [stop] = model.keyboardStops("");
-      const hits = [0, 1, 2, 3].map((i) => model.inspectPosition(stop!.key, i)!.points[0]!);
+      const [stop] = stopsOf(model, "");
+      const hits = [0, 1, 2, 3].map((i) => positionOf(model, stop!.key, i)!.points[0]!);
       expect(hits.map((p) => p.value)).toEqual([1, 2, 2, 3]);
       expect(hits.map((p) => p.row)).toEqual([1, 2, 3, 0]);
       expect(hits.map((p) => p.label)).toEqual(["Samples", "Samples", "Samples", "Samples"]);
@@ -157,14 +156,14 @@ describe("rug", () => {
         marks: [axis === "x" ? rug(t, { x: "v" }) : rug(t, { y: "v" })],
         [axis]: { format: { minimumFractionDigits: 2, maximumFractionDigits: 2 } },
       });
-      expect(
-        numeric.model.inspectPosition(numeric.model.series()[0]!.key, 0)!.points[0]!.text,
-      ).toBe("1.23");
+      expect(positionOf(numeric.model, numeric.model.series()[0]!.key, 0)!.points[0]!.text).toBe(
+        "1.23",
+      );
       const dated = build({
         marks: [axis === "x" ? rug(t, { x: "date" }) : rug(t, { y: "date" })],
       });
       expect((axis === "x" ? dated.model.xScale() : dated.model.yScale())!.type).toBe("time");
-      const hit = dated.model.inspectPosition(dated.model.series()[0]!.key, 0)!;
+      const hit = positionOf(dated.model, dated.model.series()[0]!.key, 0)!;
       expect(hit.points[0]!.text).toBe(hit.label);
       expect(describeChart(dated.model)).toContain(hit.label);
     }
@@ -180,7 +179,7 @@ describe("rug", () => {
     expect(legendOf(scene).map((entry) => entry.label)).toEqual(["a", "b"]);
     model.hidden.add(legendOf(scene)[0]!.key);
     expect(ticks(model.scene(estimateText))).toHaveLength(1);
-    expect(model.keyboardStops("")).toHaveLength(1);
+    expect(stopsOf(model, "")).toHaveLength(1);
     const custom = build({
       marks: [rug(observations, { y: "v", series: "g", stroke: "red", strokeWidth: 2 })],
     });
@@ -213,7 +212,8 @@ describe("rug", () => {
       x: { scope: "panel" },
     });
     for (const panel of subplots.scene.panels) {
-      const hit = subplots.model.inspectPosition(
+      const hit = positionOf(
+        subplots.model,
         subplots.model.panelSeries(panel.key)[0]!.key,
         0,
         panel.key,
@@ -253,7 +253,7 @@ describe("rug", () => {
       x: { domain: [start - 2, end + 2], breaks: timeBreaks([{ from: start, to: end }]) },
     });
     expect(ticks(scene)[0]!.count).toBe(2);
-    expect(model.keyboardStops("")[0]!.length).toBe(2);
+    expect(stopsOf(model, "")[0]!.length).toBe(2);
     const frame = reading.mock.calls[0]![1];
     reading.mockRestore();
     const calls = vi.spyOn(mark, "place");
@@ -277,7 +277,7 @@ describe("rug", () => {
       marks: [axis === "x" ? rug(t, { x: "v" }) : rug(t, { y: "v" })],
       [axis]: { type: "log" },
     });
-    expect(model.keyboardStops("")).toEqual([]);
+    expect(stopsOf(model, "")).toEqual([]);
   });
 
   it("does no reading compaction for a hidden large rug on redraw", () => {
@@ -287,7 +287,7 @@ describe("rug", () => {
       marks: [mark],
       x: { breaks: timeBreaks([{ from: 0, to: 2 }]) },
     });
-    expect(model.keyboardStops("")[0]!.length).toBe(99_999);
+    expect(stopsOf(model, "")[0]!.length).toBe(99_999);
     model.hidden.add(model.series()[0]!.key);
     const original = mark.readSeries.bind(mark);
     let mappings = 0;
@@ -305,7 +305,7 @@ describe("rug", () => {
       }
     });
     model.scene(estimateText);
-    expect(model.keyboardStops("")).toEqual([]);
+    expect(stopsOf(model, "")).toEqual([]);
     expect(mappings).toBe(0);
     expect(buffers).toBe(0);
     reading.mockRestore();
@@ -327,10 +327,10 @@ describe("rug", () => {
     const { model } = build({ marks: [rug(t, { x: "v" })] });
     t.append({ v: [2] });
     model.scene(estimateText);
-    expect(model.inspectPosition(model.series()[0]!.key, 1)!.points[0]!.row).toBe(2);
+    expect(positionOf(model, model.series()[0]!.key, 1)!.points[0]!.row).toBe(2);
     t.set("v", 0, 0);
     model.scene(estimateText);
-    expect(model.inspectPosition(model.series()[0]!.key, 0)!.points[0]!.row).toBe(0);
+    expect(positionOf(model, model.series()[0]!.key, 0)!.points[0]!.row).toBe(0);
   });
 
   it("loads a rug and renders a static segment path", () => {
@@ -388,7 +388,7 @@ describe("rug", () => {
     ])
       expect(() => rug(t, options as never)).toThrow();
     expect(
-      build({ marks: [rug(table({ v: [] as number[] }), { x: "v" })] }).model.keyboardStops(""),
+      stopsOf(build({ marks: [rug(table({ v: [] as number[] }), { x: "v" })] }).model, ""),
     ).toEqual([]);
   });
 });

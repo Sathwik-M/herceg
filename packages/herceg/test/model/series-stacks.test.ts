@@ -13,6 +13,7 @@ import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import type { AreaGeometry, RectGeometry, Scene } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
+import { positionOf, stopsOf } from "../helpers/keyboard.ts";
 
 function sceneOf(config: ChartConfig): { model: ChartModel; scene: Scene } {
   const model = new ChartModel({ locale: "en-US", ...config });
@@ -75,9 +76,9 @@ describe("areas stacked by a series field", () => {
     ]);
     expect(at(1).points[1]!.py).toBeCloseTo(y.map(7));
     // Each series is a keyboard stop of its own, reading the stack at its rows.
-    expect(model.keyboardStops("").map((s) => s.label)).toEqual(["200", "500", "404"]);
+    expect(stopsOf(model, "").map((s) => s.label)).toEqual(["200", "500", "404"]);
     const error = model.series()[1]!;
-    const third = model.inspectPosition(error.key, 2)!;
+    const third = positionOf(model, error.key, 2)!;
     expect(third.value).toBe(3);
     expect(third.points.map((p) => [p.label, p.value, p.py])).toEqual([["500", 30, y.map(30)]]);
   });
@@ -95,17 +96,14 @@ describe("areas stacked by a series field", () => {
     });
     const [a, b] = model.series();
     const read = (key: string, position: number) =>
-      model.inspectPosition(key, position)!.points.map((p) => [p.label, p.row, p.value]);
+      positionOf(model, key, position)!.points.map((p) => [p.label, p.row, p.value]);
     expect(read(b!.key, 2)).toEqual([
       ["a", 2, 4],
       ["b", 5, 20],
     ]);
     // Every point is reported where its layer is drawn at that occurrence.
     const y = model.yScale()!;
-    expect(model.inspectPosition(b!.key, 2)!.points.map((p) => p.py)).toEqual([
-      y.map(4),
-      y.map(24),
-    ]);
+    expect(positionOf(model, b!.key, 2)!.points.map((p) => p.py)).toEqual([y.map(4), y.map(24)]);
     expect(read(a!.key, 1)).toEqual([
       ["a", 1, 2],
       ["b", 4, 10],
@@ -123,14 +121,14 @@ describe("areas stacked by a series field", () => {
     }).model;
     const [first] = other.series();
     const shuffledRead = (position: number) =>
-      other.inspectPosition(first!.key, position)!.points.map((p) => [p.label, p.row, p.value]);
+      positionOf(other, first!.key, position)!.points.map((p) => [p.label, p.row, p.value]);
     expect(shuffledRead(2)).toEqual([
       ["a", 2, 4],
       ["b", 5, 20],
     ]);
     expect(shuffledRead(0)).toEqual([["a", 0, 2]]);
     const shuffledY = other.yScale()!;
-    expect(other.inspectPosition(first!.key, 2)!.points.map((p) => p.py)).toEqual([
+    expect(positionOf(other, first!.key, 2)!.points.map((p) => p.py)).toEqual([
       shuffledY.map(4),
       shuffledY.map(24),
     ]);

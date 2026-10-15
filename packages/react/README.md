@@ -48,7 +48,8 @@ The chart fills its container's width and is 320 px tall unless `width`,
 `height`, or `style` says otherwise. A `ref` gives the underlying chart, herceg's
 `Chart`, for imperative calls (`setViewport`, `select`, `toPixel`, `setVisibility`,
 `toSVG`, `toPNG`, and `renderToPDF(chart)` from `herceg/pdf`, which export the chart as
-it shows, a highlighted row selection included). Chart events are props: `onViewport`, `onSelect`, `onHover`, `onClick`,
+it shows, a highlighted row selection included). Chart events are props: `onViewport`, `onEdge` (the view came near an end of
+`interaction.limits`, as to load more data), `onSelect`, `onHover`, `onClick`,
 `onRowSelection` (a channel of the chart's `rowSelection` changed),
 `onCamera`, `onDrill` (a treemap or sunburst drilled into a node), `onItemMove` (a
 network's node moved; with subplots, these and `onViewport` and `onSelect` events of a
@@ -59,8 +60,9 @@ is called, so inline functions do not resubscribe. A `rowSelection` prop
 binds the same stores and channels, so it neither updates nor resubscribes the chart.
 
 `<Graph>` uses the same `interaction` prop as maps: `zoom: true` (or
-`"xy"`) pans and zooms with wheel, drag, double-click, Shift+arrows,
-plus/minus/0, and a toolbar. `onViewport` reports x and y ranges in layout
+`"xy"`) pans and zooms with the wheel (Ctrl or ⌘ held, as trackpad pinches send it), drag,
+double-click, Shift+arrows, plus/minus/0, and a toolbar; `pan: true` pans
+without zooming. `onViewport` reports x and y ranges in layout
 coordinates (y increases downwards); node radii stay fixed in pixels.
 `brush: "lasso"` selects visible node centers through a `rowSelection`
 bound to the nodes table, including duplicate node rows, and dims unselected
@@ -82,6 +84,35 @@ again with a new mark over the same or new tables: `<Graph data={reports} source
 as pixel arrays. String patterns scale with `strokeWidth` (the theme's
 line width when omitted on `Line`); arrays stay in CSS pixels. `Custom`
 shape styles accept the same values. See the engine's [dash patterns](../herceg/README.md#marks).
+
+## Server rendering
+
+`initial` takes the chart rendered on the server by `renderToSnapshot` from
+`herceg` (or Python's `to_snapshot`), passed through `hydration(snapshot)`,
+which brings the code that adopts it, so pages that never hydrate carry
+none of it. `renderToString` and the first render
+in the browser write its markup, so hydrating finds no mismatch; the chart
+then takes the markup over without drawing it again, and attaches
+interaction after its first frame. Give `renderToSnapshot` the options the
+component gives the chart (marks built with herceg's functions, passed as
+`marks`, are the simplest to share), at the size the chart will have:
+
+```tsx
+// On the server (a route's loader, say):
+const marks = [line(metrics, { x: "time", y: ["p50", "p99"] })];
+const initial = renderToSnapshot(
+  { title: "Request latency", marks },
+  { width: 640, height: 320, idPrefix: "latency" },
+);
+
+// The component, rendered on the server and hydrated in the browser:
+<Chart title="Request latency" marks={marks} width={640} height={320} initial={hydration(initial)} />;
+```
+
+`initial` is read when the chart mounts; later values are not. A second
+mount (React's strict mode) mounts a chart afresh in the same place. See
+herceg's [Server rendering](../herceg/README.md#server-rendering) for what
+the snapshot holds and what hydrating checks.
 
 ## Tooltips
 

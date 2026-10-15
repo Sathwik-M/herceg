@@ -14,6 +14,7 @@ import { renderToSVG } from "../../src/render/static.ts";
 import type { AreaGeometry, LineGeometry, RuleGeometry, Scene } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import { legendOf } from "../helpers/guides.ts";
+import { stopsOf } from "../helpers/keyboard.ts";
 
 /** The y of a polyline at pixel x, by linear interpolation, if it spans x. */
 function yAt(path: Polyline, x: number): number | undefined {
@@ -365,7 +366,7 @@ describe("areas", () => {
     const other = table({ x: [0.5, 1.5], c: [1, 2] });
     const stops = (config: ChartConfig) => {
       const { model } = sceneOf(config);
-      return model.panels().map(({ key }) => model.keyboardStops(key).map((s) => s.label));
+      return model.panels().map(({ key }) => stopsOf(model, key).map((s) => s.label));
     };
     expect(
       stops({ marks: [line(t, { x: "x", y: ["a", "b"] }), line(other, { x: "x", y: "c" })] }),

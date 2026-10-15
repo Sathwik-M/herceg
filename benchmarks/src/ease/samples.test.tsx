@@ -371,6 +371,13 @@ describe("04: a threshold rule and a labeled band", () => {
   });
 });
 
+/** Herceg's wheel zooms with Ctrl (or ⌘) held, leaving the plain wheel to scroll the page. */
+async function zoomWheel(element: Element) {
+  await userEvent.keyboard("{Control>}");
+  await userEvent.wheel(element, { delta: { y: -300 } });
+  await userEvent.keyboard("{/Control}");
+}
+
 describe("05: two charts sharing the cursor and zoom", () => {
   const ticks = (element: Element) =>
     [...element.querySelectorAll("svg text")].map((text) => text.textContent).join(" ");
@@ -382,7 +389,7 @@ describe("05: two charts sharing the cursor and zoom", () => {
     await expect
       .poll(() => bottom!.root.querySelector("svg line")?.getAttribute("visibility"))
       .toBe("visible");
-    await userEvent.wheel(elements[0]!, { delta: { y: -300 } });
+    await zoomWheel(elements[0]!);
     await expect.poll(() => bottom!.getViewport().x).not.toBeNull();
     expect(bottom!.getViewport().x).toEqual(top!.getViewport().x);
   });
@@ -394,7 +401,7 @@ describe("05: two charts sharing the cursor and zoom", () => {
       .poll(() => bottom!.querySelector("svg line")?.getAttribute("visibility"))
       .toBe("visible");
     const before = ticks(bottom!);
-    await userEvent.wheel(top!, { delta: { y: -300 } });
+    await zoomWheel(top!);
     await expect.poll(() => ticks(bottom!)).not.toBe(before);
   });
   test("echarts", async () => {
@@ -800,7 +807,7 @@ describe("mistakes", () => {
       () => zooms.destroy(),
       () => follows.destroy(),
     );
-    await userEvent.wheel(a, { delta: { y: -300 } });
+    await zoomWheel(a);
     await expect.poll(() => follows.getViewport().x).toEqual(zooms.getViewport().x);
     // ECharts' connected chart without dataZoom keeps its range.
     const ec = await echarts;

@@ -5,7 +5,7 @@
 import type { SvgSizing } from "herceg";
 import { type FontSource, prepareFonts } from "herceg/fonts";
 import type { PdfExportOptions } from "herceg/pdf";
-import { type ChartSpec, type PdfSpec, specToPDF, specToSVG } from "herceg/spec";
+import { type ChartSpec, type PdfSpec, specToPDF, specToSnapshot, specToSVG } from "herceg/spec";
 import { decodeBase64, encodeBase64 } from "./buffers.ts";
 import { rasterFont } from "./raster-font.ts";
 
@@ -68,6 +68,27 @@ function exported(run: () => string): string | { error: string } {
             fonts: withFonts(() => sources.map((source, i) => encodeBase64(rasterFont(source, i)))),
           })
         : svg;
+    });
+  },
+  /**
+   * A snapshot for a page to show and a browser to hydrate, as JSON:
+   * `options` hold its size, id prefix, locale, and zone, and its fonts as
+   * base64.
+   */
+  snapshot(spec: string, buffers: string[], options = "{}"): string | { error: string } {
+    return exported(() => {
+      const { fonts, ...settings } = JSON.parse(options) as {
+        fonts?: (Omit<FontSource, "data"> & { data: string })[];
+      } & Record<string, unknown>;
+      const prepared = fonts?.length
+        ? prepareFonts(fonts.map((font) => ({ ...font, data: decodeBase64(font.data) })))
+        : undefined;
+      return JSON.stringify(
+        specToSnapshot(JSON.parse(spec) as ChartSpec, buffers.map(decodeBase64), {
+          ...(settings as { idPrefix: string }),
+          ...(prepared && { fonts: prepared }),
+        }),
+      );
     });
   },
   pdf(spec: string, buffers: string[] | string[][], options = "{}"): string | { error: string } {

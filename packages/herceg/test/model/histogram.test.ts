@@ -11,6 +11,7 @@ import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { Panel, RectGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
+import { positionOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig, width = 600, height = 300) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -231,7 +232,7 @@ describe("histograms", () => {
       y: { type: "log" },
     });
     const [a] = model.series();
-    const hit = model.inspectPosition(a!.key, 1)!;
+    const hit = positionOf(model, a!.key, 1)!;
     expect(hit.points.map((p) => p.label)).toEqual(["b"]);
   });
 
@@ -289,9 +290,9 @@ describe("histograms", () => {
   it("leave the keyboard without a tooltip where no series has a point", () => {
     const gap = table({ x: [0, 1, 2], y: [1, Number.NaN, 2] });
     const { model } = build({ marks: [line(gap, { x: "x", y: "y" })] });
-    expect(model.inspectPosition(model.series()[0]!.key, 1)).toBeUndefined();
+    expect(positionOf(model, model.series()[0]!.key, 1)).toBeUndefined();
     const two = table({ x: [0, 1, 2], y: [1, Number.NaN, 2], z: [5, 6, 7] });
     const both = build({ marks: [line(two, { x: "x", y: ["y", "z"] })] }).model;
-    expect(both.inspectPosition(both.series()[0]!.key, 1)!.points.map((p) => p.value)).toEqual([6]);
+    expect(positionOf(both, both.series()[0]!.key, 1)!.points.map((p) => p.value)).toEqual([6]);
   });
 });

@@ -22,6 +22,7 @@ import { violin } from "../../src/marks/violin.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import { cloudPainter } from "../../src/render/webgl.ts";
 import type { RasterGeometry, RectGeometry } from "../../src/scene/scene.ts";
+import { positionOf, stopsOf } from "../helpers/keyboard.ts";
 import { MOUSE, modelOf } from "./helpers.ts";
 import { hasWebGL2 } from "./webgl.ts";
 
@@ -426,10 +427,7 @@ describe("new marks in the browser", () => {
       const xs = model
         .series()
         .flatMap((s) =>
-          Array.from(
-            { length: s.length },
-            (_, k) => model.inspectPosition(s.key, k)!.points[0]!.px,
-          ),
+          Array.from({ length: s.length }, (_, k) => positionOf(model, s.key, k)!.points[0]!.px),
         );
       return Math.max(...xs) - Math.min(...xs);
     };
@@ -1104,8 +1102,8 @@ it.each(["svg", "canvas"] as const)(
       );
       await frame();
       expect(tooltipOf(chart.root).textContent).toContain("0 – 2: 1");
-      expect(model.keyboardStops("")).toHaveLength(1);
-      expect(model.inspectPosition(model.series()[0]!.key, 0)!.points).toHaveLength(2);
+      expect(stopsOf(model, "")).toHaveLength(1);
+      expect(positionOf(model, model.series()[0]!.key, 0)!.points).toHaveLength(2);
       chart.destroy();
     }
   },
@@ -1193,7 +1191,11 @@ describe("heatmaps on number axes in the browser", () => {
     };
     target.dispatchEvent(
       type === "wheel"
-        ? new WheelEvent("wheel", { ...init, deltaY: -200 })
+        ? new WheelEvent("wheel", {
+            ctrlKey: true,
+            ...init,
+            deltaY: -200,
+          })
         : new PointerEvent(type, { ...init, button: 0, pointerId: MOUSE }),
     );
   };

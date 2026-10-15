@@ -7,7 +7,7 @@ import type { DrawnPanel, Inspection, TooltipMode, Viewport } from "../model/mod
 import type { SvgSizing } from "../render/svg.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { PlotRect } from "../scene/scene.ts";
-import type { CameraSpec } from "../spec/spec.ts";
+import type { CameraSpec, CursorShowSpec } from "../spec/spec.ts";
 import type { Camera } from "../three/camera.ts";
 import type { Selection } from "./brushed.ts";
 import type { ChartUpdate } from "./chart.ts";
@@ -62,6 +62,22 @@ export interface PanelInfo {
   readonly y?: AxisInfo | undefined;
   /** Only in charts with marks on the right axis. */
   readonly yRight?: AxisInfo | undefined;
+}
+
+/**
+ * Where the cursor goes: a value on x or on y (epoch ms on time axes, a
+ * category's name on category axes).
+ */
+export type CursorPosition = { x: number | string } | { y: number | string };
+
+/**
+ * Whether showing or hiding the cursor shares it with the charts of the
+ * chart's cursor channel (true by default), and how this chart shows it:
+ * which points it reads, and whether with the tooltip (as the channel says
+ * by default, else "nearest" and none).
+ */
+export interface CursorOptions extends CursorShowSpec {
+  broadcast?: boolean;
 }
 
 /** An entry of the chart's legend, which hides and shows what it names by key. */
@@ -228,6 +244,22 @@ export interface Chart {
   /** Shows or hides series or items by key, as their legend entries do. */
   setVisibility(keys: string | readonly string[], visible: boolean): void;
   /**
+   * Shows the cursor at a value, as a synced chart's cursor shows: a
+   * crosshair and the points there in each panel, with no tooltip, and a
+   * `hover` event. Along the axis the chart's data is placed on (x, or y
+   * for horizontal bars); a value elsewhere shows nothing. Shared with the
+   * charts of the chart's cursor channel unless `broadcast` is false.
+   *
+   * ```ts
+   * other.on("hover", ({ inspection }) =>
+   *   inspection?.axis === "x" ? chart.showCursor({ x: inspection.value }) : chart.hideCursor(),
+   * );
+   * ```
+   */
+  showCursor(position: CursorPosition, options?: CursorOptions): void;
+  /** Hides the cursor `showCursor` or a synced chart shows; the pointer's own stays. */
+  hideCursor(options?: CursorOptions): void;
+  /**
    * Calls `listener` on every `type` event until the returned function is
    * called.
    *
@@ -237,11 +269,14 @@ export interface Chart {
    */
   on<K extends keyof ChartEvents>(type: K, listener: ChartListener<K>): () => void;
   /**
-   * Pending while the chart loads code it needs: its GPU painter for large
-   * point series, which it draws once loaded, its `animation` of views and
-   * values, without which they change at once, its crosshair labels, what
-   * reads tooltip fields and draws `renderTooltip`'s content, or what turns
-   * a 3D chart. Undefined when nothing is pending.
+   * Pending while the chart loads code it needs: its interaction controller
+   * (tooltips, the pointer, the wheel, and keys), which loads after the
+   * first frame or at the first input, playing the input that came before
+   * it; its GPU painter for large point series, which it draws once loaded;
+   * its `animation` of views and values, without which they change at once;
+   * its crosshair labels; what reads tooltip fields and draws
+   * `renderTooltip`'s content; or what turns a 3D chart. Undefined when
+   * nothing is pending.
    */
   readonly loading: Promise<void> | undefined;
   /**

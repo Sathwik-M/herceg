@@ -3,6 +3,7 @@ import { table } from "../../src/data/table.ts";
 import { type Chart, createChart } from "../../src/dom/chart.ts";
 import { rug } from "../../src/marks/rug.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
+import { positionOf } from "../helpers/keyboard.ts";
 import { modelOf } from "./helpers.ts";
 
 /** Without a background, the canvas holds what marks paint alone. */
@@ -52,14 +53,14 @@ describe("rug renderers", () => {
       ],
     });
     const model = modelOf(chart);
-    const hit = model.inspectPosition(model.series()[0]!.key, 0)!;
+    const hit = positionOf(model, model.series()[0]!.key, 0)!;
     expect(hit.points[0]!.row).toBe(1);
     if (renderer === "svg") {
       const path = chart.root.querySelector('path[stroke="#ff0000"]')!;
       expect(path.getAttribute("d")!.match(/M/g)).toHaveLength(4);
       expect(path.getAttribute("stroke-width")).toBe("2");
     } else {
-      const inside = model.inspectPosition(model.series()[0]!.key, 1)!.points[0]!;
+      const inside = positionOf(model, model.series()[0]!.key, 1)!.points[0]!;
       const color = pixel(chart, inside.px, inside.py);
       expect(color[0]).toBeGreaterThan(200);
       expect(color[1]).toBeLessThan(50);
@@ -99,7 +100,7 @@ describe("rug renderers", () => {
       );
     else {
       const model = modelOf(chart);
-      const point = model.inspectPosition(model.series()[0]!.key, 0)!.points[0]!;
+      const point = positionOf(model, model.series()[0]!.key, 0)!.points[0]!;
       expect(pixel(chart, point.px, point.py)[3]).toBe(0);
     }
   });

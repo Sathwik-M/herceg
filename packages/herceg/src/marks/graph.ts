@@ -312,13 +312,14 @@ export class GraphMark implements LayoutMark {
   }
 
   controls(config: ChartConfig): LayoutControls {
-    const { zoom, brush, drag } = config.interaction ?? {};
+    const { zoom, pan, brush, drag, bindings } = config.interaction ?? {};
     // Without interaction, the chart still draws the frames a layout takes.
-    if (!zoom && !brush && !drag) return { kind: "layout", hint: "" };
+    if (!zoom && !pan && !brush && !drag && !bindings?.length) return { kind: "layout", hint: "" };
+    const pans = pan ?? zoom;
     return {
       kind: "drag",
-      hint: zoom
-        ? "Shift with the arrow keys pans it, plus and minus zoom, and 0 shows the whole network." +
+      hint: pans
+        ? `Shift with the arrow keys pans it, ${zoom ? "plus and minus zoom, " : ""}and 0 shows the whole network.` +
           (drag ? " Alt with Shift and the arrow keys moves the node read." : "")
         : drag
           ? DRAG.hint

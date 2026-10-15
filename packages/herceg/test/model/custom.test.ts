@@ -14,6 +14,7 @@ import type { PathShape, ShapesGeometry, TextShape } from "../../src/scene/scene
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ChartSpec } from "../../src/spec/spec.ts";
 import { legendOf } from "../helpers/guides.ts";
+import { positionOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig, width = 600, height = 300) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -237,7 +238,7 @@ describe("custom marks with series", () => {
   it("let the keyboard step through their points", () => {
     const { model } = build({ marks: [lollipops([])] });
     const [a] = model.series();
-    const inspection = model.inspectPosition(a!.key, 2)!;
+    const inspection = positionOf(model, a!.key, 2)!;
     expect(inspection.value).toBe(2);
     expect(inspection.points.map(({ label, text }) => `${label}: ${text}`)).toEqual([
       "a: 30",

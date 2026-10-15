@@ -14,6 +14,7 @@ npm run bench -- --browser firefox   # the suite in Firefox -> tmp/benchmarks/be
 npm run bench:react                  # herceg vs herceg through @herceg/react -> results/react.json
 npm run bench:grid                   # grid suite (see "Grids") -> tmp/benchmarks/grid-<time>.json
 npm run bench:grid-remote            # remote grids (see "Remote grids") -> tmp/benchmarks/grid-remote-<time>.json
+npm run bench:first-hover -- --out results/first-hover.json   # first hover (see "First hover")
 npm run bench:report                 # regenerate the tables in docs/comparison.md
 npm run bench:express -- --out results/express.json   # herceg.express timings (Python)
 ```
@@ -214,10 +215,13 @@ once.
 
 Bundle sizes count what a page loads before the chart renders: the entry
 chunk and the chunks it imports statically, each compressed on its own as
-browsers fetch them. Chunks reached only through dynamic imports (Herceg's
-WebGL painter, animation, crosshair labels) are reported separately as
-optional chunks: the total of every chunk the entry could load for some
-chart, not what the entry's own chart downloads.
+browsers fetch them. Herceg's interaction controller (tooltips, the
+pointer, the wheel, and keys), which every chart loads right after its
+first frame, is reported apart, as loaded after the first frame. Other
+chunks reached only through dynamic imports (Herceg's WebGL painter,
+animation, crosshair labels) are reported separately as optional chunks:
+the total of every chunk the entry could load for some chart, not what the
+entry's own chart downloads.
 
 The `herceg-react-line` size entry leaves React and React DOM out of the
 bundle, since an application using the adapter already ships them;
@@ -237,6 +241,26 @@ one buffered portable spec (`herceg-spec-pdf`, including the spec loader), and
 a two-chart report on A4 (`herceg-pdf-document`). The synchronous one-or-list
 PDF exports retain list handling and paper fitting even at single-chart call
 sites. PDF code remains optional for charts that do not export it.
+
+### First hover
+
+`npm run bench:first-hover` measures how long a chart's first tooltip takes
+to show while its interaction controller may still be loading
+(`src/first-hover/`). Each sample is a fresh page load, in headless Chrome
+with the frame rate limit off, of a production build split into chunks as
+an application's bundler would split it (esbuild, code splitting). The page
+mounts one line chart (two series of 1,440 minutes) or a dashboard of ten,
+then dispatches a pointer move onto the first chart 0, 10, 25, 50, or
+100 ms after `createChart` returned. `drawn` runs from the move to the
+tooltip's box being shown (a `MutationObserver`), `frame` to the animation
+frame after it. Caches are `cold` (the HTTP cache off), `warm` (the chunks
+cached by an earlier visit), and `slow` (cold, with 100 ms of added network
+latency per request). `--baseline DIR` builds a second herceg source tree
+(`packages/herceg/src` of an earlier commit) into the same page, for
+comparison; the committed `results/first-hover.json` compares with the
+commit before the controller was deferred, whose charts load nothing
+before their first input. Results report the median, p95, and p99 of 15
+samples by default (`--samples`).
 
 ## Grids
 

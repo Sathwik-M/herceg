@@ -20,6 +20,7 @@ import type {
 } from "../../src/scene/scene.ts";
 import { checkSpec, validateSpec } from "../../src/spec/validate.ts";
 import { legendOf } from "../helpers/guides.ts";
+import { positionOf, stopsOf } from "../helpers/keyboard.ts";
 import legacyBoxes from "./fixtures/boxplot-legacy.json";
 
 const fields = { low: "lo", q1: "p25", median: "p50", q3: "p75", high: "hi" } as const;
@@ -109,8 +110,8 @@ describe("box plot options", () => {
       expect((marks.find((m) => m.kind === "point") as PointGeometry).count).toBe(0);
       expect(scale.domain[0]).toBeLessThanOrEqual(0);
       expect(scale.domain[1]).toBeGreaterThanOrEqual(100);
-      const stops = model.keyboardStops("");
-      const read = model.inspectPosition(stops[0]!.key, 0)!;
+      const stops = stopsOf(model, "");
+      const read = positionOf(model, stops[0]!.key, 0)!;
       expect(read.points[0]).toMatchObject({
         value: 50,
         text: "median 50, quartiles 25 to 75, whiskers 0 to 100",
@@ -256,7 +257,7 @@ describe("box plot options", () => {
         ],
       });
       expect((horizontal ? model.xScale() : model.yScale())!.type).toBe("time");
-      expect(model.inspectPosition(model.keyboardStops("")[0]!.key, 0)!.points[0]!.text).toMatch(
+      expect(positionOf(model, stopsOf(model, "")[0]!.key, 0)!.points[0]!.text).toMatch(
         /median Jan 3/,
       );
     },
@@ -361,7 +362,7 @@ describe("box plot options", () => {
       expect(renderToSVG({ width: 600, height: 300, marks: [mark], locale: "en-US" })).toContain(
         areaPath(area),
       );
-      expect(model.inspectPosition(model.keyboardStops("")[0]!.key, 0)!.points[0]!.text).toContain(
+      expect(positionOf(model, stopsOf(model, "")[0]!.key, 0)!.points[0]!.text).toContain(
         "100 values",
       );
     },
@@ -448,8 +449,8 @@ describe("box plot options", () => {
         ["b", "c"],
       ]);
       expect(legendOf(scene).map((entry) => entry.label)).toEqual(["one", "two"]);
-      const stop = model.keyboardStops("S")[0]!;
-      const read = model.inspectPosition(stop.key, 0, "S")!;
+      const stop = stopsOf(model, "S")[0]!;
+      const read = positionOf(model, stop.key, 0, "S")!;
       expect(read.label).toBe("b");
       expect(read.points[0]).toMatchObject({
         label: "one",

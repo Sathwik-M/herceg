@@ -1,10 +1,10 @@
 // Crosshair labels (`tooltip.axisLabels`): the values under the crosshair,
 // each in a filled box on its axis, and a dashed line across the plot at
-// the pointer. Charts load this module only when they ask for the labels;
-// it imports no code of its own, so loading it splits nothing else off
-// the chart's bundle.
+// the pointer. The boxes are HTML the browser sizes to their text, placed
+// by CSS inside the chart, so the cursor never measures text. Charts load
+// this module only when they ask for the labels; it imports no code of its
+// own, so loading it splits nothing else off the chart's bundle.
 
-import type { MeasureText } from "../layout/text.ts";
 import type { ChartModel, Inspection } from "../model/model.ts";
 import type { AxisGuide, Rect, Scene } from "../scene/scene.ts";
 
@@ -24,7 +24,6 @@ export interface CrosshairContext {
   model: ChartModel;
   /** The scene drawn: labels go only on the axes it draws. */
   scene: Scene;
-  measure: MeasureText;
   /** How far below the x axis its tick labels hang. */
   labelGap: number;
   /** The text color in boxes: the surface behind the chart, opaque. */
@@ -49,9 +48,9 @@ const PAD = 5;
 export class CrosshairLabels {
   /** The line across the plot at the pointer, drawn below the points it marks. */
   readonly line: SVGLineElement;
-  /** The boxes, drawn above everything. */
-  readonly labels: SVGGElement;
-  readonly #boxes: { group: SVGGElement; rect: SVGRectElement; text: SVGTextElement }[] = [];
+  /** The boxes, over the chart. */
+  readonly labels: HTMLDivElement;
+  readonly #boxes: HTMLDivElement[] = [];
 
   constructor(document: Document) {
     this.line = element(document, "line", {
@@ -59,7 +58,9 @@ export class CrosshairLabels {
       "stroke-dasharray": "3 3",
       visibility: "hidden",
     });
-    this.labels = element(document, "g");
+    this.labels = document.createElement("div");
+    this.labels.setAttribute("aria-hidden", "true");
+    this.labels.style.cssText = "position:absolute;left:0;top:0;pointer-events:none";
   }
 
   /**
@@ -127,7 +128,7 @@ export class CrosshairLabels {
 
   hide(): void {
     this.line.setAttribute("visibility", "hidden");
-    for (const { group } of this.#boxes) group.setAttribute("visibility", "hidden");
+    for (const box of this.#boxes) box.style.display = "none";
   }
 
   /** The line across a plot at the pointer, crossing the crosshair along `axis`. */
@@ -143,49 +144,47 @@ export class CrosshairLabels {
     line.setAttribute("visibility", "visible");
   }
 
-  /** Places the boxes as tick labels are placed, inside the chart. */
+  /**
+   * Places the boxes as tick labels are placed, inside the chart: centered
+   * on the x axis' labels, over the y axes' labels beside the axis, and
+   * moved in where they would reach past the chart's edges. The browser
+   * sizes each to its text; CSS places it by its own size (percentages in
+   * a translation are of the box), so the cursor measures no text.
+   */
   #place(labels: readonly AxisLabel[], context: CrosshairContext): void {
-    const { measure, labelGap } = context;
+    const { labelGap, surface } = context;
     const { theme, width, height } = context.scene;
     const document = this.labels.ownerDocument;
     while (this.#boxes.length < labels.length) {
-      const group = element(document, "g");
-      const rect = element(document, "rect", { rx: "3" });
-      const text = element(document, "text", { "dominant-baseline": "middle" });
-      group.append(rect, text);
-      this.labels.append(group);
-      this.#boxes.push({ group, rect, text });
+      const box = document.createElement("div");
+      this.labels.append(box);
+      this.#boxes.push(box);
     }
-    const font = `${theme.fontSize}px ${theme.font}`;
     const boxHeight = Math.round(theme.fontSize * 1.25) + 4;
-    this.#boxes.forEach(({ group, rect, text }, i) => {
+    const look = `position:absolute;left:0;top:0;box-sizing:border-box;white-space:nowrap;overflow:hidden;max-width:${width}px;height:${boxHeight}px;line-height:${boxHeight}px;padding:0 ${PAD}px;border-radius:3px;font:${theme.fontSize}px ${theme.font};background:${theme.text};color:${surface}`;
+    const inside = (y: number) => Math.max(0, Math.min(y, height - boxHeight));
+    this.#boxes.forEach((box, i) => {
       const label = labels[i];
-      group.setAttribute("visibility", label ? "visible" : "hidden");
-      if (!label) return;
-      const boxWidth = Math.ceil(measure(label.text, font)) + 2 * PAD;
-      let x: number;
+      if (!label) {
+        box.style.display = "none";
+        return;
+      }
+      let x: string;
       let y: number;
       if (label.side === "bottom") {
         // Centered on the line of the tick labels, which hang below the axis.
-        x = label.at - boxWidth / 2;
-        const middle = Math.round(label.edge) + labelGap + theme.fontSize / 2;
-        y = middle - boxHeight / 2;
+        x = `clamp(0px, calc(${label.at}px - 50%), calc(${width}px - 100%))`;
+        y = inside(Math.round(label.edge) + labelGap + theme.fontSize / 2 - boxHeight / 2);
       } else {
         // Over the tick labels, which end 8 pixels from the axis.
-        x = label.side === "left" ? label.edge - 3 - boxWidth : label.edge + 3;
-        y = label.at - boxHeight / 2;
+        x =
+          label.side === "left"
+            ? `max(0px, calc(${label.edge - 3}px - 100%))`
+            : `min(${label.edge + 3}px, calc(${width}px - 100%))`;
+        y = inside(label.at - boxHeight / 2);
       }
-      x = Math.max(0, Math.min(x, width - boxWidth));
-      y = Math.max(0, Math.min(y, height - boxHeight));
-      rect.setAttribute("x", String(x));
-      rect.setAttribute("y", String(y));
-      rect.setAttribute("width", String(boxWidth));
-      rect.setAttribute("height", String(boxHeight));
-      rect.setAttribute("fill", theme.text);
-      text.setAttribute("x", String(x + PAD));
-      text.setAttribute("y", String(y + boxHeight / 2));
-      text.setAttribute("fill", context.surface);
-      text.textContent = label.text;
+      box.style.cssText = `${look};transform:translate(${x}, ${y}px)`;
+      box.textContent = label.text;
     });
   }
 }

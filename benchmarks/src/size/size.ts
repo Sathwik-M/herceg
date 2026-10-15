@@ -54,7 +54,12 @@ interface Bundle {
    */
   initial: Uint8Array[];
   css: Uint8Array | undefined;
-  /** Chunks the page can reach only through dynamic imports, loaded when needed. */
+  /**
+   * Chunks every mounted chart loads right after its first frame, unasked:
+   * Herceg's interaction controller and what it imports.
+   */
+  deferred: Uint8Array[];
+  /** Other chunks the page can reach only through dynamic imports, loaded when needed. */
   lazy: Uint8Array[];
 }
 
@@ -127,11 +132,23 @@ async function bundle(entry: string, minify: boolean, external: string[]): Promi
     }
   };
   for (const path of initial) reach(path);
+  const deferred = new Set<string>();
+  const defer = (path: string) => {
+    if (initial.has(path) || deferred.has(path)) return;
+    deferred.add(path);
+    lazy.delete(path);
+    for (const { path: imported, kind } of outputs[path]!.imports)
+      if (kind === "import-statement" && outputs[imported]) defer(imported);
+  };
+  for (const path of [...lazy])
+    if (outputs[path]!.entryPoint?.endsWith("src/dom/interaction.ts")) defer(path);
   const css = Object.keys(outputs).find((path) => path.endsWith(".css"));
+  const bytes = (paths: Set<string>) => [...paths].map((path) => contents.get(path)!);
   return {
-    initial: [...initial].map((path) => contents.get(path)!),
+    initial: bytes(initial),
     css: css === undefined ? undefined : contents.get(css),
-    lazy: [...lazy].map((path) => contents.get(path)!),
+    deferred: bytes(deferred),
+    lazy: bytes(lazy),
   };
 }
 
@@ -167,6 +184,13 @@ for (const file of readdirSync(ENTRIES)
     chunks: minified.initial.length,
     // Stylesheets the library requires, reported separately from JavaScript.
     css: css ? { minified: css.byteLength, gzip: gzip(css), brotli: brotli(css) } : null,
+    // Code a chart loads after its first frame, unasked: Herceg's interaction controller.
+    deferred: minified.deferred.length
+      ? {
+          minified: total(minified.deferred, (bytes) => bytes.byteLength),
+          gzip: total(minified.deferred, gzip),
+        }
+      : null,
     // Code split off for on-demand loading, such as Herceg's GPU painter.
     lazy: minified.lazy.length
       ? {

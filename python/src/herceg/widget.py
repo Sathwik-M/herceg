@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 import threading
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 try:
     import anywidget
@@ -34,9 +34,13 @@ from ._events import (
     ItemPositions,
     Range,
     Selection,
+    Value,
+    ViewEdge,
     Viewport,
+    _milliseconds,
     checked,
     decode_drill_root,
+    decode_edge,
     decode_inspection,
     decode_item_positions,
     decode_selection,
@@ -142,7 +146,7 @@ class ChartWidget(anywidget.AnyWidget):
         # The revision of the last data change that may have taken nodes from
         # each network state: moves reported before it are taken without them.
         self._moves_data: dict[StateKey, int] = {}
-        names: list[str | StateKey] = [*keys, "hover", "click", "rowSelection"]
+        names: list[str | StateKey] = [*keys, "hover", "click", "rowSelection", "edge"]
         self._callbacks = {name: ipywidgets.CallbackDispatcher() for name in names}
         # What each bound channel holds, by table name and channel, in Python's
         # terms: rows by position in the data as it is now.
@@ -658,6 +662,57 @@ class ChartWidget(anywidget.AnyWidget):
         """Calls ``callback(inspection)`` when the plot is clicked over data."""
         self._listen("click", callback, remove)
 
+    def on_edge(self, callback: Callable[[ViewEdge], Any], remove: bool = False) -> None:
+        """Calls ``callback(edge)`` when the view comes near an end of what the
+        chart's ``limits`` let it show (see ``hg.ViewLimits``), as it nears it:
+        to load older data, say, append it, and widen the extent."""
+        self._listen("edge", callback, remove)
+
+    def show_cursor(
+        self,
+        *,
+        x: Value | None = None,
+        y: Value | None = None,
+        broadcast: bool = True,
+        snap: Literal["nearest", "previous", "next"] | None = None,
+        tooltip: bool | None = None,
+    ) -> None:
+        """Shows the cursor at a value on ``x`` or ``y`` (a datetime on time
+        axes, a category's name on category axes) in every browser showing the
+        widget, as a synced chart's cursor shows: a crosshair and the points
+        there. ``snap`` and ``tooltip`` say which points it reads and whether
+        with the tooltip (see ``hg.SyncChannel``; the cursor channel's by
+        default, else "nearest" and none). Shared with the charts of its
+        cursor channel unless ``broadcast`` is False."""
+        if (x is None) == (y is None):
+            raise ValueError("widget.show_cursor: expected x or y, one of them; give one")
+        axis, value = ("x", x) if x is not None else ("y", y)
+        if not isinstance(value, str):
+            value = _milliseconds(value, f"widget.show_cursor {axis}")
+        if snap is not None and snap not in ("nearest", "previous", "next"):
+            raise ValueError(
+                'widget.show_cursor snap: expected "nearest", "previous", or "next"; '
+                f"received {snap!r}"
+            )
+        if tooltip is not None and not isinstance(tooltip, bool):
+            raise TypeError(
+                f"widget.show_cursor tooltip: expected True or False; received {tooltip!r}"
+            )
+        message: dict[str, Any] = {
+            "type": "cursor",
+            "position": {axis: value},
+            "broadcast": bool(broadcast),
+        }
+        if snap is not None:
+            message["snap"] = snap
+        if tooltip is not None:
+            message["tooltip"] = tooltip
+        self.send(message)
+
+    def hide_cursor(self, *, broadcast: bool = True) -> None:
+        """Hides the cursor ``show_cursor`` or a synced chart shows."""
+        self.send({"type": "cursor", "position": None, "broadcast": bool(broadcast)})
+
     @property
     def camera(self) -> Camera | None:
         """The chart's current 3D camera; subplots use ``panel_cameras``."""
@@ -834,6 +889,10 @@ class ChartWidget(anywidget.AnyWidget):
                 changed = not stale and self._change(key, payload, origin)
             if changed:
                 self._callbacks[key](_decoded(kind, payload))
+        elif kind == "edge":
+            edge = decode_edge(content.get("edge"))
+            if edge is not None:
+                self._callbacks["edge"](edge)
         elif kind in ("hover", "click"):
             inspection = decode_inspection(content.get("inspection"))
             if kind == "hover" or inspection is not None:

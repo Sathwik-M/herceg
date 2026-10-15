@@ -51,7 +51,16 @@ from ._guides import (
     scales_spec,
     ticks_spec,
 )
-from ._rows import RowSelection, SelectionBinding, bindings
+from ._interaction import (
+    Binding,
+    Sync,
+    ViewLimits,
+    bindings_spec,
+    limits_spec,
+    sync_spec,
+)
+from ._rows import RowSelection, SelectionBinding
+from ._rows import bindings as bindings_of
 from ._style import (
     AXIS_ROLES,
     PANEL_ROLES,
@@ -727,8 +736,11 @@ class _SharedOptions(TypedDict, total=False):
     padding: float | dict[str, float] | None
     tooltip: bool | TooltipMode | Tooltip | None
     zoom: bool | Literal["x", "y", "xy"] | None
+    pan: bool | Literal["x", "y", "xy"] | None
     brush: Literal["x", "y", "xy", "lasso"] | None
-    sync: str | None
+    bindings: Sequence[Binding] | None
+    limits: Mapping[str, ViewLimits] | None
+    sync: str | Sync | None
     animation: bool | float | Animation | None
     renderer: Literal["auto", "svg", "canvas"] | None
     theme: ThemeName | Theme | dict[str, Any] | None
@@ -908,8 +920,11 @@ class Chart:
         padding: float | dict[str, float] | None = None,
         tooltip: bool | TooltipMode | Tooltip | None = True,
         zoom: bool | Literal["x", "y", "xy"] | None = False,
+        pan: bool | Literal["x", "y", "xy"] | None = None,
         brush: Literal["x", "y", "xy", "lasso"] | None = None,
-        sync: str | None = None,
+        bindings: Sequence[Binding] | None = None,
+        limits: Mapping[str, ViewLimits] | None = None,
+        sync: str | Sync | None = None,
         animation: bool | float | Animation | None = False,
         renderer: Literal["auto", "svg", "canvas"] | None = None,
         theme: ThemeName | Theme | dict[str, Any] | None = None,
@@ -975,7 +990,7 @@ class Chart:
         if panel_list and (facet is not None or facet_row is not None or facet_column is not None):
             raise ValueError("Chart panels: facets or panels, not both; drop one")
         if panel_list:
-            _check_subplot_ranges({"zoom": zoom, "brush": brush})
+            _check_subplot_ranges({"zoom": zoom, "pan": pan, "brush": brush})
         axes = {"x": x, "y": y, "y_right": y_right, "scales": scales}
         # One window shows one x range, so every panel must share it.
         x_scope = axis_scope(axes, "x")
@@ -984,7 +999,7 @@ class Chart:
                 "Chart navigator: needs one x scale shared by every panel, and x's scope is "
                 f'{shown(x_scope)}; give x scope "chart" or drop navigator'
             )
-        check_y_zoom({"zoom": zoom, **axes}, right=False, subplots=bool(panel_list))
+        check_y_zoom({"zoom": zoom, "pan": pan, **axes}, right=False, subplots=bool(panel_list))
         _animation(animation)
         if facet_row is not None and facet_row == facet_column:
             raise ValueError(
@@ -1035,7 +1050,10 @@ class Chart:
             "padding": padding,
             "tooltip": tooltip,
             "zoom": zoom,
+            "pan": pan,
             "brush": brush,
+            "bindings": bindings,
+            "limits": limits,
             "sync": sync,
             "animation": animation,
             "renderer": renderer,
@@ -1052,7 +1070,13 @@ class Chart:
         }
         self._options = spec_options(self._settings)
         # Bindings to channels of row selections, one per table (see SelectionBinding).
-        self._row_selection = bindings(row_selection)
+        self._row_selection = bindings_of(row_selection)
+        # A brush bound to zoom cannot select rows too.
+        bindings_spec(
+            bindings,
+            "Chart bindings",
+            brushes_rows=any("brush" in binding.events for binding in self._row_selection),
+        )
 
     # Marks -----------------------------------------------------------------
 
@@ -3362,7 +3386,9 @@ class Chart:
             )
         if self._panels:
             return
-        used = next((name for name in ("brush", "sync") if self._settings.get(name)), None)
+        used = next(
+            (name for name in ("pan", "brush", "limits", "sync") if self._settings.get(name)), None
+        )
         if used is not None:
             raise ValueError(f"Chart {used}: a {kind} has no x axis to act on; drop {used}")
         if self._settings.get("zoom") not in (True, False, None):
@@ -4109,6 +4135,36 @@ class Chart:
             sizing=sizing,
             preserve_aspect_ratio=preserve_aspect_ratio,
             stroke_scaling=stroke_scaling,
+        )
+
+    def to_snapshot(
+        self,
+        *,
+        id_prefix: str,
+        width: int | None = None,
+        height: int | None = None,
+        fonts: _render.Fonts | None = None,
+        locale: str | None = None,
+        time_zone: str | None = None,
+    ) -> dict[str, Any]:
+        """The chart rendered for a web page to show at once and for its browser
+        to hydrate: a dict of JSON values whose ``html`` is the chart's element
+        as herceg's browser runtime builds it. Pass it to a JavaScript chart of
+        the same spec (``<Chart initial={hydration(snapshot)}>`` in React,
+        ``hydrateChart`` in TypeScript), which takes the element over without
+        drawing it again. ``id_prefix`` starts the element's ids: unique in the
+        page. The size is the chart's (640 x 320 when it has none) unless given;
+        ``locale`` and ``time_zone`` are used where the chart sets none ("en-US"
+        and "UTC"); ``fonts`` measure the text, which the browser's chart must
+        be given too (requires the ``export`` extra)."""
+        return _render.snapshot(
+            *self.to_spec(),
+            width=width,
+            height=height,
+            id_prefix=id_prefix,
+            fonts=fonts,
+            locale=locale,
+            time_zone=time_zone,
         )
 
     def to_png(self, *, scale: float = 2, fonts: _render.Fonts | None = None) -> bytes:
@@ -5047,7 +5103,7 @@ OPTIONS = (
     *("title", "description", "width", "height", "x", "y", "y_right", "legend", "padding"),
     *("scales", "guides"),
     "tooltip",
-    *("zoom", "brush", "sync", "animation"),
+    *("zoom", "pan", "brush", "bindings", "limits", "sync", "animation"),
     *("renderer", "theme"),
     *("locale", "time_zone", "projection", "z", "camera", "box_aspect", "rotate", "navigator"),
     "drag",
@@ -5119,11 +5175,13 @@ def check_layout_options(
 def _check_subplot_ranges(settings: Mapping[str, Any]) -> None:
     """Subplots zoom and brush along x (maps and networks with every panel
     pan and zoom both ways, and lasso: see `check_layout_options`)."""
-    zoom, brush = settings.get("zoom"), settings.get("brush")
-    if zoom == "y":
-        raise ValueError(
-            f"Chart zoom: charts with panels zoom along x only; received {shown(zoom)}"
-        )
+    for name in ("zoom", "pan"):
+        if settings.get(name) == "y":
+            raise ValueError(
+                f"Chart {name}: charts with panels {name} along x only; "
+                f"received {shown(settings[name])}"
+            )
+    brush = settings.get("brush")
     if brush in ("y", "xy"):
         raise ValueError(
             f"Chart brush: charts with panels brush along x only; received {shown(brush)}"
@@ -5135,11 +5193,15 @@ def _check_alone(settings: Mapping[str, Any], kind: str) -> None:
     treemap or sunburst drills with ``zoom=True``; maps and networks pan and
     zoom both ways (``zoom=True`` or ``"xy"``) and take a ``"lasso"`` brush;
     only a network's nodes drag; nothing syncs or has x seams."""
-    zoom, brush = settings.get("zoom"), settings.get("brush")
+    zoom, brush, pan = settings.get("zoom"), settings.get("brush"), settings.get("pan")
     if kind in _MAP_MARKS:
         if zoom in ("x", "y"):
             raise ValueError(
                 f'Chart zoom: expected True or "xy", as maps zoom both ways; received {shown(zoom)}'
+            )
+        if pan in ("x", "y"):
+            raise ValueError(
+                f'Chart pan: expected True or "xy", as maps pan both ways; received {shown(pan)}'
             )
         if brush not in (None, "lasso"):
             raise ValueError(f'Chart brush: expected "lasso" for maps; received {shown(brush)}')
@@ -5151,6 +5213,11 @@ def _check_alone(settings: Mapping[str, Any], kind: str) -> None:
             f"Chart zoom: a {kind} drills with zoom=True, not along an axis; received {shown(zoom)}"
         )
     if kind == "graph":
+        if pan not in (True, False, None, "xy"):
+            raise ValueError(
+                f"Chart pan: a graph pans both ways, received {shown(pan)}; "
+                "use pan=True or pan='xy'"
+            )
         if zoom not in (True, False, None, "xy"):
             raise ValueError(
                 f"Chart zoom: a graph pans and zooms both ways, received {shown(zoom)}; "
@@ -5163,11 +5230,11 @@ def _check_alone(settings: Mapping[str, Any], kind: str) -> None:
             )
     used = _x_option(
         settings,
-        ("sync",)
+        ("limits", "sync")
         if kind == "graph" or kind in _MAP_MARKS
-        else ("brush", "sync")
+        else ("pan", "brush", "limits", "sync")
         if drills
-        else ("zoom", "brush", "sync"),
+        else ("zoom", "pan", "brush", "limits", "sync"),
     )
     if used is not None:
         raise ValueError(f"Chart {used}: a {kind} has no x axis to act on; drop {_dropped(used)}")
@@ -5177,18 +5244,18 @@ def _check_subplots(settings: Mapping[str, Any], layouts: Sequence[Mapping[str, 
     """What subplots that all draw layout marks, so that no panel has axes,
     take: trees drill with ``zoom=True``; maps and networks pan and zoom both
     ways and take lassos."""
-    zoom, brush = settings.get("zoom"), settings.get("brush")
+    zoom, brush, pan = settings.get("zoom"), settings.get("brush"), settings.get("pan")
     kinds = {mark["type"] for mark in layouts}
     planes = kinds & {"graph", *_MAP_MARKS}
     takes = {
         "zoom": zoom is True
         and bool(planes or kinds & {"treemap", "sunburst", *_MARKS_3D})
         or (zoom == "xy" and bool(planes)),
+        "pan": pan in (True, "xy") and bool(planes),
         "brush": brush == "lasso" and bool(planes),
     }
-    used = _x_option(
-        settings, tuple(name for name in ("zoom", "brush", "sync") if not takes.get(name, False))
-    )
+    options = ("zoom", "pan", "brush", "limits", "sync")
+    used = _x_option(settings, tuple(name for name in options if not takes.get(name, False)))
     if used is not None:
         raise ValueError(
             f"Chart {used}: every panel draws a {_method(layouts[0]['type'])} or another mark "
@@ -5210,18 +5277,20 @@ def check_y_zoom(settings: Mapping[str, Any], *, right: bool, subplots: bool = F
     (``right``), right y scales of their own (y_right's scope): a y zoom moves
     both axes through the same pixels, in every panel. Subplots refuse y zoom
     on their own (see `_check_subplot_ranges`)."""
-    if settings["zoom"] not in ("y", "xy") or subplots:
-        return
-    if scope_of(settings, "y", subplots=False) != "chart":
-        raise ValueError(
-            "Chart zoom: charts whose panels have y scales of their own (y scope) zoom "
-            f"along x only; received {shown(settings['zoom'])}"
-        )
-    if right and scope_of(settings, "y_right", subplots=False) != "chart":
-        raise ValueError(
-            "Chart zoom: charts whose panels have right y scales of their own "
-            f"(y_right scope) zoom along x only; received {shown(settings['zoom'])}"
-        )
+    for name in ("zoom", "pan"):
+        value = settings.get(name)
+        if value not in ("y", "xy") or subplots:
+            continue
+        if scope_of(settings, "y", subplots=False) != "chart":
+            raise ValueError(
+                f"Chart {name}: charts whose panels have y scales of their own (y scope) "
+                f"{name} along x only; received {shown(value)}"
+            )
+        if right and scope_of(settings, "y_right", subplots=False) != "chart":
+            raise ValueError(
+                f"Chart {name}: charts whose panels have right y scales of their own "
+                f"(y_right scope) {name} along x only; received {shown(value)}"
+            )
 
 
 def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
@@ -5233,10 +5302,15 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
         for key, value in {
             "zoom": settings["zoom"] or None,
             "brush": settings["brush"],
-            "sync": settings["sync"],
+            "bindings": bindings_spec(settings.get("bindings"), "Chart bindings"),
+            "limits": limits_spec(settings.get("limits"), "Chart limits"),
+            "sync": sync_spec(settings["sync"], "Chart sync"),
         }.items()
         if value
     }
+    # False pans nothing, where zoom would.
+    if settings.get("pan") is not None:
+        interaction["pan"] = settings["pan"]
     # Dragging turns 3D charts unless asked not to.
     if settings.get("rotate") is False:
         interaction["rotate"] = False

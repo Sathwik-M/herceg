@@ -14,6 +14,7 @@ import { panels } from "../../src/model/panels.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { PointGeometry, Scene } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
+import { positionOf, stopsOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -250,8 +251,8 @@ describe("points on categories of panels' own", () => {
 
   it("read each panel's points with the keyboard at their own categories", () => {
     const { model } = build(config());
-    const [stop] = model.keyboardStops("E");
-    const read = model.inspectPosition(stop!.key, 1, "E")!;
+    const [stop] = stopsOf(model, "E");
+    const read = positionOf(model, stop!.key, 1, "E")!;
     expect(read).toMatchObject({ panel: "E", label: "d", value: 1 });
     expect(read.points.map((p) => [p.row, p.value])).toEqual([[5, 6]]);
   });

@@ -619,6 +619,53 @@ def test_hover_and_click_callbacks_receive_inspections():
     assert decoded.points[0].mark_id == "bins"
 
 
+def test_edges_reach_python_with_datetimes_and_cursors_reach_browsers():
+    widget, browser = live(pan="x")
+    edges = []
+    widget.on_edge(edges.append)
+    assert widget._listening == ["edge"]
+    browser.reply(
+        {
+            "type": "edge",
+            "edge": {
+                "scale": "x",
+                "side": "start",
+                "domain": [MS0, MS0 + 60_000],
+                "bound": MS0,
+                "cause": "pointer",
+                "time": True,
+            },
+        }
+    )
+    assert edges == [
+        hg.ViewEdge(
+            scale="x",
+            side="start",
+            domain=(T0, T0 + dt.timedelta(minutes=1)),
+            bound=T0,
+            cause="pointer",
+        )
+    ]
+    widget.show_cursor(x=T0)
+    assert browser.last[0] == {"type": "cursor", "position": {"x": MS0}, "broadcast": True}
+    widget.show_cursor(y="a", broadcast=False)
+    assert browser.last[0] == {"type": "cursor", "position": {"y": "a"}, "broadcast": False}
+    widget.show_cursor(x=T0, snap="previous", tooltip=True)
+    assert browser.last[0] == {
+        "type": "cursor",
+        "position": {"x": MS0},
+        "broadcast": True,
+        "snap": "previous",
+        "tooltip": True,
+    }
+    widget.hide_cursor()
+    assert browser.last[0] == {"type": "cursor", "position": None, "broadcast": True}
+    with pytest.raises(ValueError, match="widget.show_cursor: expected x or y, one of them"):
+        widget.show_cursor()
+    with pytest.raises(ValueError, match="widget.show_cursor snap: expected"):
+        widget.show_cursor(x=T0, snap="later")
+
+
 def test_camera_callbacks_and_3d_items_receive_their_values():
     widget = hg.Chart({"x": [1.0], "y": [2.0], "z": [9.0]}).point_3d("x", "y", "z").widget()
     browser = Browser(widget)

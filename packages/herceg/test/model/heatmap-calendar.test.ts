@@ -14,6 +14,7 @@ import type { RasterGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ChartSpec } from "../../src/spec/spec.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
+import { cellOf } from "../helpers/keyboard.ts";
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -166,7 +167,7 @@ describe("calendar heatmaps by week", () => {
     const series = model.panelSeries("")[0]!;
     const value = (position: number | undefined) => series.values[rowOf(series, position!)];
     const step = (position: number, columns: number, rows: number) =>
-      model.stepCell("", series.key, position, columns, rows);
+      cellOf(model, "", series.key, position, columns, rows);
     // The top left cell: Monday of the first week holding a day, the 5th.
     const first = step(-1, 0, 0)!;
     expect(value(first)).toBe(4);

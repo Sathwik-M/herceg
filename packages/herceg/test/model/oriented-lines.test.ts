@@ -19,6 +19,7 @@ import type {
   Scene,
 } from "../../src/scene/scene.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
+import { positionOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig, width = 600, height = 300) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -73,7 +74,7 @@ describe("lines over category axes", () => {
     ]);
     // The keyboard steps through the bands in order.
     const series = model.series().find((s) => s.label === "N")!;
-    expect([0, 1, 2].map((k) => model.inspectPosition(series.key, k)!.label)).toEqual([
+    expect([0, 1, 2].map((k) => positionOf(model, series.key, k)!.label)).toEqual([
       "Jan",
       "Feb",
       "Mar",
@@ -116,7 +117,7 @@ describe("lines over category axes", () => {
     const south = model
       .series()
       .find((s) => s.label === "S" && model.markOf(s)?.spec.type === "line")!;
-    const read = model.inspectPosition(south.key, 0)!;
+    const read = positionOf(model, south.key, 0)!;
     const mine = read.points.find((p) => p.key === south.key)!;
     expect(mine.px).toBeCloseTo(vertices(lines[1]!.path)[0]![0]!, 3);
   });
@@ -174,10 +175,7 @@ describe("lines over category axes", () => {
       ],
     });
     const top = stacked.model.series().find((s) => s.label === "b")!;
-    expect([0, 1].map((k) => stacked.model.inspectPosition(top.key, k)!.label)).toEqual([
-      "Jan",
-      "Feb",
-    ]);
+    expect([0, 1].map((k) => positionOf(stacked.model, top.key, k)!.label)).toEqual(["Jan", "Feb"]);
     const [, upper] = of<AreaGeometry>(stacked.scene, "area");
     const sy = stacked.model.yScale()!;
     expect(vertices(upper!.upper).map(([, py]) => Math.round(py!))).toEqual(
@@ -274,7 +272,7 @@ describe("lines and areas along y", () => {
       ["salinity", 35.5],
     ]);
     const s = model.series()[0]!;
-    expect([0, 4].map((k) => model.inspectPosition(s.key, k)!.value)).toEqual([0, 40]);
+    expect([0, 4].map((k) => positionOf(model, s.key, k)!.value)).toEqual([0, 40]);
   });
 
   it("reduce dense data along y to about four points per pixel row", () => {
@@ -460,7 +458,7 @@ describe("lines and areas along y", () => {
     });
     const [a] = model.series();
     const read = (position: number) =>
-      model.inspectPosition(a!.key, position)!.points.map((p) => [p.label, p.row, p.value]);
+      positionOf(model, a!.key, position)!.points.map((p) => [p.label, p.row, p.value]);
     expect(read(1)).toEqual([
       ["a", 1, 2],
       ["b", 4, 20],

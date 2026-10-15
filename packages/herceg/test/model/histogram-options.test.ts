@@ -9,6 +9,7 @@ import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { panels } from "../../src/model/panels.ts";
 import type { AreaGeometry, RectGeometry } from "../../src/scene/scene.ts";
 import type { ScaleScope } from "../../src/spec/spec.ts";
+import { axisOf, positionOf, stopsOf } from "../helpers/keyboard.ts";
 import legacy from "./fixtures/histogram-legacy.json";
 
 function build(config: ChartConfig) {
@@ -134,7 +135,7 @@ describe("histogram options", () => {
       const { model } = build({ marks: [mark] });
       expect(values(model)).toEqual([[1, 2]]);
       expect((horizontal ? model.yScale() : model.xScale())!.type).toBe("time");
-      const hit = model.inspectPosition(model.keyboardStops("")[0]!.key, 0)!;
+      const hit = positionOf(model, stopsOf(model, "")[0]!.key, 0)!;
       expect(hit.axis).toBe(horizontal ? "y" : "x");
       expect(hit.points[0]!.text).toMatch(/Jan 1.* – .*Jan 2.*: 1$/);
       expect(describeChart(model)).toMatch(/from .*Jan 1.* to .*Jan 4/);
@@ -154,13 +155,13 @@ describe("histogram options", () => {
     expect(model.xScale()!.domain[0]).toBe(0);
     expect(model.yScale()!.domain).toEqual([0, 4]);
     expect(model.tooltipMode()).toBe("nearest-y");
-    expect(model.cursorAxis()).toBe("y");
-    expect(model.keyboardStops("")).toHaveLength(1);
+    expect(axisOf(model)).toBe("y");
+    expect(stopsOf(model, "")).toHaveLength(1);
     const hit = model.inspect(model.xScale()!.map(1), model.yScale()!.map(1))!;
     expect(hit.axis).toBe("y");
     expect(hit.points.map((p) => p.text)).toEqual(["0 – 2: 2", "0 – 2: 0"]);
     expect(hit.points.every((p) => p.row === undefined)).toBe(true);
-    expect(model.inspectPosition(a!.key, 1)!.points.map((p) => p.value)).toEqual([0, 3]);
+    expect(positionOf(model, a!.key, 1)!.points.map((p) => p.value)).toEqual([0, 3]);
     const rect = rectangles(scene)[0]!.rects;
     expect(rect[0]).toBeCloseTo(model.xScale()!.map(0), 4);
     expect(rect[2]).toBeCloseTo(model.xScale()!.map(2) - model.xScale()!.map(0), 4);
@@ -184,7 +185,7 @@ describe("histogram options", () => {
       expect(
         rectangles(scene).every((r) => [...r.rects.slice(0, r.count * 4)].every(Number.isFinite)),
       ).toBe(true);
-      expect(model.inspectPosition(model.series()[0]!.key, 1)!.points.map((p) => p.label)).toEqual([
+      expect(positionOf(model, model.series()[0]!.key, 1)!.points.map((p) => p.label)).toEqual([
         "b",
       ]);
     },
@@ -219,7 +220,7 @@ describe("histogram options", () => {
         expect(values(model)[1]![1]).toBeCloseTo(0.4 * scale);
       }
       expect([...model.series()[1]!.x0!]).toEqual(values(model)[0]);
-      expect(model.inspectPosition(model.series()[0]!.key, 1)!.points[0]!.text).toMatch(
+      expect(positionOf(model, model.series()[0]!.key, 1)!.points[0]!.text).toMatch(
         /^0 – 10: cumulative /,
       );
       expect(describeChart(model)).toContain("bars are cumulative from 0");
@@ -300,7 +301,7 @@ describe("histogram options", () => {
       const position = horizontal ? 1 : 0;
       const width = horizontal ? 3 : 2;
       expect(b!.rects[position]!).toBeCloseTo(a!.rects[position]! + a!.rects[width]!, 4);
-      expect(model.inspectPosition(model.series()[0]!.key, 0)!.points).toHaveLength(2);
+      expect(positionOf(model, model.series()[0]!.key, 0)!.points).toHaveLength(2);
       const before = a!.rects[width]!;
       model.hidden.add(model.series()[1]!.key);
       const regrouped = rectangles(model.scene(estimateText));
@@ -397,8 +398,8 @@ describe("histogram options", () => {
     });
     expect(rectangles(scene)[0]!.count).toBe(2);
     expect(model.yScale()!.domain[0]).toBeGreaterThan(0);
-    expect(model.inspectPosition(model.series()[0]!.key, 0)).toBeUndefined();
-    expect(model.inspectPosition(model.series()[0]!.key, 1)!.points[0]!.text).toBe("1 – 3: 1");
+    expect(positionOf(model, model.series()[0]!.key, 0)).toBeUndefined();
+    expect(positionOf(model, model.series()[0]!.key, 1)!.points[0]!.text).toBe("1 – 3: 1");
   });
 
   it("refuses untyped invalid orientation and layout forms at construction", () => {
@@ -507,7 +508,7 @@ describe("histogram options", () => {
     expect(model.yScale()!.domain).toEqual([0, 1]);
     // An empty bin draws nothing; a series' empty share neither.
     expect(rectangles(scene).map((m) => m.count)).toEqual([2, 2]);
-    expect(model.inspectPosition(a!.key, 0)!.points[0]!.text).toBe("0 – 1: 0.333 share (1 raw)");
+    expect(positionOf(model, a!.key, 0)!.points[0]!.text).toBe("0 – 1: 0.333 share (1 raw)");
     model.hidden.add(b!.key);
     model.scene(estimateText);
     expect([...model.series()[0]!.y]).toEqual([1, 1, Number.NaN, Number.NaN]);

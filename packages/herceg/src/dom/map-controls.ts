@@ -13,18 +13,14 @@
 // stays there), the keys in the panel the keyboard reads.
 
 import type { LayoutResult, PlaneView } from "../marks/layout-mark.ts";
+import type { Binding } from "../model/bindings.ts";
 import type { ItemPanel } from "../model/item-views.ts";
 import type { ChartConfig } from "../model/model.ts";
 import type { Scene } from "../scene/scene.ts";
 import type { Theme } from "../theme.ts";
 import { Brush, type BrushPanel } from "./brush.ts";
 import { DRAG_THRESHOLD } from "./brushed.ts";
-import {
-  type Controls as ChartControls,
-  type ControlsHost,
-  PointerOwnership,
-  touchAction,
-} from "./controls.ts";
+import { type Controls as ChartControls, type ControlsHost, PointerOwnership } from "./controls.ts";
 import { RESET_GLYPH, type ToolButton, Toolbar } from "./toolbar.ts";
 
 /** Magnification per key press or button click. */
@@ -64,6 +60,8 @@ export class Controls implements ChartControls {
   /** Draws a lasso being dragged, and the chart's lasso selection; made for charts that lasso. */
   #brush: Brush | undefined;
   #zooms = false;
+  /** Whether Shift with the arrow keys pans (`pan`, or `zoom`, which pans too). */
+  #pans = false;
   #lassos = false;
   /** With both a lasso and zoom, whether a plain drag lassos (the toolbars' toggle). */
   #lassoing = true;
@@ -77,6 +75,8 @@ export class Controls implements ChartControls {
     x: number;
     y: number;
     mode: "pan" | "lasso";
+    /** The axes a pan moves along: both ways unless its binding says. */
+    axes: string;
     panel: string;
     plane: Plane;
     view: View;
@@ -172,10 +172,12 @@ export class Controls implements ChartControls {
   }
 
   update(config: ChartConfig): void {
-    const { zoom, brush } = config.interaction ?? {};
+    const { zoom, pan, brush, bindings } = config.interaction ?? {};
     this.#zooms = !!zoom;
-    this.#lassos = brush === "lasso";
-    if (this.#press && (this.#press.mode === "pan" ? !this.#zooms : !this.#lassos)) this.#cancel();
+    this.#pans = pan === undefined ? !!zoom : pan !== false;
+    // A binding of the chart's own may brush too, which on a plane lassos.
+    this.#lassos = brush === "lasso" || !!bindings?.some(({ action }) => action.type === "brush");
+    if (this.#press && (this.#press.mode === "pan" ? !this.#pans : !this.#lassos)) this.#cancel();
     if (this.#lassos && !this.#brush) {
       const group = this.#root.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "g");
       this.#host.overlay.append(group);
@@ -186,7 +188,6 @@ export class Controls implements ChartControls {
       this.#brush = undefined;
     }
     this.#showToolbars();
-    touchAction(this.#host);
   }
 
   draw(scene: Scene): void {
@@ -329,6 +330,35 @@ export class Controls implements ChartControls {
     this.#say(`Moved ${way}.`);
   }
 
+  /**
+   * What a press on panel `panel`'s plane does by the chart's bindings:
+   * lasso (when the toolbar's toggle says so, with zoom on), move the node
+   * under it (`nodePress` says whether there is one), or pan.
+   */
+  dragAction(event: PointerEvent, panel: string): Binding["action"] | undefined {
+    const action = this.#host
+      .bindings()
+      .match("drag", event, ({ type }) =>
+        type === "brush"
+          ? this.lassoing
+          : type === "moveItem"
+            ? !!this.#nodePress?.(event, panel)
+            : type === "pan" || type === "pageScroll",
+      )?.action;
+    return action?.type === "pageScroll" ? undefined : action;
+  }
+
+  /** Shows what lies `dx` pixels right and `dy` down of what panel `panel` shows. */
+  #panBy(panel: string, dx: number, dy: number): void {
+    const view = this.#view(panel);
+    if (!view) return;
+    const [left, right] = view.plane.x.range;
+    const [bottom, top] = view.plane.y.range;
+    const across = (dx * (view.x[1] - view.x[0])) / (right - left);
+    const up = (dy * (view.y[1] - view.y[0])) / (top - bottom);
+    this.#show(panel, [view.x[0] + across, view.x[1] + across], [view.y[0] + up, view.y[1] + up]);
+  }
+
   #reset(panel: string, announce: boolean): void {
     this.#host.model.items?.setView(null, panel);
     if (announce) this.#say(`Showing the whole ${this.#family}.`);
@@ -364,29 +394,41 @@ export class Controls implements ChartControls {
       (event) => {
         const at = this.#point(event);
         const panel = this.#onPlot(event) ? this.#planeAt(at.x, at.y) : undefined;
-        if (!this.#zooms || !panel) return;
+        const action =
+          panel &&
+          this.#host
+            .bindings()
+            .match("wheel", event, ({ type }) => type !== "orbit", this.#host.focused())?.action;
+        if (action?.type !== "zoom" && action?.type !== "pan") return;
         event.preventDefault();
-        this.#zoomBy(panel.key, Math.exp(-event.deltaY * 0.002), at, false);
+        const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
+        const [dx, dy] = [event.deltaX * unit, event.deltaY * unit];
+        const along = Math.abs(dx) > Math.abs(dy) ? dx : dy;
+        if (action.type === "zoom") this.#zoomBy(panel!.key, Math.exp(-along * 0.002), at, false);
+        else if (action.axes === "y") this.#panBy(panel!.key, 0, along);
+        else if (action.axes === "x") this.#panBy(panel!.key, along, 0);
+        else this.#panBy(panel!.key, dx, dy);
       },
       { passive: false },
     );
     on("pointerdown", (event) => {
-      // A second finger neither pans nor takes over the first one's drag.
-      if (this.#press || event.button !== 0 || !this.#onPlot(event)) return;
+      // A second finger neither pans nor takes over the first one's drag;
+      // which buttons drag is the bindings'.
+      if (this.#press || !this.#onPlot(event)) return;
       const at = this.#point(event);
       const panel = this.#planeAt(at.x, at.y)?.key;
       const view = panel === undefined ? undefined : this.#view(panel);
       if (!view) return;
-      const lasso = this.#lassos && (this.#zooms ? this.#lassoing && !event.shiftKey : true);
-      if (!lasso && !this.#zooms) return;
-      if (!lasso && this.#nodePress?.(event, panel!)) return;
+      const action = this.dragAction(event, panel!);
+      if (action?.type !== "brush" && action?.type !== "pan") return;
       if (!this.#pointer.acquire(event.pointerId)) return;
-      const mode = lasso ? "lasso" : "pan";
+      const mode = action.type === "brush" ? "lasso" : "pan";
       const { plane } = view;
       this.#press = {
         pointer: event.pointerId,
         ...at,
         mode,
+        axes: (action.type === "pan" && action.axes) || "xy",
         panel: panel!,
         plane,
         view,
@@ -402,13 +444,14 @@ export class Controls implements ChartControls {
       if (!press.moved) return;
       if (press.mode === "pan") {
         // From the view when the drag started, so the point pressed stays under the pointer.
-        const { view } = press;
+        const { view, axes } = press;
         const [left, right] = view.plane.x.range;
         const perPixel = (view.x[1] - view.x[0]) / (right - left);
-        const dx = (press.x - x) * perPixel;
-        const dy =
-          ((press.y - y) * (view.y[1] - view.y[0])) /
-          (view.plane.y.range[1] - view.plane.y.range[0]);
+        const dx = axes.includes("x") ? (press.x - x) * perPixel : 0;
+        const dy = axes.includes("y")
+          ? ((press.y - y) * (view.y[1] - view.y[0])) /
+            (view.plane.y.range[1] - view.plane.y.range[0])
+          : 0;
         this.#show(press.panel, [view.x[0] + dx, view.x[1] + dx], [view.y[0] + dy, view.y[1] + dy]);
         return;
       }
@@ -452,36 +495,55 @@ export class Controls implements ChartControls {
     on("dblclick", (event) => {
       const at = this.#point(event);
       const panel = this.#onPlot(event) ? this.#planeAt(at.x, at.y) : undefined;
-      if (this.#zooms && panel) this.#reset(panel.key, false);
+      const action = panel && this.#host.bindings().match("doubleClick", event)?.action;
+      if (action?.type === "reset") this.#reset(panel!.key, false);
+      else if (action?.type === "zoom") this.#zoomBy(panel!.key, action.factor ?? 2, at, false);
     });
     // Ahead of the chart's keys, which read the map's items with the arrows.
     on("keydown", (event) => this.#key(event), { capture: true });
   }
 
   /**
-   * Shift with an arrow key pans, plus and minus zoom, and 0 shows the whole
-   * map, in the panel the keyboard reads (or the chart's one plane).
+   * Keys the bindings bind (plus and minus zoom, 0 shows the whole map, with
+   * `zoom`), and Shift with an arrow key pans, in the panel the keyboard
+   * reads (or the chart's one plane).
    */
   #key(event: KeyboardEvent): void {
     if (event.target !== this.#root) return;
     // Escape clears a lasso, as it clears brushes, and goes on to the chart's keys.
     if (event.key === "Escape" && this.#host.chart.selection) this.#host.chart.select(null);
-    if (!this.#zooms || event.altKey) return;
+    const action = this.#host.bindings().match("key", event)?.action;
+    if (!(action || ((this.#zooms || this.#pans) && !event.altKey))) return;
     const cursor = this.#host.cursor();
     const [first] = this.#planes();
     const panel = cursor ? cursor.panel : first?.state === "" ? first.key : undefined;
-    if (panel === undefined || !this.#planeOf(panel)) return;
+    const plane = panel === undefined ? undefined : this.#planeOf(panel);
+    if (!plane) return;
     const steps: Record<string, [number, number, string]> = {
       ArrowLeft: [-1, 0, "left"],
       ArrowRight: [1, 0, "right"],
       ArrowUp: [0, -1, "up"],
       ArrowDown: [0, 1, "down"],
     };
-    const step = event.shiftKey ? steps[event.key] : undefined;
-    if (step) this.#pan(panel, ...step);
-    else if (event.key === "+" || event.key === "=") this.#zoomBy(panel, ZOOM);
-    else if (event.key === "-") this.#zoomBy(panel, 1 / ZOOM);
-    else if (event.key === "0") this.#reset(panel, true);
+    // Shift alone: with Ctrl, ⌘, or Alt, the arrows are the page's (or a node's, with Alt).
+    const plain = !(event.altKey || event.ctrlKey || event.metaKey);
+    const step = event.shiftKey && plain && this.#pans ? steps[event.key] : undefined;
+    if (action?.type === "zoom") this.#zoomBy(panel!, action.factor ?? ZOOM);
+    else if (action?.type === "reset") this.#reset(panel!, true);
+    else if (action?.type === "pan") {
+      // Fractions of the room across and up, along the axes it names (both by default).
+      const [across, up] = action.step ?? [0.1, 0];
+      const axes = action.axes ?? "xy";
+      const [left, right] = plane.plane.x.range;
+      const [bottom, top] = plane.plane.y.range;
+      this.#panBy(
+        panel!,
+        axes.includes("x") ? across * (right - left) : 0,
+        axes.includes("y") ? up * (top - bottom) : 0,
+      );
+    } else if (step) this.#pan(panel!, ...step);
+    // 0 alone, as the toolbar's button does.
+    else if (event.key === "0" && plain) this.#reset(panel!, true);
     else return;
     event.preventDefault();
     event.stopImmediatePropagation();

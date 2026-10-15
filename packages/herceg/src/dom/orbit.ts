@@ -9,7 +9,7 @@ import type { ChartConfig } from "../model/model.ts";
 import type { Scene } from "../scene/scene.ts";
 import type { CameraSpec } from "../spec/spec.ts";
 import { type Camera, MAX_ZOOM, MIN_ZOOM } from "../three/camera.ts";
-import { type Controls as ChartControls, type ControlsHost, touchAction } from "./controls.ts";
+import type { Controls as ChartControls, ControlsHost } from "./controls.ts";
 import { RESET_GLYPH, Toolbar } from "./toolbar.ts";
 
 /**
@@ -64,8 +64,6 @@ export class Controls implements ChartControls {
     panel: string;
     moved: boolean;
   } | null = null;
-  #rotates = true;
-  #zooms = false;
 
   constructor(host: ControlsHost) {
     const root = host.chart.root;
@@ -82,12 +80,8 @@ export class Controls implements ChartControls {
   /** Follows the chart's options: whether dragging turns it and the wheel zooms it. */
   update(config: ChartConfig): void {
     const rotate = config.interaction?.rotate !== false;
-    this.#rotates = rotate;
-    this.#zooms = !!config.interaction?.zoom;
     if (this.#press && (!rotate || !this.#panels().some(({ key }) => key === this.#press!.panel)))
       this.#press = null;
-    // Touches turn the chart sideways and leave vertical drags to scroll the page.
-    touchAction(this.#host);
   }
 
   #panels() {
@@ -188,8 +182,11 @@ export class Controls implements ChartControls {
       const panel = this.#at(event);
       const from = panel === undefined ? undefined : this.#host.chart.getCamera({ panel });
       // A second finger neither turns nor takes over the first one's drag.
-      if (this.#press || event.button !== 0 || !from || !this.#rotates) return;
-      if (!this.#onPlot(event.target)) return;
+      if (this.#press || !from || !this.#onPlot(event.target)) return;
+      const action = this.#host
+        .bindings()
+        .match("drag", event, ({ type }) => type === "orbit" || type === "pageScroll")?.action;
+      if (action?.type !== "orbit") return;
       this.#press = {
         pointer: event.pointerId,
         x: event.clientX,
@@ -224,15 +221,34 @@ export class Controls implements ChartControls {
       (event) => {
         const panel = this.#at(event);
         const camera = panel === undefined ? undefined : this.#host.chart.getCamera({ panel });
-        if (!camera || !this.#zooms) return;
+        const action =
+          camera &&
+          this.#host
+            .bindings()
+            .match(
+              "wheel",
+              event,
+              ({ type }) => type === "zoom" || type === "pageScroll",
+              this.#host.focused(),
+            )?.action;
+        if (action?.type !== "zoom") return;
         event.preventDefault();
-        this.#turn({ zoom: magnify(camera, Math.exp(-event.deltaY * 0.002)) }, false, panel!);
+        const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
+        const delta =
+          (Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY) * unit;
+        this.#turn({ zoom: magnify(camera!, Math.exp(-delta * 0.002)) }, false, panel!);
       },
       { passive: false },
     );
+    // Double click goes back to the configured camera, unless a binding zooms with it.
     on("dblclick", (event) => {
       const panel = this.#at(event);
-      if (panel !== undefined) this.#turn(null, false, panel);
+      const camera = panel === undefined ? undefined : this.#host.chart.getCamera({ panel });
+      if (!camera) return;
+      const action = this.#host.bindings().match("doubleClick", event)?.action;
+      if (action?.type === "zoom")
+        this.#turn({ zoom: magnify(camera, action.factor ?? 2) }, false, panel!);
+      else this.#turn(null, false, panel!);
     });
     // Ahead of the chart's keys, which step through points with the arrows.
     on("keydown", (event) => this.#key(event), { capture: true });
@@ -247,14 +263,19 @@ export class Controls implements ChartControls {
         : this.#host.chart.getCamera({ panel });
     if (!camera || event.target !== this.#root) return;
     const shift = event.shiftKey;
-    let next: CameraSpec | undefined;
-    if (shift && event.key === "ArrowLeft") next = { azimuth: camera.azimuth - STEP };
+    const action = this.#host.bindings().match("key", event)?.action;
+    let next: CameraSpec | null | undefined;
+    if (action?.type === "zoom") next = { zoom: magnify(camera, action.factor ?? ZOOM) };
+    else if (action?.type === "reset") next = null;
+    // The keys of its own go without Ctrl, ⌘, or Alt, which are the page's (Ctrl and minus zoom it).
+    else if (event.ctrlKey || event.metaKey || event.altKey) next = undefined;
+    else if (shift && event.key === "ArrowLeft") next = { azimuth: camera.azimuth - STEP };
     else if (shift && event.key === "ArrowRight") next = { azimuth: camera.azimuth + STEP };
     else if (shift && event.key === "ArrowUp") next = { elevation: tilt(camera, STEP) };
     else if (shift && event.key === "ArrowDown") next = { elevation: tilt(camera, -STEP) };
     else if (event.key === "+" || event.key === "=") next = { zoom: magnify(camera, ZOOM) };
     else if (event.key === "-") next = { zoom: magnify(camera, 1 / ZOOM) };
-    if (!next) return;
+    if (next === undefined) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     this.#turn(next, true, panel!);

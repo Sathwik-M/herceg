@@ -17,6 +17,7 @@ import type { LineGeometry, PolygonGeometry, Scene } from "../../src/scene/scene
 import { loadSpec } from "../../src/spec/load.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
 import { keysOf } from "../helpers/guides.ts";
+import { positionOf, stopsOf } from "../helpers/keyboard.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -177,9 +178,9 @@ describe("contours", () => {
         contour(field, { x: "x", y: "y", color: "z", thresholds: [2, 5, 8], variant: "bands" }),
       ],
     });
-    const stops = model.keyboardStops(model.panels()[0]!.key);
+    const stops = stopsOf(model, model.panels()[0]!.key);
     expect(stops.map((s) => s.label)).toEqual(["2 – 5", "5 – 8"]);
-    const point = model.inspectPosition(stops[0]!.key, 0)!.points[0]!;
+    const point = positionOf(model, stops[0]!.key, 0)!.points[0]!;
     expect(point.text).toBe("2 – 5");
     // Its marker sits in the band: between radius 0.2 and 0.8 of the cone.
     const r = Math.hypot(model.xScale()!.invert(point.px), model.yScale()!.invert(point.py));
@@ -304,7 +305,7 @@ describe("contours", () => {
     });
     expect(above.model.series().map((s) => s.length)).toEqual([0]);
     expect(polygons(above.scene)).toHaveLength(0);
-    expect(above.model.keyboardStops(above.model.panels()[0]!.key)).toHaveLength(0);
+    expect(stopsOf(above.model, above.model.panels()[0]!.key)).toHaveLength(0);
     // A hole in the field above the top threshold is no region of the band below it.
     const { x, y, z } = cone();
     z[10 * 21 + 10] = Number.NaN;
@@ -351,11 +352,11 @@ describe("contours", () => {
           contour(table(field), { x: "x", y: "y", color: "z", thresholds, variant: "bands" }),
         ],
       });
-      const stops = model.keyboardStops(model.panels()[0]!.key);
+      const stops = stopsOf(model, model.panels()[0]!.key);
       expect(stops.length).toBeGreaterThan(0);
       for (const series of model.series())
         for (let position = 0; position < series.length; position++) {
-          const point = model.inspectPosition(series.key, position)!.points[0]!;
+          const point = positionOf(model, series.key, position)!.points[0]!;
           const found = model.inspect(point.px, point.py)!.points[0]!;
           expect([found.text, found.px, found.py]).toEqual([point.text, point.px, point.py]);
         }

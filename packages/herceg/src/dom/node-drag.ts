@@ -88,7 +88,6 @@ export class Controls implements ChartControls {
   update(config: ChartConfig): void {
     this.#drags = !!config.interaction?.drag;
     this.#navigation.update(config);
-    if (this.#drags) this.#root.style.touchAction = "none";
     if (!this.#drags) this.#cancel();
   }
 
@@ -119,13 +118,8 @@ export class Controls implements ChartControls {
     return !!this.#moves(press.panel)?.movable(press.key);
   }
 
+  /** Whether a press is on a node of panel `panel`'s network that can move. */
   #onNode(event: PointerEvent, panel: string): boolean {
-    if (
-      !this.#drags ||
-      this.#navigation.lassoing ||
-      (event.shiftKey && this.#host.model.config.interaction?.zoom)
-    )
-      return false;
     const [x, y] = this.#point(event);
     const inspection = this.#host.model.inspect(x, y);
     return inspection?.axis === "item" && !!this.#moves(panel)?.movable(inspection.key);
@@ -185,11 +179,12 @@ export class Controls implements ChartControls {
       this.#stop.push(() => root.removeEventListener(type, handler, options));
     };
     on("pointerdown", (event) => {
-      if (this.#press || event.button !== 0) return;
+      if (this.#press) return;
       if (this.#navigation.contains(event.target) || !this.#host.onPlot(event.target)) return;
       const [x, y] = this.#point(event);
       const panel = this.#panelAt(x, y);
-      if (panel === undefined || !this.#onNode(event, panel)) return;
+      if (panel === undefined || this.#navigation.dragAction(event, panel)?.type !== "moveItem")
+        return;
       const moves = this.#moves(panel);
       const inspection = this.#host.model.inspect(x, y);
       const key = inspection?.axis === "item" ? inspection.key : undefined;
@@ -264,7 +259,9 @@ export class Controls implements ChartControls {
       return;
     }
     if (!this.#drags || event.target !== this.#root) return;
-    const zooms = !!this.#host.model.config.interaction?.zoom;
+    // Shift with the arrow keys pans a network that pans (`pan`, or `zoom`): Alt moves the node then.
+    const { pan, zoom } = this.#host.model.config.interaction ?? {};
+    const pans = pan === undefined ? !!zoom : pan !== false;
     const cursor = this.#host.cursor();
     const networks = this.#host.model.items?.panels.filter(({ result }) => result.moves) ?? [];
     const panel = cursor
@@ -274,7 +271,7 @@ export class Controls implements ChartControls {
         : undefined;
     const moves = panel === undefined ? undefined : this.#moves(panel);
     if (!moves) return;
-    const way = event.shiftKey && (!zooms || event.altKey) ? WAYS[event.key] : undefined;
+    const way = event.shiftKey && (!pans || event.altKey) ? WAYS[event.key] : undefined;
     if (way) {
       const key = cursor?.key;
       // A step from where the node is, or was last moved to though not drawn there yet.
@@ -285,7 +282,7 @@ export class Controls implements ChartControls {
       const [px, py] = pixel;
       this.#moveTo(panel!, key!, moves.toLayout(key!, px + way[0] * STEP, py + way[1] * STEP));
       this.#host.announce(`Moved ${nameOf(key!)} ${way[2]}.`);
-    } else if (event.key === "0" && !zooms) this.#reset(panel!);
+    } else if (event.key === "0" && !pans) this.#reset(panel!);
     else return;
     event.preventDefault();
     event.stopImmediatePropagation();

@@ -6,6 +6,7 @@ import type {
   Axis,
   AxisInfo,
   Chart,
+  ChartEvents,
   ChartOptions,
   DrillRoot,
   Inspection,
@@ -210,6 +211,14 @@ function scalesOf(chart: Chart, panel?: string): Scales {
 
 const timeAxes = (scales: Scales, axes: readonly Axis[]): Axis[] =>
   axes.filter((axis) => scales[axis]?.type === "time");
+
+/** An edge event as Python reads it, with whether its scale holds times. */
+export function edgePayload(chart: Chart, edge: ChartEvents["edge"]) {
+  // The scale of the panels the edge names, or of the first with axes.
+  const panels = chart.getPanels();
+  const panel = panels.find(({ key }) => edge.panels?.includes(key)) ?? panels.find(({ x }) => x);
+  return { ...edge, time: panel?.[edge.scale]?.type === "time" };
+}
 
 /** A viewport as Python reads it; a plane's (a map's or network's subplot's) has no times. */
 export function viewportPayload(chart: Chart, view: Viewport, plane = false): ViewportPayload {

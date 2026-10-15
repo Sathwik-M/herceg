@@ -1,5 +1,6 @@
 // Helpers shared by the browser tests.
 
+import "./interactive.ts";
 import { commands } from "vitest/browser";
 import type { MouseInput } from "../../../../scripts/browser/commands.ts";
 
@@ -11,6 +12,7 @@ import type { ChartModel } from "../../src/model/model.ts";
 declare module "vitest/browser" {
   interface BrowserCommands {
     accessibilityTree(root: string, states: readonly string[]): Promise<string[]>;
+    bundleHerceg(format: "esm" | "iife"): Promise<string>;
     collectGarbage(): Promise<void>;
     mouse(input: MouseInput): Promise<void>;
   }

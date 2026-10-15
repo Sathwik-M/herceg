@@ -410,7 +410,9 @@ describe("maps in subplots", () => {
         panels: panels([{ id: "a" }, { id: "b" }]),
         interaction: { brush: "lasso" },
       }),
-    ).toThrow('chart interaction: charts with panels zoom and brush along x only; use "x"');
+    ).toThrow(
+      'chart interaction.brush: charts with panels zoom, pan, and brush along x only; use "x"',
+    );
     const { model } = build({
       marks: [geoshape(regions, { panel: "a" }), geoshape(regions, { panel: "b" })],
       panels: panels([{ id: "a" }, { id: "b" }]),

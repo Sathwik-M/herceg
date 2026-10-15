@@ -21,6 +21,7 @@ import { loadSpec } from "../../src/spec/load.ts";
 import type { ChartSpec } from "../../src/spec/spec.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
 import { rampsOf } from "../helpers/guides.ts";
+import { cellOf } from "../helpers/keyboard.ts";
 
 const GRAY = ["#000000", "#ffffff"];
 const HOUR = 3_600_000;
@@ -428,8 +429,8 @@ describe("heatmap cells along number and time axes", () => {
     expect(raster.columns).toBe(2);
     // Saturday's cell is not drawn, nor is it a stop for the keyboard.
     const series = model.panelSeries("")[0]!;
-    const first = model.stepCell("", series.key, -1, 0, 0)!;
-    const next = model.stepCell("", series.key, first, 1, 0)!;
+    const first = cellOf(model, "", series.key, -1, 0, 0)!;
+    const next = cellOf(model, "", series.key, first, 1, 0)!;
     expect(series.values[rowOf(series, next)]).toBe(40);
   });
 });
@@ -582,7 +583,7 @@ describe("heatmap tooltips, keyboard, and summaries on number axes", () => {
       const value = (position: number | undefined) =>
         position === undefined ? undefined : series.values[rowOf(series, position)];
       const step = (position: number, columns: number, rows: number) =>
-        model.stepCell("", series.key, position, columns, rows);
+        cellOf(model, "", series.key, position, columns, rows);
       // Entering: the top left cell, day 1 (rows rise), the reversed axis' hour 3.
       const first = step(-1, 0, 0)!;
       expect(value(first)).toBe(reversed ? 6 : 4);
@@ -640,11 +641,11 @@ describe("heatmap keyboard steps on sparse grids", () => {
         return best?.row;
       };
       const step = (row: number, dc: number, dr: number) => {
-        const position = model.stepCell("", series.key, row, dc, dr);
+        const position = cellOf(model, "", series.key, row, dc, dr);
         return position === undefined ? undefined : rowOf(series, position);
       };
       const corner = cells.reduce((a, b) => (b.r > a.r || (b.r === a.r && b.c < a.c) ? b : a));
-      expect(rowOf(series, model.stepCell("", series.key, -1, 0, 0)!)).toBe(corner.row);
+      expect(rowOf(series, cellOf(model, "", series.key, -1, 0, 0)!)).toBe(corner.row);
       for (const { row } of cells.slice(0, 300))
         for (const [dc, dr] of [
           [1, 0],

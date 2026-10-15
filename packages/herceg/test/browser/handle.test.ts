@@ -1,5 +1,6 @@
 // The chart handle: panels and their axes as last drawn, values and pixels,
 // inspection without side effects, legend visibility, and render events.
+import "./interactive.ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";

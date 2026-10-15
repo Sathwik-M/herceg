@@ -237,8 +237,14 @@ export class ItemViews {
     type: string,
   ): void {
     const takes = new Set(drawn.flatMap((mark) => mark.interactions ?? []));
-    const { zoom, brush, drag, sync } = config.interaction ?? {};
+    const { zoom, pan, brush, drag, sync, limits } = config.interaction ?? {};
     const plane = takes.has("plane");
+    if (pan && !axes && !(plane && (pan === true || pan === "xy")))
+      throw new Error(
+        plane
+          ? `${type} pan: expected interaction.pan true or "xy"; received ${JSON.stringify(pan)}`
+          : `${type} pan: no axes to pan; drop interaction.pan`,
+      );
     if (zoom && !axes && !(zoom === true ? plane || takes.has("zoom") : plane && zoom === "xy"))
       throw new Error(
         plane
@@ -257,6 +263,7 @@ export class ItemViews {
       throw new Error(`${type} drag: no nodes to drag; drop interaction.drag`);
     if (axes) return;
     if (sync) throw new Error(`${type} sync: no axes to sync; drop interaction.sync`);
+    if (limits) throw new Error(`${type} limits: no axes to limit; drop interaction.limits`);
     if (config.x?.seams) throw new Error(`${type} seams: no x axis to mark seams on; drop x.seams`);
     // Shared, as panels' scales would be, is no change.
     for (const axis of ["x", "y", "yRight"] as const) {
