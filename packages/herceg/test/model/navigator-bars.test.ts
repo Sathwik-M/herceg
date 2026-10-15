@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { encodedCategory } from "../../src/data/column.ts";
+import { col } from "../../src/data/expr.ts";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { type BarMark, bar } from "../../src/marks/bar.ts";
@@ -8,13 +9,15 @@ import { facet } from "../../src/model/facet.ts";
 import { ChartModel } from "../../src/model/model.ts";
 import { rangeNavigator } from "../../src/model/navigator.ts";
 import { overviewBars } from "../../src/model/navigator-bars.ts";
+import { staticCompilers } from "../../src/render/compilers.ts";
 import { LinearScale, LogScale } from "../../src/scale/scale.ts";
-import type { RectGeometry } from "../../src/scene/scene.ts";
+import type { RectGeometry, TextGeometry } from "../../src/scene/scene.ts";
+import { LIGHT } from "../../src/theme.ts";
 
 /** Compare full bar geometry and the strip at the same scales and column width. */
 function drawing(input: ChartMark, axes: Partial<Frame> = {}) {
   const mark = input as BarMark;
-  const model = new ChartModel({ marks: [mark] });
+  const model = new ChartModel({ marks: [mark] }, undefined, ...staticCompilers());
   model.setSize(600, 300, 1);
   const drawing = vi.spyOn(mark, "geometry");
   model.scene(estimateText);
@@ -34,8 +37,8 @@ function drawing(input: ChartMark, axes: Partial<Frame> = {}) {
   };
   const exactGeometry = mark.geometry(series, frame);
   const reducedGeometry = overviewBars(mark, series, frame, 0);
-  const exact = exactGeometry.filter((g) => g.kind === "rect");
-  const reduced = reducedGeometry.filter((g) => g.kind === "rect");
+  const exact = exactGeometry.filter((g): g is RectGeometry => g.kind === "rect");
+  const reduced = reducedGeometry.filter((g): g is RectGeometry => g.kind === "rect");
   return { exact, reduced, series, frame, exactGeometry, reducedGeometry };
 }
 
@@ -100,6 +103,95 @@ describe("bar overviews", () => {
     // negative bar reaches farther than red's, so each sign keeps its color.
     expect(reduced[0]!.rects[1]).toBeCloseTo(16.5);
     expect(reduced[1]!.rects[3]).toBeCloseTo(10.2);
+  });
+
+  it("draws each look's winners in its paint, and lets bars drawn without fill win nothing", () => {
+    const data = table({
+      t: Array.from({ length: 40 }, (_, i) => (i + 0.5) / 4),
+      v: Array.from({ length: 40 }, (_, i) => 1 + (i % 4)),
+      kind: Array.from({ length: 40 }, (_, i) => (i < 20 ? "a" : "b")),
+    });
+    const { reduced } = drawing(
+      bar(data, {
+        x: "t",
+        y: "v",
+        color: "kind",
+        fillOpacity: 0.5,
+        encode: {
+          // biome-ignore lint/suspicious/noThenProperty: a condition's branch, as specs name it.
+          opacity: { condition: { when: col("kind").eq("b"), then: 0, otherwise: 0.8 } },
+        },
+      }),
+    );
+    expect(reduced.map((g) => [g.fill, g.fillOpacity, g.count])).toEqual([
+      [LIGHT.palette[0], 0.4, 5],
+    ]);
+    // Short bars show under tall ones nothing draws.
+    const pairs = table({
+      t: Array.from({ length: 40 }, (_, i) => (i + 0.5) / 4),
+      tall: Array.from({ length: 40 }, () => 15),
+      short: Array.from({ length: 40 }, () => 5),
+    });
+    const under = drawing(
+      bar(pairs, {
+        x: "t",
+        y: ["tall", "short"],
+        style: { by: { map: { tall: { opacity: 0 } } } },
+      }),
+    );
+    expect(under.reduced.map((g) => [g.fill, g.count])).toEqual([[LIGHT.palette[1], 10]]);
+    // Or a fill of no alpha.
+    const clear = drawing(
+      bar(pairs, {
+        x: "t",
+        y: ["tall", "short"],
+        style: { by: { map: { tall: { fill: "#ff000000" } } } },
+      }),
+    );
+    const short = clear.series.find((s) => s.key.includes("short"))!;
+    expect(clear.reduced.map((g) => [g.fill, g.count])).toEqual([[short.color, 10]]);
+  });
+
+  it("draws looks in their paints where few bars draw, and in stacks", () => {
+    // Five bars in forty rows: drawn exactly, as the mark draws them.
+    const sparse = table({
+      t: Array.from({ length: 40 }, (_, i) => (i + 0.5) / 4),
+      v: Array.from({ length: 40 }, (_, i) => (i % 8 === 0 ? 5 : Number.NaN)),
+      kind: Array.from({ length: 40 }, (_, i) => (i < 20 ? "a" : "b")),
+    });
+    const few = drawing(
+      bar(sparse, {
+        x: "t",
+        y: "v",
+        encode: {
+          // biome-ignore lint/suspicious/noThenProperty: a condition's branch, as specs name it.
+          opacity: { condition: { when: col("kind").eq("b"), then: 0, otherwise: 1 } },
+        },
+      }),
+    );
+    expect(few.reduced.map((g) => [g.fillOpacity, g.count])).toEqual([
+      [1, 3],
+      [0, 2],
+    ]);
+    // Outlines in the background's color, given only their width, and of unfilled bars.
+    const outlined = drawing(bar(sparse, { x: "t", y: "v", strokeWidth: 2 }));
+    expect(outlined.reduced[0]!.edge?.width).toBe(2);
+    const hollow = drawing(bar(sparse, { x: "t", y: "v", fillOpacity: 0, stroke: "#000000" }));
+    expect(hollow.reduced.map((g) => [g.count, g.edge?.stroke])).toEqual([[5, "#000000"]]);
+    const layers = table({
+      t: Array.from({ length: 40 }, (_, i) => (i + 0.5) / 4),
+      a: Array.from({ length: 40 }, () => 5),
+      b: Array.from({ length: 40 }, () => 3),
+    });
+    const stacked = drawing(
+      bar(layers, {
+        x: "t",
+        y: ["a", "b"],
+        stack: true,
+        style: { by: { map: { a: { opacity: 0 }, b: { opacity: 0.4 } } } },
+      }),
+    );
+    expect(stacked.reduced.map((g) => g.fillOpacity)).toEqual([0, 0.4]);
   });
 
   it("selects complete signed stacks instead of summing maxima from different rows", () => {
@@ -169,7 +261,8 @@ describe("bar overviews", () => {
     const result = overviewBars(mark, series, frame, 0);
     expect(geometry).toHaveBeenCalledTimes(1);
     expect(geometry.mock.calls[0]![0][0]!.length).toBe(20);
-    const labels = (drawing: typeof result) => drawing.filter((g) => g.kind === "text");
+    const labels = (drawing: typeof result) =>
+      drawing.filter((g): g is TextGeometry => g.kind === "text");
     expect(labels(result)).toEqual(labels(exactGeometry));
     expect(labels(result).some((g) => g.count > 0)).toBe(true);
     geometry.mockRestore();

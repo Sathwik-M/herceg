@@ -218,9 +218,12 @@ describe("domains", () => {
     expect(legendOf(scene).find((item) => item.key === '[0,"b"]')?.hidden).toBe(true);
   });
 
-  it("includes rules in the domain", () => {
+  it("includes rules that count toward it in the domain", () => {
     const { scene } = sceneOf({
-      marks: [line(data, { x: "x", y: "y" }), rule({ y: 2000, label: "limit" })],
+      marks: [
+        line(data, { x: "x", y: "y" }),
+        rule({ y: 2000, label: "limit", contributeDomain: true }),
+      ],
     });
     expect(
       Math.max(...yAxis(scene).ticks.map((t) => Number(t.label.replace(/,/g, "")))),

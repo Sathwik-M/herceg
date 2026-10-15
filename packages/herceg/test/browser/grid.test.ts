@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { userEvent } from "vitest/browser";
 import { category, time } from "../../src/data/column.ts";
-import { col } from "../../src/data/expression.ts";
+import { col } from "../../src/data/expr.ts";
 import { rowView } from "../../src/data/row-view.ts";
 import { selectionStore } from "../../src/data/selection.ts";
 import { type Schema, type Table, table } from "../../src/data/table.ts";

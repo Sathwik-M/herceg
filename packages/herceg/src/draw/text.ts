@@ -1,24 +1,7 @@
-import { cssColor } from "../scale/css-color.ts";
-import type { Drawing, TextGeometry } from "../scene/scene.ts";
-import type { Halo } from "../spec/style.ts";
-import { haloOf, type ResolvedHalo } from "../style/style.ts";
+import type { Drawing, LabelsGeometry, TextGeometry, TextItem } from "../scene/scene.ts";
+import type { ResolvedHalo } from "../style/style.ts";
 import type { Theme } from "../theme.ts";
-import { escapeXml, n } from "./markup.ts";
-
-/**
- * The halo that keeps a mark's labels colored `fill` readable over lines
- * and fills, as the mark's `halo` asks ("auto" when left out; see
- * `haloOf`), over what its frame draws on: the plot's fill, or the chart's
- * background. Colors given by name are read with the CSS color table.
- */
-export function labelHalo(
-  halo: Halo | undefined,
-  fill: string,
-  frame: { theme: Theme; surface?: string | undefined },
-): ResolvedHalo | undefined {
-  const { theme } = frame;
-  return haloOf(halo ?? "auto", fill, frame.surface ?? theme.background, theme.text, cssColor);
-}
+import { escapeXml, n, rectMarkup } from "./markup.ts";
 
 /** SVG attributes of a halo, drawn under the text's fill. */
 export function haloAttributes(halo: ResolvedHalo): string {
@@ -37,5 +20,50 @@ export const textDrawing: Drawing<TextGeometry> = {
       out += `<text x="${n(c[i * 2]!)}" y="${n(c[i * 2 + 1]!)}" dominant-baseline="middle">${escapeXml(mark.labels[i]!)}</text>`;
     }
     return `${out}</g>`;
+  },
+};
+
+/**
+ * A text item's markup: only what differs from what the document's root
+ * sets (the theme's font and size, and its muted color).
+ */
+export function textItemMarkup(item: TextItem, root: Theme): string {
+  const { paint } = item;
+  let out = "";
+  if (item.box) {
+    const box = paint.background!;
+    out += rectMarkup(
+      item.box,
+      box.radius,
+      ` fill="${escapeXml(box.fill)}"${box.stroke ? ` stroke="${escapeXml(box.stroke)}" stroke-width="${box.strokeWidth ?? 1}"` : ""}${rotation(item)}`,
+    );
+  }
+  out += `<text x="${n(item.x)}" y="${n(item.y)}"`;
+  if (item.anchor !== "start") out += ` text-anchor="${item.anchor}"`;
+  if (item.baseline !== "alphabetic") out += ` dominant-baseline="${item.baseline}"`;
+  if (paint.font !== root.font) out += ` font-family="${escapeXml(paint.font)}"`;
+  if (paint.size !== root.fontSize) out += ` font-size="${paint.size}"`;
+  if (paint.italic) out += ` font-style="italic"`;
+  if (paint.weight !== 400) out += ` font-weight="${paint.weight}"`;
+  if (paint.color !== root.muted) out += ` fill="${escapeXml(paint.color)}"`;
+  const opacity = paint.opacity * (item.opacity ?? 1);
+  if (opacity !== 1) out += ` opacity="${opacity}"`;
+  if (item.halo) out += haloAttributes(item.halo);
+  out += rotation(item);
+  return `${out}>${escapeXml(item.text)}</text>`;
+}
+
+function rotation(item: TextItem): string {
+  return item.angle ? ` transform="rotate(${item.angle} ${n(item.x)} ${n(item.y)})"` : "";
+}
+
+/** Labels in styles of their own, as positioned text items (boxes, fonts, sizes). */
+export const labelsDrawing: Drawing<LabelsGeometry> = {
+  guide: true,
+  size: () => 0,
+  svg(mark, { theme }) {
+    let out = "";
+    for (const item of mark.items) out += textItemMarkup(item, theme);
+    return out;
   },
 };

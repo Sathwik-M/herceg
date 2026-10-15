@@ -340,24 +340,73 @@ class TickLayer:
 
 @dataclass
 class Scale:
-    """A position scale's settings in the chart's ``scales``, over the short
-    forms' (``x=``, ``y=``, ``y_right=``): its ``type``, ``domain``,
-    ``nice``, ``zero``, ``scope``, and ``tooltip_format``."""
+    """A scale's settings in the chart's ``scales``.
 
-    type: Literal["linear", "log", "time"] | None = None
-    domain: tuple[Any, Any] | None = None
+    A position scale (``"x"``, ``"y"``, ``"y_right"``, over the short forms
+    ``x=``, ``y=``, ``y_right=``) takes ``type``, ``domain``, ``nice``,
+    ``zero``, ``scope``, and ``tooltip_format``.
+
+    Any other name is a scale of categories, ``type="ordinal"``, which marks
+    read by name (``hg.Channel(field=..., scale=...)``; colors read
+    ``"color"`` by default): every value takes one output (a color, shape,
+    dash, or number) in every mark and panel, and keeps it while the data
+    streams. ``map`` fixes outputs by value; others take the theme's palette
+    by their place in the ``domain``, which is the given values in that
+    order (others take ``unknown``), or else the columns' values, a
+    categorical's own order first."""
+
+    type: Literal["linear", "log", "time", "ordinal"] | None = None
+    domain: Sequence[Any] | None = None
     nice: bool | None = None
     zero: bool | None = None
     scope: Scope | None = None
     tooltip_format: Format | Mapping[str, Any] | None = None
+    map: Mapping[str, Any] | None = None
+    unknown: Any = None
 
     def __post_init__(self) -> None:
         if self.type is not None:
-            _choice(self.type, ("linear", "log", "time"), "Scale type")
+            _choice(self.type, ("linear", "log", "time", "ordinal"), "Scale type")
         if self.scope is not None:
             _choice(self.scope, ("chart", "panel", "row", "column"), "Scale scope")
+        if self.type == "ordinal":
+            for name in ("nice", "zero", "scope", "tooltip_format"):
+                if getattr(self, name) is not None:
+                    raise ValueError(f"Scale {name}: places values on an axis; drop it")
+            if self.domain is not None and (
+                isinstance(self.domain, str) or any(not isinstance(v, str) for v in self.domain)
+            ):
+                raise TypeError(
+                    "Scale domain: an ordinal scale's domain is its categories' values, "
+                    f'such as ["A", "B"]; received {shown(self.domain)}'
+                )
+            if self.map is not None and not isinstance(self.map, Mapping):
+                raise TypeError(
+                    'Scale map: expected a dict of outputs by value, such as {"A": "#00ab41"}; '
+                    f"received {shown(self.map)}"
+                )
+        else:
+            for name in ("map", "unknown"):
+                if getattr(self, name) is not None:
+                    raise ValueError(
+                        f'Scale {name}: maps categories; give type="ordinal", or drop {name}'
+                    )
+            if self.domain is not None and len(self.domain) != 2:
+                raise ValueError(
+                    f"Scale domain: a position scale's domain is (low, high); received "
+                    f"{shown(self.domain)}"
+                )
 
     def _spec(self) -> dict[str, Any]:
+        if self.type == "ordinal":
+            out: dict[str, Any] = {"type": "ordinal"}
+            if self.domain is not None:
+                out["domain"] = list(self.domain)
+            if self.map is not None:
+                out["map"] = {str(key): _output(value) for key, value in self.map.items()}
+            if self.unknown is not None:
+                out["unknown"] = _output(self.unknown)
+            return out
         domain = self.domain
         spec = {
             "type": self.type,
@@ -368,6 +417,13 @@ class Scale:
             "tooltipFormat": format_spec(self.tooltip_format, "Scale tooltip_format"),
         }
         return {key: value for key, value in spec.items() if value is not None}
+
+
+def _output(value: Any) -> Any:
+    """A scale's output: a color, a shape, a dash, or a number."""
+    if isinstance(value, (list, tuple)):
+        return [float(step) for step in value]
+    return value
 
 
 def scales_spec(value: Any) -> Any:
@@ -381,12 +437,18 @@ def scales_spec(value: Any) -> Any:
     names = {"x": "x", "y": "y", "y_right": "yRight"}
     out = {}
     for name, scale in value.items():
-        if name not in names:
+        built = _built(scale, Scale, f"Chart scales {name}")
+        if name not in names and built.type != "ordinal":
             raise ValueError(
-                f"Chart scales: {shown(name)} is not a scale marks place values on; "
-                f"name {listed(tuple(names))}"
+                f'Chart scales {name}: expected type="ordinal", a scale of categories; '
+                f"marks place values on {listed(tuple(names))}"
             )
-        out[names[name]] = _built(scale, Scale, f"Chart scales {name}")._spec()
+        if name in names and built.type == "ordinal":
+            raise ValueError(
+                f"Chart scales {name}: places values on an axis; give a linear, log, or time "
+                "scale, or name the ordinal scale otherwise"
+            )
+        out[names.get(name, name)] = built._spec()
     return out
 
 

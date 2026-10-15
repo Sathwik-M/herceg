@@ -4,7 +4,7 @@
 
 import { category } from "../src/data/column.ts";
 import { count, derive, mean } from "../src/data/derive.ts";
-import { col } from "../src/data/expression.ts";
+import { col } from "../src/data/expr.ts";
 import { fromGeoJSON } from "../src/data/geojson.ts";
 import { fromMatrix } from "../src/data/matrix.ts";
 import { type RowQuery, rowView } from "../src/data/row-view.ts";
@@ -410,7 +410,7 @@ const annotated = () => {
     marks: [
       rule(events, { x: "t" }),
       region(events, { x1: "t", x2: "end" }),
-      text(events, { x: "t", y: "v", textField: "note", overlap: "hide" }),
+      text(events, { x: "t", y: "v", label: { field: "note" }, overlap: "hide" }),
     ],
     facet: facet("region", { columns: 10 }),
   });

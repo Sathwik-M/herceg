@@ -4,7 +4,8 @@
 // ("all matching") with keys added to it and taken out. Both are portable,
 // so a server can run them as a query's filter (`selectionCondition`).
 
-import { compileExpression, Expr, type Expression } from "../data/expression.ts";
+import { Expr } from "../data/expr.ts";
+import { compileExpression, type Expression } from "../data/expression.ts";
 import type { GroupKey } from "../data/groups.ts";
 import { checkJson, type GridSchema, type RowKey, schemaFields } from "./query.ts";
 import { keyOf } from "./remote-list.ts";

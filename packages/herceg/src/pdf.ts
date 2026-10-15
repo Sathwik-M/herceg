@@ -4,11 +4,10 @@
 import type { Chart } from "./dom/handle.ts";
 import { checkFonts, EMBED_FONTS } from "./fonts/prepared.ts";
 import type { FontOptions, Fonts } from "./fonts/registry.ts";
-import { guideCompiler } from "./guides/compile.ts";
 import { describeChart } from "./model/describe.ts";
-import { GUIDE_KIT, type GuideCompiler } from "./model/guides.ts";
 import { type ChartConfig, ChartModel, STATIC_RASTER_RATIO } from "./model/model.ts";
 import { titleText } from "./model/titles.ts";
+import { staticCompilers } from "./render/compilers.ts";
 import { EXPORT_FONTS, EXPORT_SCENE, type ExportsScene } from "./render/export-scene.ts";
 import { NO_PAGE } from "./render/fallbacks.ts";
 import { drawPdfPage } from "./render/pdf.ts";
@@ -51,13 +50,6 @@ export interface PdfOptions extends ChartConfig {
  * `rowSelection` stores hold. Fonts are subset once across all pages;
  * heatmaps are images.
  */
-/** The guide compiler, made on first use. */
-let guides: GuideCompiler | undefined;
-const compiler = () => {
-  guides ??= guideCompiler(GUIDE_KIT);
-  return guides;
-};
-
 export function renderToPDF(
   target: Chart | PdfOptions | readonly (Chart | PdfOptions)[],
   settings: PdfExportOptions = {},
@@ -128,7 +120,7 @@ export function renderToPDF(
       const options = item as PdfOptions;
       // Validate fitting before laying out a chart with invalid dimensions.
       const page = paperPage(options.width, options.height, settings, resolver);
-      const model = new ChartModel(options, NO_PAGE, compiler());
+      const model = new ChartModel(options, NO_PAGE, ...staticCompilers());
       model.setSize(options.width, options.height, 1, STATIC_RASTER_RATIO);
       // What the bound stores hold now is drawn as a mounted chart draws it.
       options.rowSelection?.highlight(model);

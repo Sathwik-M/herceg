@@ -3,7 +3,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { category, encodedCategory, time } from "../../src/data/column.ts";
 import { count, derive, max, mean, min, sum } from "../../src/data/derive.ts";
-import { col } from "../../src/data/expression.ts";
+import { col } from "../../src/data/expr.ts";
 import { groupId, groupRows } from "../../src/data/groups.ts";
 import { RowSet } from "../../src/data/row-set.ts";
 import { rowView } from "../../src/data/row-view.ts";

@@ -83,7 +83,7 @@ describe("right y axis", () => {
       marks: [
         line(traffic, { x: "t", y: "latency" }),
         line(traffic, { x: "t", y: "requests", axis: "right" }),
-        rule({ y: 9000, label: "capacity", axis: "right" }),
+        rule({ y: 9000, label: "capacity", axis: "right", contributeDomain: true }),
       ],
     });
     expect(model.yRightScale()!.domain[1]).toBeGreaterThanOrEqual(9000);
@@ -283,7 +283,12 @@ describe("right y axis", () => {
 
   it("depend on marks, not on the view or the data in it", () => {
     const notes = table({ t: [1], v: [500], name: ["peak"] });
-    const note = text(notes, { x: "t", y: "v", textField: "name", axis: "right" });
+    const note = text(notes, {
+      x: "t",
+      y: "v",
+      label: { field: "name" },
+      axis: "right",
+    });
     const { model } = build({
       marks: [line(traffic, { x: "t", y: "latency" }), note],
       y: { domain: [0, 50], format: { style: "currency", currency: "USD" } },

@@ -6,6 +6,7 @@ import type { TimeZone } from "../format/zone.ts";
 import type { MeasureText } from "../layout/text.ts";
 import type { Breaks } from "../lod/m4.ts";
 import type { Polyline } from "../lod/polyline.ts";
+import type { CompiledFeatures } from "../model/features.ts";
 import type { MarkSeries } from "../model/inspect.ts";
 import type { LegendPart } from "../model/legend.ts";
 import type { PositionScale } from "../scale/scale.ts";
@@ -112,6 +113,8 @@ export interface BandContext {
   zone: TimeZone;
   locale: string | undefined;
   theme: Theme;
+  /** The marks' compiled features, when the chart draws any (see model/features.ts). */
+  features?: CompiledFeatures | undefined;
 }
 
 /**
@@ -181,6 +184,17 @@ export interface Frame {
   clouds: boolean;
   /** Text widths for the chart's fonts, as its axes measure them. */
   measure: MeasureText;
+  /** The marks' compiled features, when the chart draws any (see model/features.ts). */
+  features?: CompiledFeatures | undefined;
+  /** The chart's box, for places in its frame. */
+  chart?: Rect | undefined;
+  /**
+   * Where marks' labels outside the plot go: the x where those on the left
+   * end and those on the right start, in the tracks the chart keeps for
+   * them (`Mark.room`) beside its first and last columns, else beyond the
+   * panel's y labels.
+   */
+  outside?: readonly [left: number, right: number] | undefined;
   /**
    * The chart animates changed values: bars say what identifies each and
    * where it ends (BarItems), points the row each shows (PointItems).
@@ -330,6 +344,11 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
   /** Gap between bands, as a fraction of each band's step. */
   readonly bandPadding?: number;
   /**
+   * The mark's options need the feature compiler (see model/features.ts):
+   * channels, styles by value, markers, continuity.
+   */
+  readonly featured?: boolean;
+  /**
    * Pixels the mark's glyphs reach past their data position along each
    * axis, such as a point's radius. Automatic domains leave this much room
    * at the plot edges.
@@ -419,6 +438,12 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
   readonly zero?: "x" | "y" | undefined;
   /** The mark draws from fields without series (custom marks of fields), whatever the legend hides. */
   readonly seriesless?: boolean;
+  /**
+   * The mark's extents count toward a domain only where no other mark's do
+   * (annotations without `contributeDomain`): an axis of annotations alone
+   * still fits them.
+   */
+  readonly domainFallback?: boolean;
   /**
    * x extent; with `log`, of positive values only. On a time axis with
    * `breaks`, room a mark leaves at the ends is time shown. Marks reading
@@ -570,6 +595,17 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
     pixels: number,
     plotPixels: number,
     type: PositionScale["type"],
+  ): [number, number];
+  /**
+   * Pixels the mark's labels outside the plot take beside it, left and
+   * right: the chart keeps a track for them on each side, innermost, beside
+   * the y axes (see `Frame.outside`).
+   */
+  room?(
+    measure: MeasureText,
+    theme: Theme,
+    locale: string | undefined,
+    features: CompiledFeatures | undefined,
   ): [number, number];
   /**
    * How a series appears in the legend: by default, a square of its color.
@@ -798,11 +834,11 @@ export function buildSeries(
   return sources.map((source) => {
     const y = positions ?? table.numbers(source.y as never);
     const id = seriesKey(key, source.id);
-    const color = palette(id, source.label, stroke);
     return {
       key: id,
       label: source.label,
-      color: stroke ?? color,
+      // The palette returns `stroke` when it is set, unless a series style overrides it.
+      color: palette(id, source.label, stroke),
       x,
       y,
       y0: undefined,
@@ -1011,6 +1047,9 @@ function indicesOf(
  */
 export function frozen<T>(spec: T): Frozen<T> {
   if (!spec || typeof spec !== "object") return spec as Frozen<T>;
+  // Expressions built with `col` are their JSON form.
+  if (typeof (spec as { toJSON?: unknown }).toJSON === "function")
+    return frozen((spec as unknown as { toJSON(): T }).toJSON());
   // fromEntries keeps a JSON key "__proto__" as an own property.
   return Object.freeze(
     Array.isArray(spec)

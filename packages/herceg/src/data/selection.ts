@@ -3,7 +3,8 @@
 // views read which channels, and whether they filter or highlight with
 // them; nothing propagates on its own.
 
-import { compileExpression, Expr, type Expression } from "./expression.ts";
+import { Expr } from "./expr.ts";
+import { compileExpression, type Expression } from "./expression.ts";
 import type { RowSet } from "./row-set.ts";
 import type { Schema, Table } from "./table.ts";
 

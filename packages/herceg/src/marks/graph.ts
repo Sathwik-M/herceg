@@ -1,9 +1,10 @@
 import type { CategoryField, NumberField, Schema, Table } from "../data/table.ts";
+import { labelHalo } from "../draw/label-halo.ts";
 import { n } from "../draw/markup.ts";
 import { pointDrawing } from "../draw/point.ts";
 import { segmentDrawing } from "../draw/segments.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
-import { labelHalo, textDrawing } from "../draw/text.ts";
+import { textDrawing } from "../draw/text.ts";
 import { formatNumber } from "../format/format.ts";
 import { fitLayout, type LayoutFit, layoutFit, separate } from "../layout/force.ts";
 import { graphView } from "../layout/graph-view.ts";

@@ -4,6 +4,7 @@ import {
   bar,
   candlestick,
   category,
+  col,
   createChart,
   custom,
   encodedCategory,
@@ -99,8 +100,7 @@ area(responses, {
   x: "minute",
   y: "count",
   series: "status",
-  stack: true,
-  stackGaps: "interpolate",
+  stack: { gaps: "interpolate" },
 });
 area(metrics, { x: "time", y1: "p50", y2: "p99" });
 rule({ y: 250, label: "SLO" });
@@ -116,22 +116,107 @@ line(requests, { x: "latency", y: "service" });
 const deploys = table({ at: time([Date.now()]), version: ["v2"], build: [42] });
 rule({ y: 250, label: "SLO" });
 rule({ x: new Date(), label: "now" });
-rule(deploys, { x: "at", textField: "version" });
-rule(deploys, { x: "at", textField: "build" });
+rule(deploys, { x: "at", label: { field: "version" } });
+rule(deploys, { x: "at", label: { field: "build" } });
 // @ts-expect-error rule positions are number or time fields
 rule(deploys, { x: "version" });
 // @ts-expect-error times cannot be drawn as text
-rule(deploys, { x: "at", textField: "at" });
+rule(deploys, { x: "at", label: { field: "at" } });
 region({ x1: new Date(0), x2: new Date(), label: "window" });
-region(deploys, { x1: "at", x2: Date.now(), textField: "version" });
+region(deploys, { x1: "at", x2: Date.now(), label: { field: "version" } });
 text({ x: 1, y: 2, label: "note" });
-text(deploys, { x: "at", y: "build", textField: "version", dy: -8 });
+text(deploys, { x: "at", y: { field: "build", offset: -8 }, label: { field: "version" } });
 // @ts-expect-error constant text needs a label
 text({ x: 1, y: 2 });
-// @ts-expect-error text from data takes a label or a text field, not both
-text(deploys, { x: "at", y: "build", label: "a", textField: "version" });
-// @ts-expect-error text from data needs a label or a text field
+// @ts-expect-error a label takes its text or a field, not both
+text(deploys, { x: "at", y: "build", label: { text: "a", field: "version" } });
+// @ts-expect-error text from data needs a label
 text(deploys, { x: "at", y: "build" });
+
+// Colors and channels
+declare const other: HTMLElement;
+const gains = table({ time: time(timestamps), gain: p50Latency, site: serviceNames });
+const totals = table({ site: serviceNames, gain: p50Latency });
+const sites = gains;
+const sharedScales = {
+  color: { type: "ordinal", map: { "Site A": "#00ab41", Average: "#222222" } },
+} as const;
+createChart(element, {
+  scales: sharedScales,
+  facet: facet("site", { columns: 3 }),
+  marks: [line(gains, { x: "time", y: "gain", series: "site", color: "site" })],
+});
+createChart(other, {
+  scales: sharedScales,
+  marks: [bar(totals, { x: "site", y: "gain", color: "site" })],
+});
+const provisional = table({ site: serviceNames, gain: p50Latency, provisional: [1, 0] });
+bar(provisional, {
+  x: "site",
+  y: "gain",
+  encode: {
+    color: { field: "site", scale: "sites" },
+    // biome-ignore lint/suspicious/noThenProperty: a condition's branch, as specs name it.
+    opacity: { condition: { when: col("provisional").eq(true), then: 0.45, otherwise: 1 } },
+  },
+});
+line(sites, {
+  x: "time",
+  y: "gain",
+  series: "site",
+  color: "site",
+  style: { by: { map: { Average: { stroke: "#222222", strokeWidth: 3, dash: "--" } } } },
+});
+line(metrics, { x: "time", y: ["p50", "p99"], style: { by: { map: { p99: { dash: ":" } } } } });
+line(metrics, { x: "time", y: "p50", markers: true, style: { marker: { radius: 4 } } });
+// @ts-expect-error markers take a shape's name
+line(metrics, { x: "time", y: "p50", markers: "hexagon" });
+
+// Line breaks and conditional bands
+const sensors = table({ time: time(timestamps), value: p50Latency, quality: p50Latency });
+line(sensors, {
+  x: "time",
+  y: "value",
+  continuity: {
+    defined: col("quality").ge(0.8),
+    maxGap: { milliseconds: 3_600_000 },
+    breakBy: "day",
+  },
+});
+const plant = table({ time: time(timestamps), efficiency: p50Latency, limit: p50Latency });
+area(plant, {
+  x: "time",
+  y1: "efficiency",
+  y2: "limit",
+  curve: "step-after",
+  where: col("efficiency").lt(col("limit")),
+  continuity: { breakBy: "day" },
+});
+
+// Bars: dodging, outlines, and labels
+const units = table({ month: serviceNames, units: p50Latency, region: serviceNames });
+bar(units, { x: "month", y: "units", series: "region" });
+bar(units, { x: "month", y: "units", series: "region", dodge: false });
+bar(units, { x: "month", y: "units", color: "region" });
+bar(units, {
+  x: "month",
+  y: "units",
+  stroke: "#1b3a6b",
+  strokeWidth: 1,
+  labels: { format: { number: ",.0f" }, minLength: 24, place: { outside: false } },
+});
+
+// Annotation places and labels
+rule({ y: 250, label: { text: "Threshold", place: { attachment: "start", outside: true } } });
+rule({ y: 300, span: [{ fraction: 0.5 }, { fraction: 1 }], strokeOpacity: 0.5 });
+region({ x1: 0, x2: 1, label: { text: "Maintenance", place: { side: "bottom" } } });
+text({ at: { x: { fraction: 0.03 }, y: { data: 1.7 } }, label: "Note" });
+text(deploys, {
+  x: "at",
+  y: { field: "build", offset: -10 },
+  label: { field: "build", format: { number: ".1f" }, style: { fontWeight: 600 } },
+  overlap: "move",
+});
 
 // Export
 const exported = { width: 640, height: 320, marks: [line(metrics, { x: "time", y: "p99" })] };
@@ -179,7 +264,7 @@ createChart(element, {
     line(regional, { x: "week", y: "units" }),
     line(goals, { x: "week", y: "target", facet: "repeat" }),
     rule({ y: 100, label: "goal" }),
-    rule(launches, { x: "week", textField: "product" }),
+    rule(launches, { x: "week", label: { field: "product" } }),
   ],
   facet: facet("region", { columns: 3 }),
 });
@@ -193,7 +278,7 @@ bar(sales, { x: "region", y: "q1", series: "team", stack: true });
 // @ts-expect-error bar heights must be numeric
 bar(sales, { x: "region", y: "team" });
 bar(sales, { x: "q1", y: "region" });
-bar(sales, { x: "region", y: "q1", labels: { style: "percent" } });
+bar(sales, { x: "region", y: "q1", labels: { format: { style: "percent" } } });
 bar(sales, { x: ["q1", "q2"], y: "region", stack: true });
 // @ts-expect-error horizontal bar lengths must be numeric
 bar(sales, { x: "team", y: "region" });

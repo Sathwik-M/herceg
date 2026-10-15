@@ -54,8 +54,18 @@ describe("normalized and stream stacks", () => {
     it(`normalizes repeated band bars ${horizontal ? "horizontally" : "vertically"}, with share labels`, () => {
       const data = table({ band: ["N", "N", "S"], a: [2, 2, 1], b: [3, 3, 3] });
       const mark = horizontal
-        ? bar(data, { y: "band", x: ["a", "b"], stack: "fill", labels: { style: "percent" } })
-        : bar(data, { x: "band", y: ["a", "b"], stack: "fill", labels: { style: "percent" } });
+        ? bar(data, {
+            y: "band",
+            x: ["a", "b"],
+            stack: "fill",
+            labels: { format: { style: "percent" } },
+          })
+        : bar(data, {
+            x: "band",
+            y: ["a", "b"],
+            stack: "fill",
+            labels: { format: { style: "percent" } },
+          });
       const { model, scene } = build({ marks: [mark] });
       const [a, b] = edges(model, horizontal);
       close(a!.top, [0.2, 0.4, 0.25]);
@@ -114,8 +124,7 @@ describe("normalized and stream stacks", () => {
           area(table({ t: [0, 2, 5, 9, 10], a, b, c }), {
             x: "t",
             y: ["a", "b", "c"],
-            stack: "wiggle",
-            stackOrder: insideOut ? "inside-out" : "input",
+            stack: { offset: "wiggle", order: insideOut ? "inside-out" : "input" },
           }),
         ],
       });
@@ -141,7 +150,7 @@ describe("normalized and stream stacks", () => {
           s: ["a", "a", "a", "b", "b"],
         });
         const { model } = build({
-          marks: [area(data, { x: "t", y: "v", series: "s", stack: mode, stackGaps: gaps })],
+          marks: [area(data, { x: "t", y: "v", series: "s", stack: { offset: mode, gaps } })],
         });
         const s = model.series()[1]!;
         expect(s.edges!.top[1]! - s.edges!.bottom![1]!).toBeCloseTo(
@@ -173,7 +182,7 @@ describe("normalized and stream stacks", () => {
           area(
             source,
             long
-              ? { x: "t", y: "a", series: "s", stack: mode, stackGaps: "interpolate" }
+              ? { x: "t", y: "a", series: "s", stack: { offset: mode, gaps: "interpolate" } }
               : { x: "t", y: ["a", "b"], stack: mode },
           );
         const { model } = build({ marks: [mark(data)] });
@@ -307,8 +316,7 @@ describe("normalized and stream stacks", () => {
             x: "t",
             y: "v",
             series: "s",
-            stack: "wiggle",
-            stackOrder: "inside-out",
+            stack: { offset: "wiggle", order: "inside-out" },
             curve: "monotone",
           },
         ),
@@ -336,14 +344,14 @@ describe("normalized and stream stacks", () => {
         marks: [{ type: "bar", x: "t", y: "a", stack: "center" }],
       } as never),
     ).toThrow(/stack:.*; use an area/);
-    expect(() => area(wide(), { x: "t", y: "a", stack: true, stackOrder: "inside-out" })).toThrow(
-      /nonnegative.*give stack/,
+    expect(() => area(wide(), { x: "t", y: "a", stack: { order: "inside-out" } })).toThrow(
+      'area stack.order: inside-out order needs shares or a stream; give offset: "fill", "center", or "wiggle"',
     );
     expect(() =>
       loadSpec({
         data: { t: { columns: { t: [0], a: [1] } } },
-        marks: [{ type: "area", x: "t", y: "a", stack: "fill", stackOrder: "ascending" }],
+        marks: [{ type: "area", x: "t", y: "a", stack: { offset: "fill", order: "ascending" } }],
       } as never),
-    ).toThrow(/stackOrder:.*; choose a supported order/);
+    ).toThrow(/stack\.order: expected "input" or "inside-out"/);
   });
 });

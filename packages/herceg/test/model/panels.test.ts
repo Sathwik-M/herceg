@@ -258,7 +258,11 @@ describe("panels", () => {
       marks: [
         line(metrics, { x: "t", y: "latency", panel: "latency" }),
         line(times, { x: "t", y: "at", panel: "traffic" }),
-        rule({ y: Date.UTC(2026, 0, 1, 12), label: "noon", panel: "traffic" }),
+        rule({
+          y: Date.UTC(2026, 0, 1, 12),
+          label: "noon",
+          panel: "traffic",
+        }),
       ],
       panels: panels([{ id: "latency" }, { id: "traffic", y: { type: "time" } }]),
     });

@@ -98,16 +98,14 @@ for (const horizontal of [false, true]) {
                 y: "t",
                 x: long ? "a" : ["a", "b"],
                 ...(long ? { series: "s" as const } : {}),
-                stack: "wiggle",
-                stackOrder,
+                stack: { offset: "wiggle", order: stackOrder },
               })
             : area(data, {
                 id: "stream",
                 x: "t",
                 y: long ? "a" : ["a", "b"],
                 ...(long ? { series: "s" as const } : {}),
-                stack: "wiggle",
-                stackOrder,
+                stack: { offset: "wiggle", order: stackOrder },
               });
         const mark = make();
         build({ marks: [mark] });
@@ -208,8 +206,7 @@ for (const stack of ["fill", "center", "wiggle"] as const) {
           x: "t",
           y: long ? "a" : ["a", "b"],
           ...(long ? { series: "s" as const } : {}),
-          stack,
-          stackOrder: "inside-out",
+          stack: { offset: stack, order: "inside-out" },
         });
       const model = build({ marks: [make(data)] });
       expect(boundaries(model).map((s) => s.order)).toEqual([0, 1]);
@@ -245,8 +242,13 @@ for (const horizontal of [false, true]) {
       const data = table(input);
       const make = (source: typeof data) =>
         horizontal
-          ? area(source, { y: "t", x: ["a", "b"], orient: "y", stack, stackOrder: "inside-out" })
-          : area(source, { x: "t", y: ["a", "b"], stack, stackOrder: "inside-out" });
+          ? area(source, {
+              y: "t",
+              x: ["a", "b"],
+              orient: "y",
+              stack: { offset: stack, order: "inside-out" },
+            })
+          : area(source, { x: "t", y: ["a", "b"], stack: { offset: stack, order: "inside-out" } });
       const model = build({ marks: [make(data)], facet: facet("p") });
       for (const panel of model.panels()) {
         const parts = model.panelSeries(panel.key);
@@ -287,8 +289,7 @@ for (const t of [
         area(table({ t, a, b }), {
           x: "t",
           y: ["a", "b"],
-          stack: "wiggle",
-          stackOrder: "inside-out",
+          stack: { offset: "wiggle", order: "inside-out" },
         }),
       ],
     });

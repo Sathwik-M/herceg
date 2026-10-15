@@ -39,9 +39,9 @@
 <Chart>
   <Region x1={new Date(0)} x2={new Date()} label="window" />
   <Line data={metrics} x="time" y="p50" />
-  <Rule data={deploys} x="at" textField="version" />
-  <Text x={Date.now()} y={100} label="now" anchor="end" />
-  <Text data={deploys} x="at" y={120} textField="version" />
+  <Rule data={deploys} x="at" label={{ field: "version" }} />
+  <Text x={Date.now()} y={100} label={{ text: "now", style: { align: "end" } }} />
+  <Text data={deploys} x="at" y={120} label={{ field: "version" }} />
   {#key selected}
     <Custom draw={({ text, x, y }) => text(x(1), y(2), selected)} />
   {/key}

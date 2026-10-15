@@ -61,12 +61,21 @@ describe("clip", () => {
   });
 
   it("cuts labels and text only when their marks ask for it", () => {
-    const labels = text(values, { x: "x", y: "y", textField: "name", fill: "#00aa00" });
+    const labels = text(values, {
+      x: "x",
+      y: "y",
+      label: { field: "name", style: { color: "#00aa00" } },
+    });
     const plain = renderToSVG(sparkline([labels]));
     expect(cutOf(plain, "#00aa00")).toBe("");
     const cut = renderToSVG(
       sparkline([
-        text(values, { x: "x", y: "y", textField: "name", fill: "#00aa00", clip: "plot" }),
+        text(values, {
+          x: "x",
+          y: "y",
+          label: { field: "name", style: { color: "#00aa00" } },
+          clip: "plot",
+        }),
       ]),
     );
     expect(cutOf(cut, "#00aa00")).toMatch(/-clip-0$/);

@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { category } from "../../src/data/column.ts";
-import { col } from "../../src/data/expression.ts";
+import { col } from "../../src/data/expr.ts";
 import { type Table, table } from "../../src/data/table.ts";
 import { memorySource } from "../../src/grid/memory.ts";
 import { type GridQuery, validateGridQuery } from "../../src/grid/query.ts";

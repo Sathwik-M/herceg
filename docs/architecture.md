@@ -15,15 +15,16 @@ One name per concept, used the same way in code and docs.
 | **Matrix table** | A table of values at every x crossed with every y (`fromMatrix`): its coordinates are kept as given, one value per column of the matrix and one per row, and a column of each row's x or y is made only for a reader that asks for one. |
 | **Bins** | How histograms and the `bin` transform cut a number or time axis into intervals (`BinSpec`): about a count of round bins, a step from a start, or the edges themselves. |
 | **Threshold** | A value a contour is drawn at: a line runs where the field crosses it, and bands fill from one threshold up to the next. |
-| **Encoding** | A mark option naming a field whose values a visual property follows: `size` (point area, within `radiusRange`), `color` (a number or time field on a continuous scale, or a category field with a palette color per value), `fillOpacity`, and `symbol`. Constant counterparts name what they set: `radius` in pixels, `fill` and `stroke` for paint. |
-| **Text roles** | `label` is constant text (a series' or mark's name, every annotation's text); `labelField` and `textField` name fields with each record's or annotation's text; `title` heads a chart, a panel, or an axis; `labels` turns drawn labels on or off. Python spells every option in snake_case (`radius_range`, `label_field`, `facet_column`), and `herceg.express` takes the same names as the marks (`series`, `series_order`, `facet_row`, `facet_column`, `whiskers`, `normalize`). |
+| **Encoding** | How a visual property follows the data. A **channel** (`encode.color`, `.fill`, `.stroke`, `.dash`, `.strokeWidth`, `.opacity`) is a field's value through a scale (`{ field, scale }`), a constant (`{ value }`), or a condition on each row (`{ condition: { when, then, otherwise } }`); `color`, a mark's primary paint (a line's stroke, a bar's, area's, or point's fill), is short for `encode.color` with a field or a color. Points also take `size` (area, within `radiusRange`), a number or time `color` on a continuous scale, `fillOpacity`, and `symbol` as fields. Constant counterparts name what they set: `radius` in pixels, `fill` and `stroke` for paint. |
+| **Run** | Neighboring observations a line or area connects: `continuity` (`defined`, `maxGap`, `breakBy`) and `where` end runs, before the line is reduced. |
+| **Text roles** | `label` is constant text (a series' or mark's name), or for annotations a label object (`text` or `field`, `format`, `style`, `place`); `labelField` names a field with each record's text (maps, pies); `title` heads a chart, a panel, or an axis; `labels` turns drawn labels on or off, or is bars' label object. Python spells every option in snake_case (`radius_range`, `label_field`, `facet_column`), and `herceg.express` takes the same names as the marks (`series`, `series_order`, `facet_row`, `facet_column`, `whiskers`, `normalize`). |
 | **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `contour`, `rug`, `dendrogram`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `boxen`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads; a network (`graph`) also reads a table of nodes. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`, `radar`, `sankey`, `graph`, the map layers `geoshape` and `geopoint`, and the 3D layers `point3d` and `surface`) place their own geometry instead of using x and y scales. |
 | **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, a gauge's dial, a funnel's stage, a radar's value on one spoke, a Sankey diagram's or network's node or link, a map's region or point, or a 3D chart's point or surface grid point: what its tooltips and the keyboard visit. |
 | **Projection** | Maps longitudes and latitudes to the plane a map is drawn in (`projection`, a chart option): Equal Earth, Natural Earth, Mercator, equirectangular, or conic equal-area. |
 | **Camera** | Where a 3D chart is seen from: an azimuth about the vertical axis, an elevation above the floor, a zoom, and orthographic or perspective projection (`camera`, a chart option for the first view; then chart state the pointer and keyboard change). |
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
 | **Orient** | The axis a line or area runs along (`orient`, "x" or "y"): the axis of its positions, which it is traced, reduced, and read along; its values are on the other. Bars lie along y when their positions are a category y, histograms when they bin `y`. |
-| **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
+| **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. A scale of categories (`type: "ordinal"` in `scales`) maps a field's values to outputs: colors, shapes, dashes, or numbers. |
 | **Break** | A span of time a time axis leaves out (nights, weekends, holidays): the axis measures the time it shows, and data inside a break is not drawn. |
 | **Axis** | The visual guide of a position scale. In specs, a scale's short form (`x`, `y`, `yRight`) holds its scale and axis options in one object; `scales` holds scale options alone. |
 | **Guide** | What explains a scale beside the data: an axis, a legend, or a colorbar. The automatic guides follow the short forms; `guides` lists more, each naming the scale it explains. |
@@ -272,7 +273,7 @@ gets the top and base of its layer at its own position, so tooltips, the
 keyboard, events, and summaries read the series' real rows while geometry
 and y extents read the edges (`Series.edges`, traced as a whole sorted
 series of their own). A layer without a row at an x counts as zero there,
-or with `stackGaps: "interpolate"` as the straight line between its last
+or with `stack: { gaps: "interpolate" }` as the straight line between its last
 row before and its first after (zero beyond its ends: zero at the union's
 outside positions, so its edge ramps to its first row), and a missing
 value at either end leaves the interpolation missing. Several rows of a
@@ -3115,46 +3116,63 @@ placement are iterative, with work and storage linear in merge count.
 ## Annotations
 
 Rules, regions, and text share one model (`marks/annotation.ts`): each
-position is a constant (a number; times in epoch milliseconds) or a number or
-time field. With constants only, the mark draws one item and reads no table;
-when any position or its `textField` is a field, it draws one item per row of its
-table. `label` is constant text and `textField` a category or number field
-(numbers formatted for the chart's locale). The spec loader only binds a
-table to annotations that read one, so a constant rule in a spec with several
-tables needs no `data`.
+place along an axis is a value (a number; times in epoch milliseconds), a
+number or time field, or a coordinate (`spec/place.ts`: `data`, `field`,
+`fraction`, `px`, each with an `offset`), resolved through `coordinateAt`
+(`layout/position.ts`) against the panel's plot and the chart's box. With
+constants only, the mark draws one item and reads no table; when any place
+or its label's `field` is a field, it draws one item per row of its table.
+A rule takes a place on one axis and a `span` of two along the other; a
+region two places on either axis or both; text `at`, or `x` and `y`.
+`label` is text or a label object (`text` or `field`, `format`, `style`, a
+TextStyle, and `place`: `attachment` along the geometry, a region's
+`side`, `outside`, `reserve`, `offset`). Label patterns (`{ number }`,
+`{ time }`) are the feature compiler's (see Encodings). The spec loader
+only binds a table to annotations that read one, so a constant rule in a
+spec with several tables needs no `data`.
 
-Annotation positions are part of the axis extents, so thresholds and events
-stay in view; rectangles and text count toward y only where they overlap the
-visible x range. Regions are rectangles drawn with the data in mark order and
-clipped to the plot. Rules and text are guides: drawn as SVG above the data
-(over a canvas when the data is on one), not clipped, and left out when they
-fall outside the view. Text halos use the background at full opacity when
-the text's WCAG contrast with it is at least 3:1, accounting for color alpha.
-Otherwise they use the existing light/dark fallback at 0.85 opacity.
-`scale/css-color.ts` parses colors for halo contrast and PDF without DOM APIs;
-its named color table is absent from charts without text or PDF output.
-`halo: false` disables halos on text, region, bar, funnel, radar, Sankey,
-graph node and link labels, and navigator labels. The SVG
-layer keeps each annotation's nodes by geometry key, so a changing label
-rebuilds neither the axes nor other annotations. Text with `overlap` places
-labels greedily in row order, measuring each with the chart's text measurer
-(`Frame.measure`) and filing placed boxes in a grid (`layout/label-boxes.ts`),
-so each label checks only its neighbors; boxes too large for the grid, or far
-outside it, are checked one by one. Each mark places its own labels. Moving
-labels keep their given place when it is free and in the plot, else try
-eight spots touching their point, nearest sides first, off the other rows'
-points and inside the plot. Annotations have no series, so
+Annotations count toward the axes' extents only with `contributeDomain:
+true`; otherwise (`Mark.domainFallback`) their extents count only where no
+other mark has one (`domainExtent`), so a chart of annotations alone still
+fits them. Rectangles and text count toward y only where they overlap the
+visible x range. A horizontal rule's label outside the plot asks for room
+(`Mark.room`): the chart keeps a track on that side, innermost, beside the
+y axes (see Chart layout), and `Frame.outside` says where the labels end on
+the left and start on the right, in the track beside the first and last
+columns of panels and beyond each panel's y labels elsewhere (where no room
+is kept). Labels in a style of their own are positioned text
+(`LabelsGeometry`, drawn by `draw/text.ts` and PDF); plain ones are text
+geometry as before. Regions are rectangles drawn with the data in mark
+order and clipped to the plot. Rules and text are guides: drawn as SVG
+above the data (over a canvas when the data is on one), not clipped, and
+left out when they fall outside the view. Text halos use the background at
+full opacity when the text's WCAG contrast with it is at least 3:1,
+accounting for color alpha. Otherwise they use the existing light/dark
+fallback at 0.85 opacity. `scale/css-color.ts` parses colors for halo
+contrast and PDF without DOM APIs; its named color table is absent from
+charts without text or PDF output. `halo: false` disables halos on text,
+region, bar, funnel, radar, Sankey, graph node and link labels, and
+navigator labels. The SVG layer keeps each annotation's nodes by geometry
+key, so a changing label rebuilds neither the axes nor other annotations.
+Text with `overlap` places labels greedily in row order, measuring each
+with the chart's text measurer (`Frame.measure`) and filing placed boxes in
+a grid (`layout/label-boxes.ts`), so each label checks only its neighbors;
+boxes too large for the grid, or far outside it, are checked one by one.
+Each mark places its own labels. Moving labels keep their given place when
+it is free and in the plot, else try eight spots touching their point,
+nearest sides first, off the other rows' points and inside the plot, with a
+leader line (`style.leader`) back to it. Annotations have no series, so
 they appear in neither legends nor tooltips; the chart's text alternative
 lists them (up to ten items each, with positions formatted as in tooltips)
 after the series summaries; in charts with panels, those every panel draws
 once, then each panel's own (a facet panel's rows, a subplot's annotations)
 after its name, up to twenty panels (`PanelLayout.annotations`), which the
-keyboard also reads arriving in a panel. `Mark.geometry` receives the mark's key so their
-geometry and buffers stay distinct per mark. In facets, an annotation over
-a table draws, places labels among, and describes only its panel's rows
-(see Small multiples). Fields must be numbers or
-times; on a category axis a constant is a band index, as in Plotly (0 is the
-first band's center, -0.5 its edge).
+keyboard also reads arriving in a panel. `Mark.geometry` receives the
+mark's key so their geometry and buffers stay distinct per mark. In facets,
+an annotation over a table draws, places labels among, and describes only
+its panel's rows (see Small multiples). Fields must be numbers or times; on
+a category axis a constant is a band index, as in Plotly (0 is the first
+band's center, -0.5 its edge), and `{ data: "Feb" }` a band by its value.
 
 ## Custom marks
 
@@ -3677,6 +3695,127 @@ snapshots. Marks that dodge prepare and share a roster of visible group names
 on demand, using the original snapshot when selection highlighting splits a
 series.
 
+Colors by value come from scales of categories, not palette slots: a series
+or row colored by a field (`color: "site"`) takes its value's output in the
+chart's `"color"` scale (or the one `encode.color.scale` names), the same in
+every mark and panel, and series no channel colors keep their palette
+slots. See Encodings.
+
+## Encodings
+
+What marks draw beyond their constant paint is the feature compiler's
+(`marks/features/`): channels by field, scale, or condition; scales of
+categories; looks by series or row (`style.by`); markers; the runs lines
+and areas connect (`continuity`, `where`); and label patterns. It is a
+chunk a live chart loads before drawing a configuration that uses any of
+it, as it loads the guide compiler, and static output brings both
+(`render/compilers.ts`); charts that use none of it never load it.
+
+**The contract** (`model/features.ts`, the core side):
+
+- A mark says it needs the compiler with `Mark.featured`, set in its
+  constructor (`asksFeatures`: options only the compiler draws, or a
+  `color` other than a color in CSS syntax naming no field, which the mark
+  draws itself). `needsFeatures(config)` adds scales other than x, y, and
+  yRight.
+- `new ChartModel(config, page, guides, features)`; `model.lacks()` says
+  which of the two compilers a configuration needs and the model has not,
+  and `model.use(guides, features, page)` hands them over. The loader in
+  `dom/chart.ts` imports what is lacking, once per page; a compiler that
+  cannot load or refuses the configuration rejects `chart.loading`, and the
+  chart draws nothing until an update. Exports throw while code loads.
+- `FeatureCompiler.compile(config, marks, previous)` runs when the model
+  configures, keeping the previous compilation's scales whose settings are
+  unchanged. Each frame, `CompiledFeatures.update(theme)` runs before series
+  resolve; `of(mark)` gives a mark's `MarkFeatures`: `palette(base)` wraps
+  the palette (series colored by their values), `attach(series)` sets
+  `Series.features`, and `format` writes label patterns.
+- `SeriesFeatures` are hooks the core calls where they exist: `geometry`
+  (restyle a series' geometry, add its markers), `trace` and `band` (trace
+  runs into polylines), `extent` and `across` (values' extents
+  along x, and of marks along y), `drawn` (inspection), `shown` (text
+  summaries), `rows` (bars' looks per row), `categories` (points' colors),
+  `key` (bars' color keys), and `swatch` (legends' `swatches: "mark"`; a
+  marker comes as its symbol's path data, `SeriesSwatch`'s "glyph", since
+  the guide compiler has no symbols' shapes).
+- The compiler imports types from the chart's modules, and code only from
+  modules no line chart imports (`data/expression.ts`,
+  `draw/symbol-shapes.ts`, `format/patterns.ts`); the chart's own code
+  reaches it through `FeatureKit`: `GUIDE_KIT`, and `isColor` (the page's
+  `CSS.supports`, or the CSS color reader in static output). A module both
+  the chart's first chunk and the compiler imported would split into a
+  chunk of its own (as esbuild splits code), which
+  `test/architecture.test.ts` prevents.
+
+**Channels and scales** (`channels.ts`, `scales.ts`). A field channel reads
+a category field through an `OrdinalScale`, its outputs computed per
+dictionary code, so a row's value is an array lookup; a condition is the
+expression compiled once (`data/expression.ts`) and read per row. A scale's
+domain is its explicit `domain` (closed: other values take `unknown`), or
+the values of the fields marks read, each field's dictionary in its order
+(a `category()` column's, a pandas Categorical's, an Arrow dictionary's)
+in the order marks read them; a value keeps its place once it has one, and
+scales read whole tables, so colors are resolved before facets split rows
+and whatever the legend hides, and streaming never recolors. The default
+scales ("color", "symbol", "dash") are made when first read; `scales`
+names others.
+
+**Looks.** Lines and areas have one look per series (`series-styles.ts`):
+their channels must be constant within a series, checked once per table
+version, so no row arrays are kept; `style.by` maps a field's value or a
+series' source (its series value, or for wide data its value field) to a
+look. Bars' rows each take a look (`row-styles.ts`), numbered from small
+integers (a field's code, a condition's truth) in mixed radix, an
+`Int32Array` of a look per row and a paint per distinct look; a series
+draws one rectangle geometry per look its rows take, so the geometries
+grow with the looks, never the rows. Points' category colors are a tone
+per dictionary code into at most 254 colors and the muted one
+(`CategoryColors`).
+
+**Runs** (`continuity.ts`). A flag per row says whether it is drawn
+(accepted by `defined` and `where`); after appends and drops only the
+appended rows are tested, and expressions are compiled again for each table
+version, since they read its columns. Each series' runs (start, end, and
+whether `where` crosses at either end) are found once per table version:
+neighbors break apart past `maxGap` along the positions or across a
+`breakBy` boundary (a calendar unit's span in the chart's zone, found anew
+only when a position leaves the last one, or a change of a field's value).
+Series whose points are copied before tracing (lines along y through breaks,
+categories placed by a panel's own bands) keep each position's table row in
+`Series.sources`. `tracePath` hands each run to the reduction (M4) apart, so
+reduced lines never bridge a break and the indexes that find nearest points
+skip rows not drawn; extents, tooltips, selections, and summaries read drawn
+rows only. A crossing of `where` is placed where its comparison changes
+sign: interpolated on linear curves, and on step curves at the end of the
+interval the last row owns, so bands and lines meet. Both are found in
+drawn coordinates: positions in the time breaks leave, logs of positions
+and values on log scales, and a comparison's sides placed as the positions
+are where it reads only the positions' field, else as the values; so a
+crossing lies on the segment drawn. A band's edges share their runs, split where either edge
+has no place, as bands drawn whole are. Extents read the drawn observations
+and crossings in view (by the series' min/max index a run at a time, where
+it has one) and where runs pass the view's edges, with positions on a log
+scale where the chart's settings put them on one (its panel's axis, the
+scale's settings, the short form; log scales are never inferred; for a mark
+in several panels, where all of them have one). Marks
+along y take
+their values' extent the same way (`across`); positions' extents span every
+row, so a streaming window's axis does not move with its last rows.
+
+**Markers** stand at the observations the reduced line keeps (recorded as
+it is traced, in a buffer per series) and draw as point geometry with the
+compiler's own drawing, which PDF draws as points.
+
+**Costs.** The hooks in the core grew `herceg-line` by about 870 bytes
+gzip; the compiler chunk (about 13 KB gzip, with expression compilation
+and symbols' shapes) is loaded only by charts that use it. Constant and per-series looks keep no row arrays, and a
+series' paint is read once per data version and theme; looks per row keep
+4 bytes a row for bars, values that paint alike share a look, and each
+look's rectangles are as many as its rows in view. Runs keep a byte per row
+and 12 bytes a run. Streaming 100 rows a tick into a 100,000-row window, a
+line with calendar breaks takes about 0.5 ms a tick and one with `where`
+about 0.4 ms, against 0.17 ms without (Node, Apple M6).
+
 ## Themes
 
 A theme (`theme.ts`) is tokens, the colors styles are made of
@@ -3852,12 +3991,13 @@ ends follow, as monotonic passes bounded by a quarter of the chart's width
 (see Small multiples for grids). Requests come from the chart's title and
 its legends and colorbars, each a track of its own in the order the
 legends are listed (the automatic legend first); axes the guides list take
-their room through the axes hooks (see Scales and guides). A mark that
-labels outside its plot (a rule's label beside the axis) would add a
-request on its side, measured from its labels, and take its track's start
-as where to draw them. Tracks are the chart's; tracks beside one panel of
-several are not planned yet, so a side place with `scope: "panel"` is
-refused.
+their room through the axes hooks (see Scales and guides). Marks that
+label outside their plots (a rule's label beside the y axis) ask for room
+(`Mark.room`): the widest on each side is a track of its own, innermost,
+and its marks draw their labels at its inner edge (`Frame.outside`).
+Tracks are the chart's; tracks beside one panel of several are not planned
+yet, so a side place with `scope: "panel"` is refused, and marks' labels
+outside panels other than the first and last columns' take no room.
 
 ## Scales and guides
 
@@ -4013,22 +4153,28 @@ does; PDF draws the same gradient along the item's axis.
 
 Where these extend:
 
-- **Marks and encodings.** Named color, size, symbol, and dash scales would
-  go in `scales` beside the position scales, and `ScaleRef` would take
-  their names as well as `{ mark, channel }`; colorbars and legends would
-  then read the scale's own domain and mapping. A mark could give
-  `legendSwatch(series, theme)` (a `SwatchSpec`) for `swatches: "mark"`,
-  replacing the compiler's derivation from mark types (`sampleOf`).
-  `SwatchSpec` has no named symbols: drawing them in the compiler needs
-  `draw/symbols.ts`, which the chunk rule keeps out of it (a symbols module
-  without imports from the chart's other modules would do). Layout marks'
-  scales are not named by legends and colorbars (they refuse a reference to
-  one). `legendGroup` stays while dodging reads legend rosters;
-  `merge: "semantic"` shares visibility, not colors. A log color scale needs
-  its transform in `SequentialScale` and the colorbar's tick scale.
+- **Marks and encodings.** Scales of categories (`type: "ordinal"`) go in
+  `scales` beside the position scales, and marks' channels name them (see
+  Encodings); legends list series in the colors they resolve to, bars'
+  colors by another field as a key, and with `swatches: "mark"` a series'
+  look from the feature compiler (`SeriesFeatures.swatch`) before the
+  compiler's derivation from mark types (`sampleOf`). `ScaleRef` does not
+  name scales of categories yet, so a legend guide cannot show one on its
+  own; points' symbols still cycle by first appearance (`Appearance`)
+  rather than through a "symbol" scale, and points take no `encode`.
+  Layout marks' scales are not named by legends and colorbars (they refuse
+  a reference to one). `legendGroup` stays while dodging reads legend
+  rosters; `merge: "semantic"` shares visibility, not colors. A log color
+  scale needs its transform in `SequentialScale` and the colorbar's tick
+  scale.
 - **Runtime and SSR.** Snapshots render synchronously and so import the
-  compiler as static output does; hydrating a configuration that needs it
-  must not draw before it has it. Adapters compare options with functions
+  compilers as static output does (`render/compilers.ts`, which tells
+  colors from names with the CSS color reader, where live charts use
+  `CSS.supports`); hydrating a configuration that needs one must not draw
+  before it has it (`model.lacks()`, `model.use()`). Interaction reads
+  series through inspection, which skips rows `continuity` and `where`
+  leave out (`SeriesFeatures.drawn`); a cursor or controller that walks
+  rows itself must ask the same. Adapters compare options with functions
   by identity (`canonical`), so a new tick or format function updates the
   chart and the same one does not.
 
@@ -4045,6 +4191,7 @@ resolves them (`coordinateAt`, `positionAt`) against a `PositionContext`:
 the plot and chart boxes, the scales of plain coordinates, and how a value
 lands on a named scale, which the caller provides, so the resolver knows no
 scale types. Categories are placed by their values, never their codes.
+Annotations resolve their places through it (see Annotations).
 
 ## Clipping
 
@@ -4170,9 +4317,11 @@ every chart, rather than a second, smaller path for unstyled ones.
 
 What only some charts ask for loads only with them: the guide compiler
 (tick steps and values, pattern formatters, tick layers, axes on other
-sides, legends with layouts, merges, and custom entries, colorbars) with
-the first chart whose options need it, while what decides that and the
-hooks the model calls stay in every chart. What a chart reaches only
+sides, legends with layouts, merges, and custom entries, colorbars) and
+the feature compiler (channels, scales of categories, styles by value,
+markers, continuity and `where`, label patterns) with the first chart
+whose options need them, while what decides that and the hooks the model
+calls stay in every chart. What a chart reaches only
 through an object it is given loads only with it: font parsing, page registration, and PDF embedding with
 `herceg/fonts`; the SVG of color ramps with the marks whose legends have
 them; scale scopes, and the errors that name subplots' panels, with the
@@ -5050,10 +5199,27 @@ mouse input, through Playwright's mouse.
 - Custom marks are JavaScript only, cannot bind category fields other than
   `series`, and are inspected at their series' points, not by the shapes
   they draw; custom marks without series have no legend entries or tooltips.
-- Annotation fields cannot be categories (constants on a category axis are
-  band indices); text can hide or move labels that would overlap, but has
-  no leader lines and does not avoid other marks' geometry. Bar value
-  labels estimate text widths from the font size to decide what fits.
+- Annotation fields cannot be categories (a constant number on a category
+  axis is a band index; `{ data: "Feb" }` places at a category); text can
+  hide or move labels that would overlap, but does not avoid other marks'
+  geometry. Bar value labels estimate text widths from the font size to
+  decide what fits. A rule's label outside the plot takes room beside the
+  first and last columns of panels only; elsewhere it goes beyond the
+  panel's y labels without room kept.
+- Encodings: lines and areas take one look per series (a channel reading a
+  field that changes within a series is refused; no colors per segment);
+  points take `color`, `size`, `symbol`, and `fillOpacity` as fields of
+  their own but no `encode`, and their symbols take shapes by first
+  appearance, not through a "symbol" scale; rules, regions, and text take
+  no channels. `where` refuses monotone curves, and stacked areas refuse
+  `where` and `continuity`; there is no `connect` condition between
+  neighbors. Bars of looks per row draw a geometry per distinct look, so
+  rows of one series at the same position overlap in the order of their
+  looks rather than their rows; monotone bands refuse `continuity`. A line
+  or area drawn in panels whose position axes differ in type (log in some,
+  linear in others) measures its extents with linear positions, so a
+  `where` on its positions' field may cross outside a log panel's
+  automatic y domain.
 - Continuous color for heatmaps, 2D histograms, contours, points, and map
   regions and points only.
 - One x axis per panel and at most two y axes per chart; category values

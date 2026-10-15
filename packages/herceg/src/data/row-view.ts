@@ -3,7 +3,8 @@
 // read the table's columns through them. Derived tables (derive.ts) are for
 // computed rows; a view only chooses and orders existing ones.
 
-import { compileExpression, Expr, type Expression } from "./expression.ts";
+import { Expr } from "./expr.ts";
+import { compileExpression, type Expression } from "./expression.ts";
 import { rowComparator, type SortKey } from "./order.ts";
 import type { RowSet } from "./row-set.ts";
 import type { PositionField, Schema, Table, TableChange } from "./table.ts";

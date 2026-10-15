@@ -20,6 +20,25 @@ import numpy as np
 from . import _geo, _render
 from ._data import Column, Matrix, Table, listed, shown
 from ._derive import BinSpec, Derived, Expr, _fields_of, bin_spec
+from ._encoding import (
+    SYMBOLS,
+    BarLabels,
+    Continuity,
+    Coordinate,
+    Encodings,
+    Label,
+    MarkStyle,
+    Position,
+    Stack,
+    condition_spec,
+    coordinate_field,
+    coordinate_spec,
+    encodings_spec,
+    fraction_option,
+    label_spec,
+    mark_style_spec,
+    tagged_spec,
+)
 from ._guides import (
     Format,
     Guide,
@@ -41,6 +60,8 @@ from ._style import (
     Theme,
     ThemeName,
     Title,
+    _built,
+    _spec,
     halo_spec,
     insets,
     style_spec,
@@ -60,10 +81,8 @@ if TYPE_CHECKING:
 TooltipMode = Literal["nearest-x", "nearest-y", "nearest"]
 Dash = Sequence[float] | Literal["-", "--", ":", "-."]
 Curve = Literal["linear", "step", "step-before", "step-after", "monotone"]
-StackGaps = Literal["zero", "interpolate"]
 BarStack = bool | Literal["fill"]
-AreaStack = bool | Literal["fill", "center", "wiggle"]
-StackOrder = Literal["input", "inside-out"]
+AreaStack = bool | Literal["fill", "center", "wiggle"] | Stack | Mapping[str, Any]
 Orient = Literal["x", "y"]
 # What a mark's drawing is cut to: its plot, the whole chart, or nothing.
 Clip = Literal["plot", "chart", False]
@@ -85,9 +104,6 @@ _NUMERIC = ("number", "time")
 # The spec format version charts are written in: the only one so far.
 _SPEC_VERSION = 1
 
-# Point shapes, in the order a symbol column's values take them.
-SYMBOLS = ("circle", "square", "triangle", "diamond", "cross", "star", "wye", "triangle-down")
-
 # Named color schemes: sequential, diverging, then categorical.
 SCHEMES = (
     *("viridis", "magma", "inferno", "plasma", "cividis", "turbo"),
@@ -95,10 +111,6 @@ SCHEMES = (
     *("rdbu", "rdylbu", "brbg", "piyg", "prgn", "puor", "spectral"),
     *("tableau10", "category10", "set2", "dark2"),
 )
-
-# An annotation position: a column name, a number, or a date or datetime
-# (pandas Timestamps and NumPy datetime64 values work too).
-Position = str | float | _dt.date
 
 
 _WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -795,6 +807,30 @@ def _check_method_options(function: Callable[_P, _R]) -> Callable[_P, _R]:
     return checked
 
 
+#: The channels each mark's ``encode`` takes.
+_LINE_CHANNELS = ("color", "stroke", "dash", "stroke_width", "opacity")
+_AREA_CHANNELS = ("color", "fill", "stroke", "opacity")
+_BAR_CHANNELS = ("color", "fill", "stroke", "stroke_width", "opacity")
+
+
+def _markers(value: Any) -> Any:
+    """Lines' markers: True, False, or a shape name."""
+    if value is None or isinstance(value, bool):
+        return value
+    if value not in SYMBOLS:
+        raise ValueError(
+            f"line markers: expected True, False, or a shape ({listed(SYMBOLS)}); "
+            f"received {shown(value)}"
+        )
+    return value
+
+
+def _continuity(value: Any, mark: str) -> Any:
+    if value is None:
+        return None
+    return _built(value, Continuity, f"{mark} continuity")._spec()
+
+
 def _dash(value: Dash | None, mark: str) -> str | list[float] | None:
     if value is None:
         return None
@@ -1030,9 +1066,17 @@ class Chart:
         series: str | None = None,
         dodge: bool = False,
         data: Any = None,
+        color: str | None = None,
         stroke: str | None = None,
         stroke_width: float | None = None,
         dash: Dash | None = None,
+        opacity: float | None = None,
+        stroke_opacity: float | None = None,
+        encode: Encodings | Mapping[str, Any] | None = None,
+        style: MarkStyle | Mapping[str, Any] | None = None,
+        markers: bool | str | None = None,
+        continuity: Continuity | Mapping[str, Any] | None = None,
+        where: Expr | None = None,
         curve: Curve | None = None,
         label: str | None = None,
         legend_group: str | None = None,
@@ -1054,6 +1098,17 @@ class Chart:
         keyboard read them by y. On a category axis, ``dodge=True`` places
         the series of a ``series`` column side by side in each band, as
         grouped bars and dodged points are.
+
+        ``color`` is a CSS color, or a column whose values color the series
+        through the chart's ``"color"`` scale (``scales={"color":
+        hg.Scale(type="ordinal", map={...})}`` fixes them); ``stroke`` wins
+        over it. ``encode`` gives channels by column, scale, or condition
+        (``hg.Encodings``); ``style=hg.MarkStyle(by=hg.StyleMap(...))``
+        styles series by value, such as an ``"Average"`` series dashed.
+        ``markers=True`` (or a shape name) draws a point at each observation.
+        ``continuity`` (``hg.Continuity``) says which neighbors connect, and
+        ``where`` leaves rows out as gaps, meeting the line where the
+        condition changes.
         """
         table = self._mark_table(data)
         along, x_spec, y_spec = self._oriented(table, "line", x, y, orient)
@@ -1069,9 +1124,17 @@ class Chart:
                 "orient": orient,
                 "series": series,
                 "dodge": dodge or None,
+                "color": color,
                 "stroke": stroke,
                 "strokeWidth": stroke_width,
                 "dash": _dash(dash, "line"),
+                "opacity": fraction_option(opacity, "line opacity"),
+                "strokeOpacity": fraction_option(stroke_opacity, "line stroke_opacity"),
+                "encode": encodings_spec(encode, _LINE_CHANNELS, "line"),
+                "style": mark_style_spec(style, ("marker",), "line"),
+                "markers": _markers(markers),
+                "continuity": _continuity(continuity, "line"),
+                "where": condition_spec(where, "line where"),
                 "curve": curve,
                 "label": label,
                 "legendGroup": _legend_group(legend_group, "line"),
@@ -1099,15 +1162,20 @@ class Chart:
         orient: Orient | None = None,
         series: str | None = None,
         stack: AreaStack = False,
-        stack_order: StackOrder | None = None,
-        stack_gaps: StackGaps | None = None,
         dodge: bool = False,
         data: Any = None,
+        color: str | None = None,
         fill: str | None = None,
         fill_opacity: float | None = None,
         line: bool | None = None,
         stroke: str | None = None,
         stroke_width: float | None = None,
+        opacity: float | None = None,
+        stroke_opacity: float | None = None,
+        encode: Encodings | Mapping[str, Any] | None = None,
+        style: MarkStyle | Mapping[str, Any] | None = None,
+        continuity: Continuity | Mapping[str, Any] | None = None,
+        where: Expr | None = None,
         curve: Curve | None = None,
         label: str | None = None,
         legend_group: str | None = None,
@@ -1126,30 +1194,33 @@ class Chart:
         give a band. ``stack=True`` stacks several value columns row by row,
         or the series of a ``series`` column on every position any of them
         has. There, a series counts as zero at a position where it has no
-        row, or with ``stack_gaps="interpolate"`` as the straight line
-        between its rows on either side. On a category axis,
+        row, or with ``stack=hg.Stack(gaps="interpolate")`` as the straight
+        line between its rows on either side. On a category axis,
         ``dodge=True`` places unstacked series side by side in each band.
 
         ``stack="fill"`` shows shares of each position's visible total.
         ``"center"`` centers raw thickness around zero; ``"wiggle"`` uses
-        the Byron–Wattenberg stream baseline. These modes require nonnegative
-        values. ``stack_order="inside-out"`` reorders their layers geometrically.
+        the Byron–Wattenberg stream baseline. These offsets require
+        nonnegative values; ``hg.Stack(offset=..., order="inside-out")``
+        reorders their layers geometrically.
 
         A single area has an outline along its top in its own color; stacked
         and band areas have none unless ``line=True``. ``stroke`` and
         ``stroke_width`` set the outline's color and width, and turn it on.
+        ``color`` is a CSS color or a column coloring the series through the
+        chart's ``"color"`` scale (``fill`` wins over it); ``encode``,
+        ``style``, ``continuity``, and ``where`` work as for lines, with
+        ``where`` shading only where its condition holds (a conditional
+        band).
         """
-        _check_stack(stack, "area")
-        if stack_order is not None:
-            if stack_order not in ("input", "inside-out"):
-                raise ValueError(
-                    'area stack_order: expected "input" or "inside-out"; choose a supported order'
-                )
-            if not stack or (stack_order == "inside-out" and not isinstance(stack, str)):
-                raise ValueError(
-                    "area stack_order: needs a nonnegative stack for inside-out order; "
-                    'give stack="fill", "center", or "wiggle", or drop stack_order'
-                )
+        stacking = _built(stack, Stack, "area stack") if isinstance(stack, Mapping) else stack
+        if isinstance(stacking, Stack):
+            offset = stacking.offset or "zero"
+            spread: Any = True if offset == "zero" else offset
+            gaps = stacking.gaps
+        else:
+            _check_stack(stack, "area")
+            spread, gaps = stack, None
         if stroke_width is not None and not (_finite(stroke_width) and stroke_width >= 0):
             raise ValueError(
                 f"area stroke_width: expected 0 or more pixels; received {shown(stroke_width)}"
@@ -1172,14 +1243,8 @@ class Chart:
             if values is not None:
                 other = "y" if along_x else "x"
                 raise ValueError(f"area {other}: {other}, or {low} and {high}, not both; drop one")
-            if series is not None or stack or stack_order is not None:
-                option = (
-                    "series"
-                    if series is not None
-                    else "stack_order"
-                    if stack_order is not None
-                    else "stack"
-                )
+            if series is not None or spread:
+                option = "series" if series is not None else "stack"
                 raise ValueError(
                     f"area {option}: a band ({low} and {high}) has no series or stack; "
                     f"drop {option}"
@@ -1206,23 +1271,23 @@ class Chart:
             _left_along_y("area", runs, axis)
             self._require(table, series, ("category",), "area series")
             self._single_or_series(y_values if runs == "x" else x_values, series, "area")
-            if isinstance(stack, str):
+            if isinstance(spread, str):
                 _check_stack_values(
                     self._tables[table][1], y_values if runs == "x" else x_values, "area"
                 )
-            if dodge and stack:
+            if dodge and spread:
                 raise ValueError(
                     "area dodge: a stack's layers stand on each other; drop dodge or stack"
                 )
             self._check_dodge(table, "area", dodge, runs, x_spec if runs == "x" else y_spec, series)
-        if stack_gaps is not None and not (stack and series is not None):
+        if gaps is not None and series is None:
             raise ValueError(
-                "area stack_gaps: applies to areas stacked by a series column; "
-                "give stack=True and series, or drop stack_gaps"
+                "area stack gaps: for stacks by a series column; give series, or drop gaps"
             )
-        if stack_gaps not in (None, "zero", "interpolate"):
+        if spread and (where is not None or continuity is not None):
+            option = "where" if where is not None else "continuity"
             raise ValueError(
-                f'area stack_gaps: expected "zero" or "interpolate"; received {shown(stack_gaps)}'
+                f"area {option}: stacked areas cannot leave rows out yet; drop it or the stack"
             )
         return self._add(
             {
@@ -1235,15 +1300,20 @@ class Chart:
                 "x2": x2,
                 "orient": orient,
                 "series": series,
-                "stack": stack or None,
-                "stackGaps": stack_gaps,
-                "stackOrder": stack_order,
+                "stack": _spec(stacking) if isinstance(stacking, Stack) else stack or None,
                 "dodge": dodge or None,
+                "color": color,
                 "fill": fill,
                 "fillOpacity": fill_opacity,
                 "line": line,
                 "stroke": stroke,
                 "strokeWidth": stroke_width,
+                "opacity": fraction_option(opacity, "area opacity"),
+                "strokeOpacity": fraction_option(stroke_opacity, "area stroke_opacity"),
+                "encode": encodings_spec(encode, _AREA_CHANNELS, "area"),
+                "style": mark_style_spec(style, (), "area"),
+                "continuity": _continuity(continuity, "area"),
+                "where": condition_spec(where, "area where"),
                 "curve": curve,
                 "label": label,
                 "legendGroup": _legend_group(legend_group, "area"),
@@ -1266,13 +1336,22 @@ class Chart:
         *,
         series: str | None = None,
         stack: BarStack = False,
+        dodge: bool | None = None,
         data: Any = None,
+        color: str | None = None,
         fill: str | None = None,
         fill_opacity: float | None = None,
+        stroke: str | None = None,
+        stroke_width: float | None = None,
+        stroke_opacity: float | None = None,
+        dash: Dash | None = None,
+        opacity: float | None = None,
+        encode: Encodings | Mapping[str, Any] | None = None,
+        style: MarkStyle | Mapping[str, Any] | None = None,
         label: str | None = None,
         legend_group: str | None = None,
         legend: Literal[False] | None = None,
-        labels: bool | dict[str, Any] = False,
+        labels: bool | BarLabels | Mapping[str, Any] = False,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
@@ -1284,14 +1363,34 @@ class Chart:
         """Bars: one band per category of x, or bars centered on number or time x.
 
         A category ``y`` makes the bars horizontal, with lengths in ``x``.
+        Several series (a ``series`` column's values, or several ``y``
+        columns) stand side by side at each position, as grouped bars, unless
+        ``dodge=False`` overlaps them or ``stack`` piles them; coloring bars by
+        a column (``color="site"``, through the chart's ``"color"`` scale)
+        makes no series, so never places them apart. ``stroke`` and
+        ``stroke_width`` outline each bar.
         ``labels=True`` writes each value at its bar's end (inside each segment
-        when stacked); a dict of Intl.NumberFormat options formats them.
-        ``stack="fill"`` normalizes nonnegative values per position, and labels
-        show shares. Tooltip and keyboard text also report the raw values.
+        when stacked); ``hg.BarLabels`` formats, styles, and filters them
+        (white or black text by contrast with the bar unless its style sets a
+        color). ``stack="fill"`` normalizes nonnegative values per position,
+        and labels show shares. Tooltip and keyboard text also report the raw
+        values.
         """
         _check_stack(stack, "bar")
-        if isinstance(labels, dict):
-            _check_format(labels, "bar labels", _NUMBER_FORMAT)
+        if dodge and stack:
+            raise ValueError("bar dodge: stacked bars pile up in one slot; drop dodge or stack")
+        value_labels: BarLabels | None = None
+        if labels is not False and labels is not True:
+            value_labels = _built(labels, BarLabels, "bar labels")
+            pattern = value_labels.format
+            if isinstance(pattern, Mapping) and not {"number", "time"} & set(pattern):
+                _check_format(dict(pattern), "bar labels format", _NUMBER_FORMAT)
+        for name, value in (("stroke_opacity", stroke_opacity), ("opacity", opacity)):
+            fraction_option(value, f"bar {name}")
+        if stroke_width is not None and not (_finite(stroke_width) and stroke_width >= 0):
+            raise ValueError(
+                f"bar stroke_width: expected 0 or more pixels; received {shown(stroke_width)}"
+            )
         table = self._mark_table(data)
         if isinstance(y, str) and self._kind(table, y) == "category":
             if axis == "right":
@@ -1324,12 +1423,21 @@ class Chart:
                 "y": ys,
                 "series": series,
                 "stack": stack or None,
+                "dodge": dodge,
+                "color": color,
                 "fill": fill,
                 "fillOpacity": fill_opacity,
+                "stroke": stroke,
+                "strokeWidth": stroke_width,
+                "strokeOpacity": stroke_opacity,
+                "dash": _dash(dash, "bar"),
+                "opacity": opacity,
+                "encode": encodings_spec(encode, _BAR_CHANNELS, "bar"),
+                "style": mark_style_spec(style, (), "bar"),
                 "label": label,
                 "legendGroup": _legend_group(legend_group, "bar"),
                 "legend": _mark_legend(legend, "bar"),
-                "labels": None if labels is False else labels,
+                "labels": value_labels._spec() if value_labels else labels or None,
                 "axis": axis,
                 "facet": _mark_facet(facet, "bar"),
                 "panel": panel,
@@ -1581,9 +1689,10 @@ class Chart:
         background color by default. ``color`` colors points by a numeric
         column on ``colors``, a scheme name such as ``"viridis"`` or a list of
         hex colors, centered on ``color_midpoint`` for diverging schemes; or
-        by a category column, whose values take the theme's palette in order
-        of appearance, with a key in the legend (naming the ``series`` column
-        keeps the series' colors). ``symbol`` is a shape
+        by a category column, whose values take the chart's ``"color"`` scale
+        (``scales={"color": hg.Scale(type="ordinal", map=...)}`` fixes them;
+        otherwise the theme's palette in the column's order), with a key in
+        the legend (naming the ``series`` column colors the series so). ``symbol`` is a shape
         (``"circle"``, ``"square"``, ``"triangle"``, ...) or a category column
         with a shape per value: its name, or ``{"field": name}``, which a
         column named like a shape needs. ``sampling="pixel"`` draws opaque
@@ -3713,14 +3822,16 @@ class Chart:
     def rule(
         self,
         *,
-        x: Position | None = None,
-        y: Position | None = None,
-        label: str | None = None,
-        text_field: str | None = None,
+        x: Coordinate | None = None,
+        y: Coordinate | None = None,
+        span: tuple[Coordinate, Coordinate] | None = None,
+        label: str | Label | Mapping[str, Any] | None = None,
         data: Any = None,
         stroke: str | None = None,
         stroke_width: float | None = None,
+        stroke_opacity: float | None = None,
         dash: Dash | None = None,
+        contribute_domain: bool | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
@@ -3730,22 +3841,41 @@ class Chart:
         """Reference lines: horizontal at ``y`` or vertical at ``x``.
 
         A number or datetime draws one rule; a column name draws one rule per
-        row, with ``text_field`` naming a column of labels; ``label`` is one
-        label for every rule.
+        row. ``hg.Fraction``, ``hg.Pixels``, and ``hg.DataPosition`` place a
+        rule by a share of the plot, by pixels, or by a value moved by an
+        offset. ``span`` (two such places) runs it along part of the other
+        axis. ``label`` is text, or an ``hg.Label``: a column of labels
+        (``field``), placed at the rule's start, center, or end, or outside
+        the plot beside the axis (``hg.LabelPlace``), in a style of its own.
+        Rules count toward the axes' domains only with
+        ``contribute_domain=True``; otherwise they show where the data is.
         """
         if (x is None) == (y is None):
             raise ValueError("rule: needs exactly one of x and y")
-        table = self._annotation_table(data, {"x": x, "y": y}, text_field, "rule")
+        label_json = label_spec(label, "rule")
+        if span is not None and (not isinstance(span, (tuple, list)) or len(span) != 2):
+            raise ValueError(
+                "rule span: expected two places, such as (hg.Fraction(0.25), 10); "
+                f"received {shown(span)}"
+            )
+        places = {"x": x, "y": y, **({"span[0]": span[0], "span[1]": span[1]} if span else {})}
+        table = self._annotation_table(data, places, label_json, "rule")
         return self._add(
             {
                 "type": "rule",
-                "x": _position(x, "rule x"),
-                "y": _position(y, "rule y"),
+                "x": coordinate_spec(x, "rule x"),
+                "y": coordinate_spec(y, "rule y"),
+                "span": (
+                    [tagged_spec(place, "rule span") for place in span]
+                    if span is not None
+                    else None
+                ),
                 "stroke": stroke,
                 "strokeWidth": stroke_width,
+                "strokeOpacity": fraction_option(stroke_opacity, "rule stroke_opacity"),
                 "dash": _dash(dash, "rule"),
-                "label": label,
-                "textField": text_field,
+                "label": label_json,
+                "contributeDomain": _flag(contribute_domain, "rule contribute_domain"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "rule"),
                 "panel": panel,
@@ -3759,15 +3889,15 @@ class Chart:
     def region(
         self,
         *,
-        x1: Position | None = None,
-        x2: Position | None = None,
-        y1: Position | None = None,
-        y2: Position | None = None,
-        label: str | None = None,
-        text_field: str | None = None,
+        x1: Coordinate | None = None,
+        x2: Coordinate | None = None,
+        y1: Coordinate | None = None,
+        y2: Coordinate | None = None,
+        label: str | Label | Mapping[str, Any] | None = None,
         data: Any = None,
         fill: str | None = None,
         fill_opacity: float | None = None,
+        contribute_domain: bool | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
@@ -3778,8 +3908,12 @@ class Chart:
         """Shaded regions: from ``x1`` to ``x2``, from ``y1`` to ``y2``, or both.
 
         Numbers or datetimes shade one region; column names shade one per
-        row. Add regions before the marks they highlight to draw them
-        underneath.
+        row; ``hg.Fraction``, ``hg.Pixels``, and ``hg.DataPosition`` place
+        an edge as they do rules. ``label`` is text or an ``hg.Label``,
+        along the ``side`` its place names (top by default), inside or
+        outside the region. Add regions before the marks they highlight to
+        draw them underneath. Regions count toward the axes' domains only
+        with ``contribute_domain=True``.
         """
         for start, end, name in ((x1, x2, "x"), (y1, y2, "y")):
             if (start is None) != (end is None):
@@ -3787,21 +3921,22 @@ class Chart:
                 raise ValueError(f"region {missing}: needs both {name}1 and {name}2, or neither")
         if x1 is None and y1 is None:
             raise ValueError("region: needs x1 and x2, y1 and y2, or both")
+        label_json = label_spec(label, "region")
         table = self._annotation_table(
-            data, {"x1": x1, "x2": x2, "y1": y1, "y2": y2}, text_field, "region"
+            data, {"x1": x1, "x2": x2, "y1": y1, "y2": y2}, label_json, "region"
         )
         return self._add(
             {
                 "type": "region",
                 "halo": _halo(halo, "region"),
-                "x1": _position(x1, "region x1"),
-                "x2": _position(x2, "region x2"),
-                "y1": _position(y1, "region y1"),
-                "y2": _position(y2, "region y2"),
+                "x1": coordinate_spec(x1, "region x1"),
+                "x2": coordinate_spec(x2, "region x2"),
+                "y1": coordinate_spec(y1, "region y1"),
+                "y2": coordinate_spec(y2, "region y2"),
                 "fill": fill,
                 "fillOpacity": fill_opacity,
-                "label": label,
-                "textField": text_field,
+                "label": label_json,
+                "contributeDomain": _flag(contribute_domain, "region contribute_domain"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "region"),
                 "panel": panel,
@@ -3815,16 +3950,14 @@ class Chart:
     def text(
         self,
         *,
-        x: Position,
-        y: Position,
-        label: str | None = None,
-        text_field: str | None = None,
+        label: str | Label | Mapping[str, Any],
+        x: Coordinate | None = None,
+        y: Coordinate | None = None,
+        at: Position | None = None,
         data: Any = None,
-        fill: str | None = None,
-        anchor: Literal["start", "middle", "end"] | None = None,
-        dx: float | None = None,
-        dy: float | None = None,
         overlap: Literal["show", "hide", "move"] | None = None,
+        style: MarkStyle | Mapping[str, Any] | None = None,
+        contribute_domain: bool | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
@@ -3832,35 +3965,49 @@ class Chart:
         halo: HaloOption | None = None,
         id: str | None = None,
     ) -> Chart:
-        """Text at ``(x, y)``: ``label`` for constant text, or ``text_field`` naming a column.
+        """Text ``label`` at ``(x, y)``, or at ``at``, an ``hg.Position``.
 
-        Column names for ``x`` or ``y`` draw one label per row. ``dx`` and
-        ``dy`` offset labels in pixels; positive ``dy`` moves down. Labels that
-        would cover an earlier one of this mark, in row order, are drawn anyway
+        ``label`` is constant text, or an ``hg.Label``: a column of text
+        (``field``), numbers written with ``format``, in an ``hg.TextStyle``
+        of its own (font size, weight, color, halo, a box behind it, and
+        ``align`` its start, center, or end at the point). Column names for
+        ``x`` or ``y`` draw one label per row; ``hg.Fraction``,
+        ``hg.Pixels``, and ``hg.DataPosition`` mix shares of the plot,
+        pixels, and values moved by offsets. Labels that would cover an
+        earlier one of this mark, in row order, are drawn anyway
         (``overlap="show"``), left out (``"hide"``), or, where their place is
         taken or outside the plot, tried around their point and left out when
-        nothing fits (``"move"``).
+        nothing fits (``"move"``), with a leader line back to it
+        (``style=hg.MarkStyle(leader=hg.StrokeStyle(...))``).
         """
         if overlap not in (None, "show", "hide", "move"):
             raise ValueError(
                 f'text overlap: expected "show", "hide", or "move"; received {shown(overlap)}'
             )
-        if (label is None) == (text_field is None):
-            raise ValueError("text: needs exactly one of label and text_field")
-        table = self._annotation_table(data, {"x": x, "y": y}, text_field, "text")
+        if at is not None and (x is not None or y is not None):
+            raise ValueError(
+                "text at: a place, or its short forms x and y, not both; drop at or x and y"
+            )
+        if at is None and (x is None or y is None):
+            raise ValueError("text: needs a place; give x and y, or at=hg.Position(x=..., y=...)")
+        if at is not None:
+            at = _built(at, Position, "text at")
+        if label is None:
+            raise ValueError("text label: needs text or an hg.Label; give label")
+        label_json = label_spec(label, "text", places=False)
+        places = {"x": at.x, "y": at.y} if at is not None else {"x": x, "y": y}
+        table = self._annotation_table(data, places, label_json, "text")
         return self._add(
             {
                 "type": "text",
                 "halo": _halo(halo, "text"),
-                "x": _position(x, "text x"),
-                "y": _position(y, "text y"),
-                "label": label,
-                "textField": text_field,
-                "fill": fill,
-                "anchor": anchor,
-                "dx": dx,
-                "dy": dy,
+                "x": coordinate_spec(x, "text x"),
+                "y": coordinate_spec(y, "text y"),
+                "at": at._spec() if at is not None else None,
+                "label": label_json,
                 "overlap": overlap,
+                "style": mark_style_spec(style, ("leader",), "text"),
+                "contributeDomain": _flag(contribute_domain, "text contribute_domain"),
                 "axis": axis,
                 "facet": _mark_facet(facet, "text"),
                 "panel": panel,
@@ -4523,16 +4670,21 @@ class Chart:
             )
 
     def _annotation_table(
-        self, data: Any, positions: dict[str, Any], text: str | None, role: str
+        self, data: Any, positions: dict[str, Any], label: Any, role: str
     ) -> int | None:
-        """The table an annotation reads, when a position or its text is a column."""
-        fields = {name: value for name, value in positions.items() if isinstance(value, str)}
+        """The table an annotation reads, when a place or its label is a column."""
+        fields = {
+            name: field
+            for name, value in positions.items()
+            if (field := coordinate_field(value)) is not None
+        }
+        text = label.get("field") if isinstance(label, dict) else None
         if not fields and text is None:
             return None
         table = self._mark_table(data)
         for name, field in fields.items():
             self._require(table, field, _NUMERIC, f"{role} {name}")
-        self._require(table, text, ("category", "number"), f"{role} text_field")
+        self._require(table, text, ("category", "number"), f"{role} label field")
         return table
 
     def _add(self, spec: dict[str, Any], table: int | None) -> Chart:
@@ -5263,7 +5415,7 @@ def table_name(index: int) -> str:
 def _fields(spec: dict[str, Any]) -> set[str]:
     fields: set[str] = set()
     for key in (
-        *("x", "y", "x1", "x2", "y1", "y2", "xError", "yError", "series", "value", "textField"),
+        *("x", "y", "x1", "x2", "y1", "y2", "xError", "yError", "series", "value"),
         "weight",
         *("category", "fields", "date"),
         *("path", "node", "parent", "source", "target", "linkLabelField"),
@@ -5283,6 +5435,35 @@ def _fields(spec: dict[str, Any]) -> set[str]:
     # Columns only tooltips show travel too.
     for entry in (spec.get("tooltip") or {}).get("fields", ()):
         fields.add(entry if isinstance(entry, str) else entry["field"])
+    fields |= _feature_fields(spec)
+    return fields
+
+
+def _feature_fields(spec: dict[str, Any]) -> set[str]:
+    """The columns a mark's encodings, conditions, styles by value, labels,
+    and places read."""
+    fields: set[str] = set()
+    for channel in (spec.get("encode") or {}).values():
+        if "field" in channel:
+            fields.add(channel["field"])
+        elif "condition" in channel:
+            fields |= _fields_of(channel["condition"]["when"])
+    fields |= _fields_of(spec.get("where"))
+    continuity = spec.get("continuity") or {}
+    fields |= _fields_of(continuity.get("defined"))
+    if isinstance(continuity.get("breakBy"), dict):
+        fields.add(continuity["breakBy"]["field"])
+    by = (spec.get("style") or {}).get("by") or {}
+    if isinstance(by.get("field"), str):
+        fields.add(by["field"])
+    for key in ("label", "labels"):
+        if isinstance(spec.get(key), dict) and isinstance(spec[key].get("field"), str):
+            fields.add(spec[key]["field"])
+    for place in [*(spec.get("at") or {}).values(), *(spec.get("span") or ())]:
+        if isinstance(place, str):
+            fields.add(place)
+        elif isinstance(place, dict) and isinstance(place.get("field"), str):
+            fields.add(place["field"])
     return fields
 
 
@@ -5720,20 +5901,10 @@ def _midpoint(
     return float(midpoint)
 
 
-def _position(value: Any, role: str) -> str | float | None:
-    """Column names pass through; datetimes become epoch milliseconds."""
-    if value is None or isinstance(value, str):
-        return value
-    if isinstance(value, numbers.Real):
-        return float(value)
-    from ._data import _time_ms
-
-    try:
-        return _time_ms(value)
-    except TypeError:
-        raise TypeError(
-            f"{role}: expected a column name, a number, or a datetime; received {shown(value)}"
-        ) from None
+def _flag(value: Any, role: str) -> bool | None:
+    if value is not None and not isinstance(value, bool):
+        raise TypeError(f"{role}: expected True or False; received {shown(value)}")
+    return value
 
 
 # Express-style helpers: one call, one chart -----------------------------------
@@ -5741,12 +5912,12 @@ def _position(value: Any, role: str) -> str | float | None:
 #: Names other libraries give options herceg names otherwise (Plotly
 #: Express, Seaborn, matplotlib), and the options a helper may take instead.
 _ELSEWHERE: dict[str, tuple[str, ...]] = {
-    "alpha": ("fill_opacity",),
+    "alpha": ("opacity", "fill_opacity"),
     "linewidth": ("stroke_width",),
     "lw": ("stroke_width",),
     "linestyle": ("dash",),
     "ls": ("dash",),
-    "marker": ("symbol",),
+    "marker": ("symbol", "markers"),
     "markersize": ("radius", "size"),
     "ms": ("radius", "size"),
     "c": ("color", "stroke", "fill"),
@@ -5757,7 +5928,7 @@ _ELSEWHERE: dict[str, tuple[str, ...]] = {
     "vmin": ("color_domain",),
     "vmax": ("color_domain",),
     "color": ("series", "stroke", "fill"),
-    "colour": ("series", "stroke", "fill"),
+    "colour": ("color", "series", "stroke", "fill"),
     "hue": ("series",),
     "hue_order": ("series_order",),
     "row": ("facet_row",),
@@ -5883,9 +6054,17 @@ def line(
     orient: Orient | None = None,
     series: str | None = None,
     dodge: bool = False,
+    color: str | None = None,
     stroke: str | None = None,
     stroke_width: float | None = None,
     dash: Dash | None = None,
+    opacity: float | None = None,
+    stroke_opacity: float | None = None,
+    encode: Encodings | Mapping[str, Any] | None = None,
+    style: MarkStyle | Mapping[str, Any] | None = None,
+    markers: bool | str | None = None,
+    continuity: Continuity | Mapping[str, Any] | None = None,
+    where: Expr | None = None,
     curve: Curve | None = None,
     label: str | None = None,
     legend_group: str | None = None,
@@ -5904,9 +6083,17 @@ def line(
         orient=orient,
         series=series,
         dodge=dodge,
+        color=color,
         stroke=stroke,
         stroke_width=stroke_width,
         dash=dash,
+        opacity=opacity,
+        stroke_opacity=stroke_opacity,
+        encode=encode,
+        style=style,
+        markers=markers,
+        continuity=continuity,
+        where=where,
         curve=curve,
         label=label,
         legend_group=legend_group,
@@ -5931,14 +6118,19 @@ def area(
     orient: Orient | None = None,
     series: str | None = None,
     stack: AreaStack = False,
-    stack_order: StackOrder | None = None,
-    stack_gaps: StackGaps | None = None,
     dodge: bool = False,
+    color: str | None = None,
     fill: str | None = None,
     fill_opacity: float | None = None,
     line: bool | None = None,
     stroke: str | None = None,
     stroke_width: float | None = None,
+    opacity: float | None = None,
+    stroke_opacity: float | None = None,
+    encode: Encodings | Mapping[str, Any] | None = None,
+    style: MarkStyle | Mapping[str, Any] | None = None,
+    continuity: Continuity | Mapping[str, Any] | None = None,
+    where: Expr | None = None,
     curve: Curve | None = None,
     label: str | None = None,
     legend_group: str | None = None,
@@ -5948,13 +6140,13 @@ def area(
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """An area chart, stacked with ``True``, ``"fill"``, ``"center"``, or
-    ``"wiggle"``, or the band between ``y1`` and ``y2`` (along y, ``x1``
-    and ``x2``; see ``Chart.area``).
+    """An area chart, stacked with ``True``, ``"fill"``, ``"center"``,
+    ``"wiggle"``, or an ``hg.Stack``, or the band between ``y1`` and ``y2``
+    (along y, ``x1`` and ``x2``; see ``Chart.area``).
 
     Stacked by a ``series`` column, every series is drawn on every position
-    any of them has: ``stack_gaps`` says what a series counts as where it
-    has no row, ``"zero"`` (the default) or ``"interpolate"``.
+    any of them has: ``hg.Stack(gaps=...)`` says what a series counts as
+    where it has no row, ``"zero"`` (the default) or ``"interpolate"``.
     """
     chart, tooltip = _rows_chart_of(data, options)
     return chart.area(
@@ -5967,14 +6159,19 @@ def area(
         orient=orient,
         series=series,
         stack=stack,
-        stack_order=stack_order,
-        stack_gaps=stack_gaps,
         dodge=dodge,
+        color=color,
         fill=fill,
         fill_opacity=fill_opacity,
         line=line,
         stroke=stroke,
         stroke_width=stroke_width,
+        opacity=opacity,
+        stroke_opacity=stroke_opacity,
+        encode=encode,
+        style=style,
+        continuity=continuity,
+        where=where,
         curve=curve,
         label=label,
         legend_group=legend_group,
@@ -5994,11 +6191,20 @@ def bar(
     *,
     series: str | None = None,
     stack: BarStack = False,
+    dodge: bool | None = None,
+    color: str | None = None,
     fill: str | None = None,
     fill_opacity: float | None = None,
+    stroke: str | None = None,
+    stroke_width: float | None = None,
+    stroke_opacity: float | None = None,
+    dash: Dash | None = None,
+    opacity: float | None = None,
+    encode: Encodings | Mapping[str, Any] | None = None,
+    style: MarkStyle | Mapping[str, Any] | None = None,
     label: str | None = None,
     legend_group: str | None = None,
-    labels: bool | dict[str, Any] = False,
+    labels: bool | BarLabels | Mapping[str, Any] = False,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
     clip: Clip | None = None,
@@ -6006,15 +6212,25 @@ def bar(
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """A bar chart, grouped or stacked; horizontal when ``y`` is a category."""
+    """A bar chart: series side by side (overlapping with ``dodge=False``) or
+    stacked; horizontal when ``y`` is a category (see ``Chart.bar``)."""
     chart, tooltip = _rows_chart_of(data, options)
     return chart.bar(
         x,
         y,
         series=series,
         stack=stack,
+        dodge=dodge,
+        color=color,
         fill=fill,
         fill_opacity=fill_opacity,
+        stroke=stroke,
+        stroke_width=stroke_width,
+        stroke_opacity=stroke_opacity,
+        dash=dash,
+        opacity=opacity,
+        encode=encode,
+        style=style,
         label=label,
         legend_group=legend_group,
         labels=labels,

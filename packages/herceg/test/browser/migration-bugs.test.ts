@@ -74,12 +74,16 @@ it.each(["svg", "canvas"] as const)(
   (renderer) => {
     const chart = createChart(host, {
       renderer,
-      marks: [text({ x: 1, y: 1, label: "note", fill: "#e06600" })],
+      marks: [text({ x: 1, y: 1, label: { text: "note", style: { color: "#e06600" } } })],
     });
     const label = chart.root.querySelector('g[fill="#e06600"]')!;
     expect(label.getAttribute("stroke")).toBe("#ffffff");
     expect(label.getAttribute("stroke-opacity")).toBe("1");
-    chart.update({ marks: [text({ x: 1, y: 1, label: "note", fill: "#e06600", halo: false })] });
+    chart.update({
+      marks: [
+        text({ x: 1, y: 1, label: { text: "note", style: { color: "#e06600" } }, halo: false }),
+      ],
+    });
     chart.render();
     expect(chart.root.querySelector('g[fill="#e06600"]')!.hasAttribute("stroke")).toBe(false);
     chart.destroy();

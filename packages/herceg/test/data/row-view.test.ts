@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { category } from "../../src/data/column.ts";
-import { col, when } from "../../src/data/expression.ts";
+import { col, when } from "../../src/data/expr.ts";
 import { RowSet } from "../../src/data/row-set.ts";
 import { rowView } from "../../src/data/row-view.ts";
 import { table } from "../../src/data/table.ts";

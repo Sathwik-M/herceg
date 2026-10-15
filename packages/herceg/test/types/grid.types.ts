@@ -2,7 +2,7 @@
 import { expectTypeOf } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { count, max, mean, median, min, sum } from "../../src/data/derive.ts";
-import { col } from "../../src/data/expression.ts";
+import { col } from "../../src/data/expr.ts";
 import { type GroupKey, groupRows, type RowGroups } from "../../src/data/groups.ts";
 import { rowView } from "../../src/data/row-view.ts";
 import { selectionStore } from "../../src/data/selection.ts";

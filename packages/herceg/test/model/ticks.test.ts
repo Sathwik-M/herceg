@@ -395,10 +395,14 @@ describe("scales", () => {
 });
 
 describe("what needs the guide compiler", () => {
-  it("is ticks other than a number, patterns, functions, scales, guides, and legend layouts", () => {
+  it("is ticks other than a number, patterns, functions, position scales, guides, and legend layouts", () => {
     const marks = [line(week, { x: "t", y: "v" })];
     expect(needsGuides({ marks, x: { ticks: 5, format: { month: "short" } } })).toBe(false);
     expect(needsGuides({ marks, legend: { place: { side: "bottom" } } })).toBe(false);
+    // Scales of categories are the feature compiler's.
+    expect(needsGuides({ marks, scales: { site: { type: "ordinal" } } } as ChartConfig)).toBe(
+      false,
+    );
     for (const config of [
       { x: { ticks: { count: 4 } } },
       { x: { ticks: { every: "day" } } },
@@ -406,7 +410,7 @@ describe("what needs the guide compiler", () => {
       { y: { ticks: () => [1] } },
       { y: { format: { number: ".1f" } } },
       { y: { tooltipFormat: (v: number) => String(v) } },
-      { scales: {} },
+      { scales: { y: {} } },
       { guides: [] },
       { legend: { columns: 2 } },
     ])
@@ -420,7 +424,7 @@ describe("what needs the guide compiler", () => {
       x: { ticks: { every: "day" } },
     });
     model.setSize(800, 300);
-    model.useGuides(guides);
+    model.use(guides);
     model.scene(estimateText);
     expect(xTicks(model).every((t) => (t - start) % (24 * HOUR) === 0)).toBe(true);
   });

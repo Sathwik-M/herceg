@@ -14,7 +14,7 @@ import {
   releaseScratch,
   stepPolyline,
 } from "./curve.ts";
-import type { Frame } from "./mark.ts";
+import type { Frame, Mark } from "./mark.ts";
 import { rowOf, type Series, visibleRange } from "./series.ts";
 
 /** The positions scale only needs these fields while tracing a path. */
@@ -87,6 +87,37 @@ export class IndexUse {
     if (!draw || draw.count < 2 || replaced > draw.previous) return undefined;
     return source.minMaxIndex(field as never);
   }
+}
+
+/**
+ * Traces a band's edges as `traceBand` does, positions [start, end) in view
+ * written into them by `fill`, which reduces runs of them with `reduce`
+ * (for the feature compiler, which decides the runs).
+ */
+export function traceBandWith(
+  series: Series,
+  frame: TraceFrame,
+  curve: Curve | undefined,
+  fill: (
+    upper: Polyline,
+    lower: Polyline,
+    start: number,
+    end: number,
+    reduce: (y: NumericArray, start: number, end: number, out: Polyline) => void,
+  ) => void,
+): { upper: Polyline; lower: Polyline } {
+  const upper = frame.polyline(series.key, "upper");
+  const lower = frame.polyline(series.key, "lower");
+  upper.reset();
+  lower.reset();
+  const [start, end] = drawnRange(series, frame);
+  fill(upper, lower, start, end, (y, a, b, out) => reduce(series, y, a, b, frame, out));
+  const edges = {
+    upper: stepped(upper, frame, series.key, "upper", curve),
+    lower: stepped(lower, frame, series.key, "lower", curve),
+  };
+  edges.upper.whole = edges.lower.whole = false;
+  return edges;
 }
 
 function reduce(
@@ -178,7 +209,9 @@ export function tracePath(
   const path = frame.polyline(series.key, stage);
   path.reset();
   const [start, end] = curve === "monotone" ? curveRows(series, frame) : drawnRange(series, frame);
-  reduce(series, y, start, end, frame, path, index);
+  const step = (a: number, b: number) => reduce(series, y, a, b, frame, path, index);
+  const trace = series.features?.trace;
+  trace ? trace(series, y, frame, stage, path, start, end, step) : step(start, end);
   const traced =
     curve === "monotone"
       ? frame.polyline(series.key, `${stage}-curve`)
@@ -563,6 +596,19 @@ function forEachRun(n: number, valid: (k: number) => boolean, run: (a: number, b
       a = -1;
     }
   }
+}
+
+/**
+ * The union of marks' extents, each with its mark: marks whose extents only
+ * stand in for data (`Mark.domainFallback`: annotations that do not count
+ * toward domains) count only when no other mark has an extent.
+ */
+export function domainExtent(
+  extents: readonly (readonly [Mark, readonly [number, number] | undefined])[],
+): [number, number] | undefined {
+  const pass = (fallback: boolean) =>
+    unionExtent(extents.map(([mark, e]) => (!!mark.domainFallback === fallback ? e : undefined)));
+  return pass(false) ?? pass(true);
 }
 
 export function unionExtent(

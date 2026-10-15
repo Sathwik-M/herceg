@@ -383,7 +383,12 @@ export class Inspector {
     const py = y.map(across);
     if (!finite(px) || !finite(py)) return undefined;
     if ((x.type === "band" && at < 0) || (y.type === "band" && across < 0)) return undefined;
-    if (x.breaks?.hides(at) || !(mark.shows?.(s, row, y, x) ?? true)) return undefined;
+    if (
+      x.breaks?.hides(at) ||
+      !(mark.shows?.(s, row, y, x) ?? true) ||
+      s.features?.drawn?.(row) === false
+    )
+      return undefined;
     if (s.range) {
       const along = mark.tooltip === "y";
       const low = (along ? s.x0 : s.y0)?.[row] ?? Number.NaN;

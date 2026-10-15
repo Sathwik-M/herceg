@@ -1,7 +1,7 @@
 // Points on category axes (strip and dot plots), in one panel and in panels
 // with categories of their own.
 import { describe, expect, it } from "vitest";
-import { col } from "../../src/data/expression.ts";
+import { col } from "../../src/data/expr.ts";
 import { rowView } from "../../src/data/row-view.ts";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";

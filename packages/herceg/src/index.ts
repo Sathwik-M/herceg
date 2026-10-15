@@ -25,7 +25,7 @@ export {
   sum,
   variance,
 } from "./data/derive.ts";
-export { col, Expr, type Operand, when } from "./data/expression.ts";
+export { col, Expr, type Operand, when } from "./data/expr.ts";
 export {
   type Feature,
   type FeatureCollection,

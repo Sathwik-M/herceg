@@ -15,6 +15,7 @@ import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { measurePdfText } from "../../src/render/pdf-fonts.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type {
+  LabelsGeometry,
   MarkGeometry,
   RectGeometry,
   RuleGeometry,
@@ -48,7 +49,7 @@ describe("rule", () => {
     const { scene, model } = build({
       marks: [
         line(metrics, { x: "time", y: "value" }),
-        rule(deploys, { x: "time", textField: "version" }),
+        rule(deploys, { x: "time", label: { field: "version" }, contributeDomain: true }),
       ],
     });
     // The x domain stretches to include every event.
@@ -59,12 +60,26 @@ describe("rule", () => {
     expect(rules[0]!.y1).toBe(scene.panels[0]!.plot.y);
   });
 
+  it("leave the domains to the data unless they count toward them", () => {
+    const late = rule({ x: start + 100 * hour, label: "late" });
+    const { model, scene } = build({ marks: [line(metrics, { x: "time", y: "value" }), late] });
+    expect(model.xScale()!.domain[1]).toBeLessThan(start + 30 * hour);
+    expect(of(scene, "rule")).toHaveLength(0);
+    const counted = build({
+      marks: [
+        line(metrics, { x: "time", y: "value" }),
+        rule({ x: start + 100 * hour, label: "late", contributeDomain: true }),
+      ],
+    });
+    expect(counted.model.xScale()!.domain[1]).toBeGreaterThanOrEqual(start + 100 * hour);
+  });
+
   it("formats number text for the chart's locale and takes Date constants", () => {
     const limits = table({ y: [1234.5], label: [1234.5] });
     const { scene } = build({
       marks: [
         line(metrics, { x: "time", y: "value" }),
-        rule(limits, { y: "y", textField: "label" }),
+        rule(limits, { y: "y", label: { field: "label" }, contributeDomain: true }),
         rule({ x: new Date(start + hour), label: "start" }),
       ],
     });
@@ -74,7 +89,10 @@ describe("rule", () => {
   it("leaves rules outside the view out and needs a table for fields", () => {
     const events = table({ at: [0, 1000] });
     const { scene, model } = build({
-      marks: [line(metrics, { x: "time", y: "value" }), rule(events, { x: "at" })],
+      marks: [
+        line(metrics, { x: "time", y: "value" }),
+        rule(events, { x: "at", contributeDomain: true }),
+      ],
     });
     model.setViewport([start, start + hour]);
     expect(of(model.scene(estimateText), "rule")).toHaveLength(0);
@@ -85,8 +103,8 @@ describe("rule", () => {
     expect(() => region({ x1: "2026-01-21", x2: "2026-01-25" } as never)).toThrow(
       'region x1: "2026-01-21" names a field',
     );
-    expect(() => rule({ y: 250, textField: "version" } as never)).toThrow(
-      'rule textField: "version" names a field, and fields need a table; pass the table first, or give constant text as label',
+    expect(() => rule({ y: 250, label: { field: "version" } } as never)).toThrow(
+      'rule label.field: "version" names a field, and fields need a table; pass the table first, or give constant text as label',
     );
   });
 });
@@ -122,7 +140,7 @@ describe("region", () => {
     const { model } = build({
       marks: [
         line(metrics, { x: "time", y: "value" }),
-        region(incidents, { x1: "from", x2: "to", textField: "title" }),
+        region(incidents, { x1: "from", x2: "to", label: { field: "title" } }),
       ],
       x: { domain: [start, start + 23 * hour] },
     });
@@ -139,7 +157,10 @@ describe("region", () => {
 
   it("shades y ranges across the plot's width and counts them toward y", () => {
     const { scene, model } = build({
-      marks: [line(metrics, { x: "time", y: "value" }), region({ y1: 200, y2: 300 })],
+      marks: [
+        line(metrics, { x: "time", y: "value" }),
+        region({ y1: 200, y2: 300, contributeDomain: true }),
+      ],
     });
     expect(model.yScale()!.domain[1]).toBeGreaterThanOrEqual(300);
     const [rx, , rw] = Array.from((of(scene, "rect")[0] as RectGeometry).rects.subarray(0, 4));
@@ -149,7 +170,7 @@ describe("region", () => {
   it("counts rectangles toward y only where they overlap the x view", () => {
     const boxes = table({ x1: [0, 100], x2: [1, 101], y1: [0, 0], y2: [10, 1000] });
     const { model } = build({
-      marks: [region(boxes, { x1: "x1", x2: "x2", y1: "y1", y2: "y2" })],
+      marks: [region(boxes, { x1: "x1", x2: "x2", y1: "y1", y2: "y2", contributeDomain: true })],
       x: { domain: [0, 2] },
     });
     expect(model.yScale()!.domain[1]).toBe(10);
@@ -214,7 +235,11 @@ describe("text", () => {
     const { scene, model } = build({
       marks: [
         line(metrics, { x: "time", y: "value" }),
-        text({ x: start + 5 * hour, y: 105, label: "Peak", anchor: "start", dx: 6, dy: -8 }),
+        text({
+          x: { data: start + 5 * hour, offset: 6 },
+          y: { data: 105, offset: -8 },
+          label: { text: "Peak", style: { align: "start" } },
+        }),
         text({ x: start + 100 * hour, y: 105, label: "Gone" }),
       ],
       x: { domain: [start, start + 23 * hour] },
@@ -232,8 +257,8 @@ describe("text", () => {
     const { scene } = build({
       marks: [
         line(metrics, { x: "time", y: "value" }),
-        text(peaks, { x: "at", y: "v", textField: "name" }),
-        text(peaks, { x: "at", y: "v", textField: "v" }),
+        text(peaks, { x: "at", y: "v", label: { field: "name" } }),
+        text(peaks, { x: "at", y: "v", label: { field: "v" } }),
       ],
     });
     const [names, values] = of(scene, "text") as TextGeometry[];
@@ -265,7 +290,12 @@ describe("text", () => {
       const { scene, model } = build({
         marks: [
           line(metrics, { x: "time", y: "value" }),
-          text(crowd, { x: "at", y: "v", textField: "name", dy: -10, ...(overlap && { overlap }) }),
+          text(crowd, {
+            x: "at",
+            y: { field: "v", offset: -10 },
+            label: { field: "name" },
+            ...(overlap && { overlap }),
+          }),
         ],
       });
       return { label: (of(scene, "text") as TextGeometry[])[0]!, y: model.yScale()! };
@@ -284,7 +314,14 @@ describe("text", () => {
     // its point; the second has no room left, nor a clear line farther out.
     const corner = table({ at: [10, 10], v: [5, 5], name: ["one", "two"] });
     const { scene, model } = build({
-      marks: [text(corner, { x: "at", y: "v", textField: "name", dy: -10, overlap: "move" })],
+      marks: [
+        text(corner, {
+          x: "at",
+          y: { field: "v", offset: -10 },
+          label: { field: "name" },
+          overlap: "move",
+        }),
+      ],
       x: { domain: [0, 10] },
       y: { domain: [0, 5] },
     });
@@ -306,7 +343,12 @@ describe("text", () => {
     for (const anchor of ["middle", "start", "end"] as const) {
       const { scene, model } = build({
         marks: [
-          text(cluster, { x: "at", y: "v", textField: "name", anchor, dy: -12, overlap: "move" }),
+          text(cluster, {
+            x: "at",
+            y: { field: "v", offset: -12 },
+            label: { field: "name", style: { align: anchor === "middle" ? "center" : anchor } },
+            overlap: "move",
+          }),
         ],
         x: { domain: [0, 10] },
         y: { domain: [0, 10] },
@@ -372,7 +414,14 @@ describe("text", () => {
     // Labels in reach of their point need no line.
     const near = table({ at: [5, 5], v: [5, 5], name: ["a", "b"] });
     const close = build({
-      marks: [text(near, { x: "at", y: "v", textField: "name", dy: -12, overlap: "move" })],
+      marks: [
+        text(near, {
+          x: "at",
+          y: { field: "v", offset: -12 },
+          label: { field: "name" },
+          overlap: "move",
+        }),
+      ],
       x: { domain: [0, 10] },
       y: { domain: [0, 10] },
     });
@@ -383,7 +432,14 @@ describe("text", () => {
       height: 300,
       x: { domain: [0, 10] },
       y: { domain: [0, 10] },
-      marks: [text(cluster, { x: "at", y: "v", textField: "name", dy: -12, overlap: "move" })],
+      marks: [
+        text(cluster, {
+          x: "at",
+          y: { field: "v", offset: -12 },
+          label: { field: "name" },
+          overlap: "move",
+        }),
+      ],
     });
     expect(svg).toContain(`fill="none" stroke="${LIGHT.muted}" stroke-width="1"`);
   });
@@ -394,7 +450,14 @@ describe("text", () => {
     const v = [5.108, 5.261, 4.93, 5.012, 5.199, 4.721, 4.732, 5.018];
     const points = table({ at, v, name: at.map((_, i) => `p${i}`) });
     const { scene } = build({
-      marks: [text(points, { x: "at", y: "v", textField: "name", dy: -12, overlap: "move" })],
+      marks: [
+        text(points, {
+          x: "at",
+          y: { field: "v", offset: -12 },
+          label: { field: "name" },
+          overlap: "move",
+        }),
+      ],
       x: { domain: [0, 10] },
       y: { domain: [0, 10] },
     });
@@ -415,7 +478,12 @@ describe("text", () => {
     const edge = table({ at: [10, 2], v: [2.5, 2.5], name: ["right edge", ""] });
     const { scene, model } = build({
       marks: [
-        text(edge, { x: "at", y: "v", textField: "name", anchor: "end", dx: 8, overlap: "move" }),
+        text(edge, {
+          x: { field: "at", offset: 8 },
+          y: "v",
+          label: { field: "name", style: { align: "end" } },
+          overlap: "move",
+        }),
       ],
       x: { domain: [0, 10] },
       y: { domain: [0, 5] },
@@ -429,16 +497,66 @@ describe("text", () => {
     // An empty label before a visible one at the same point takes no room.
     const pair = table({ at: [5, 5], v: [2, 2], name: ["", "shown"] });
     const hidden = build({
-      marks: [text(pair, { x: "at", y: "v", textField: "name", overlap: "hide" })],
+      marks: [text(pair, { x: "at", y: "v", label: { field: "name" }, overlap: "hide" })],
     });
     expect((of(hidden.scene, "text") as TextGeometry[])[0]!.labels).toEqual(["shown"]);
+  });
+
+  it("keep labels in boxes apart by their boxes", () => {
+    // 56 pixels apart: the words fit between, their padded boxes do not.
+    const pair = table({ at: [4, 5], v: [5, 5], name: ["abcd", "efgh"] });
+    const labels = (padding: number) =>
+      (
+        of(
+          build({
+            marks: [
+              text(pair, {
+                x: "at",
+                y: "v",
+                label: { field: "name", style: { background: { fill: "#ffffff" }, padding } },
+                overlap: "hide",
+              }),
+            ],
+            x: { domain: [0, 10] },
+            y: { domain: [0, 10] },
+          }).scene,
+          "labels",
+        ) as LabelsGeometry[]
+      ).flatMap((g) => g.items.map((item) => item.text));
+    expect(labels(2)).toEqual(["abcd", "efgh"]);
+    expect(labels(20)).toEqual(["abcd"]);
+    // Boxes as tall as their line height, one over the other 36 pixels apart.
+    const column = table({ at: [5, 5], v: [4, 5.2], name: ["abcd", "efgh"] });
+    const tall = (lineHeight: number) =>
+      (
+        of(
+          build({
+            marks: [
+              text(column, {
+                x: "at",
+                y: "v",
+                label: {
+                  field: "name",
+                  style: { background: { fill: "#ffffff" }, padding: 2, lineHeight },
+                },
+                overlap: "hide",
+              }),
+            ],
+            x: { domain: [0, 10] },
+            y: { domain: [0, 10] },
+          }).scene,
+          "labels",
+        ) as LabelsGeometry[]
+      ).flatMap((g) => g.items.map((item) => item.text));
+    expect(tall(1.25)).toHaveLength(2);
+    expect(tall(10)).toHaveLength(1);
   });
 
   it("keep labels apart in PDF layout, measured in the PDF's own fonts", () => {
     // Twenty i's are wider in Times than the Helvetica estimate allows for.
     const pair = table({ at: [3, 6], v: [5, 5], name: ["i".repeat(20), "i".repeat(20)] });
     const model = new ChartModel({
-      marks: [text(pair, { x: "at", y: "v", textField: "name", overlap: "hide" })],
+      marks: [text(pair, { x: "at", y: "v", label: { field: "name" }, overlap: "hide" })],
       x: { domain: [0, 9] },
       y: { domain: [0, 10] },
       theme: { style: { text: { font: "Georgia, serif" } } },
@@ -455,7 +573,7 @@ describe("text", () => {
   it("finish quickly with offsets far outside the chart", () => {
     for (const overlap of ["hide", "move"] as const) {
       const { scene } = build({
-        marks: [text({ x: 5, y: 5, label: "far", dx: 1e20, overlap })],
+        marks: [text({ x: { data: 5, offset: 1e20 }, y: 5, label: "far", overlap })],
         x: { domain: [0, 10] },
         y: { domain: [0, 10] },
       });
@@ -464,16 +582,16 @@ describe("text", () => {
     }
   });
 
-  it("needs exactly one of label or text", () => {
+  it("needs a label: its text or a field", () => {
     expect(() => text({ x: 1, y: 1 } as never)).toThrow(
-      /text: needs exactly one of label and textField/,
+      "text label: required; give its text, or { field }",
     );
     expect(() =>
-      text(metrics, { x: "time", y: "value", label: "a", textField: "value" } as never),
-    ).toThrow(/text: needs exactly one of label and textField/);
-    expect(() => text(metrics, { x: "time", y: "value", textField: "time" as never })).toThrow(
-      /text textField: field "time" holds time values; expected category or number/,
-    );
+      text(metrics, { x: "time", y: "value", label: { text: "a", field: "value" } } as never),
+    ).toThrow("text label: needs one of text and field");
+    expect(() =>
+      text(metrics, { x: "time", y: "value", label: { field: "time" } as never }),
+    ).toThrow(/text label\.field: field "time" holds time values; expected category or number/);
   });
 });
 
@@ -485,7 +603,7 @@ describe("annotations in the text alternative", () => {
         region({ x1: start + 5 * hour, x2: start + 6 * hour, label: "Incident" }),
         line(metrics, { x: "time", y: "value", label: "p99" }),
         rule({ y: 140, label: "SLO" }),
-        rule(deploys, { x: "at", textField: "version" }),
+        rule(deploys, { x: "at", label: { field: "version" } }),
         text({ x: start + 23 * hour, y: 123, label: "123 ms" }),
       ],
     });
@@ -532,14 +650,18 @@ describe("annotations in static SVG", () => {
       height: 200,
       marks: [
         line(metrics, { x: "time", y: "value" }),
-        text({ x: start + 3 * hour, y: 110, label: "light", fill: "#ffffff" }),
+        text({
+          x: start + 3 * hour,
+          y: 110,
+          label: { text: "light", style: { color: "#ffffff" } },
+        }),
       ],
     });
     expect(svg).toContain('<g fill="#ffffff" text-anchor="middle" stroke="#000000"');
     const functional = renderToSVG({
       width: 400,
       height: 200,
-      marks: [text({ x: 1, y: 1, label: "light", fill: "rgb(255 255 255)" })],
+      marks: [text({ x: 1, y: 1, label: { text: "light", style: { color: "rgb(255 255 255)" } } })],
     });
     expect(functional).toContain('stroke="#000000"');
   });

@@ -1,6 +1,7 @@
 import {
   type AxisFormat,
   type CustomSeries,
+  col,
   custom,
   type DataDrawContext,
   type DrawContext,
@@ -171,7 +172,7 @@ describe("<Chart>", () => {
     it(`passes ${stack} and inside-out area options through Vue`, () => {
       const { view, chart } = chartRef();
       mount(
-        `<Chart ref="view" renderer="svg"><Area :data="metrics" x="t" :y="['a', 'b']" :stack="stack" stack-order="inside-out" /></Chart>`,
+        `<Chart ref="view" renderer="svg"><Area :data="metrics" x="t" :y="['a', 'b']" :stack="{ offset: stack, order: 'inside-out' }" /></Chart>`,
         () => ({ metrics, view, stack }),
       );
       expect(chart().toSVG()).toContain('fill-opacity="0.85"');
@@ -181,9 +182,28 @@ describe("<Chart>", () => {
       expect(chart().toSVG()).not.toBe(before);
     });
   }
+  it("passes encodings, markers, conditions, and label objects through Vue", async () => {
+    const { view, chart } = chartRef();
+    const sites = table({ t: [0, 1, 0, 1], v: [1, 2, -1, 3], site: ["a", "a", "b", "b"] });
+    const where = col("v").gt(0);
+    const scales = { color: { type: "ordinal", map: { b: "#00ab41" } } };
+    const label = { text: "Goal", place: { attachment: "start", outside: true } };
+    mount(
+      `<Chart ref="view" renderer="svg" :scales="scales">
+        <Line :data="sites" x="t" y="v" series="site" color="site" markers :where="where" />
+        <Rule :y="2" :label="label" />
+      </Chart>`,
+      () => ({ view, sites, where, scales, label }),
+    );
+    await chart().loading;
+    const svg = chart().toSVG();
+    expect(svg).toContain('stroke="#00ab41"');
+    expect(svg).toContain(">Goal<");
+  });
+
   it("accepts fill bar options through Vue", () => {
     mount(
-      `<Chart renderer="svg"><Bar :data="metrics" x="t" :y="['a', 'b']" stack="fill" :labels="{ style: 'percent' }" /></Chart>`,
+      `<Chart renderer="svg"><Bar :data="metrics" x="t" :y="['a', 'b']" stack="fill" :labels="{ format: { style: 'percent' } }" /></Chart>`,
       () => ({ metrics }),
     );
     expect(host.textContent).toContain("20%");
@@ -511,7 +531,7 @@ describe("<Chart>", () => {
       `<Chart>
         <Region :x1="0.5" :x2="1.5" />
         <Line :data="metrics" x="t" y="a" />
-        <Rule :data="events" x="at" textField="name" />
+        <Rule :data="events" x="at" :label="{ field: 'name' }" />
         <Text :x="3" :y="4" label="peak" />
       </Chart>`,
       () => ({ metrics, events }),
@@ -561,12 +581,12 @@ describe("<Chart>", () => {
     const hosts = table({ t: [0, 1, 0], cpu: [1, 2, 3], host: ["a", "a", "b"] });
     mount(
       `<Chart ref="view">
-        <Area :data="hosts" x="t" y="cpu" series="host" stack stack-gaps="interpolate" />
+        <Area :data="hosts" x="t" y="cpu" series="host" :stack="{ gaps: 'interpolate' }" />
       </Chart>`,
       () => ({ hosts, view }),
     );
     const [area] = optionsOf(chart()).marks;
-    expect(area!.spec).toMatchObject({ series: "host", stack: true, stackGaps: "interpolate" });
+    expect(area!.spec).toMatchObject({ series: "host", stack: { gaps: "interpolate" } });
     expect(paths()).toHaveLength(2);
   });
 

@@ -39,7 +39,7 @@ it("draws nothing while the compiler cannot load, and draws once nothing needs i
   // Still blocked after the failure: no frame, no export.
   chart.render();
   expect(texts()).toEqual([]);
-  expect(() => chart.toSVG()).toThrow(/the guide compiler has not loaded; await chart.loading/);
+  expect(() => chart.toSVG()).toThrow(/chart: its code has not loaded; await chart.loading/);
   // An update still needing it tries again, and fails again.
   chart.update({ y: { title: "Again", format: { number: ".2f" } } });
   await expect(chart.loading).rejects.toThrow();

@@ -104,8 +104,18 @@ for (const renderer of ["svg", "canvas"] as const) {
     it(`reads fill bar shares and raw values through pointer and keyboard on ${renderer}, ${horizontal ? "horizontal" : "vertical"}`, async () => {
       const data = table({ band: ["N", "S"], a: [2, 4], b: [6, 4] });
       const mark = horizontal
-        ? bar(data, { y: "band", x: ["a", "b"], stack: "fill", labels: { style: "percent" } })
-        : bar(data, { x: "band", y: ["a", "b"], stack: "fill", labels: { style: "percent" } });
+        ? bar(data, {
+            y: "band",
+            x: ["a", "b"],
+            stack: "fill",
+            labels: { format: { style: "percent" } },
+          })
+        : bar(data, {
+            x: "band",
+            y: ["a", "b"],
+            stack: "fill",
+            labels: { format: { style: "percent" } },
+          });
       const chart = createChart(host, {
         renderer,
         marks: [mark],

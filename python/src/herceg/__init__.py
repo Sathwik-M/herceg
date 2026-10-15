@@ -68,6 +68,24 @@ from ._chart import (
 )
 from ._data import Matrix
 from ._derive import Derived, Expr, col, derive, when
+from ._encoding import (
+    BarLabels,
+    Channel,
+    Continuity,
+    DataPosition,
+    Duration,
+    Encodings,
+    Fraction,
+    Label,
+    LabelPlace,
+    MarkerStyle,
+    MarkStyle,
+    Pixels,
+    Position,
+    SeriesStyle,
+    Stack,
+    StyleMap,
+)
 from ._events import (
     DrillRoot,
     InspectedField,
@@ -116,6 +134,22 @@ from ._style import (
 __all__ = [
     "save",
     "to_pdf",
+    "BarLabels",
+    "Channel",
+    "Continuity",
+    "DataPosition",
+    "Duration",
+    "Encodings",
+    "Fraction",
+    "Label",
+    "LabelPlace",
+    "MarkerStyle",
+    "MarkStyle",
+    "Pixels",
+    "Position",
+    "SeriesStyle",
+    "Stack",
+    "StyleMap",
     "SCHEMES",
     "SYMBOLS",
     "Animation",

@@ -141,7 +141,11 @@ def test_review_fixes_hold():
 
 def _labelled(derived: hg.Derived, column: str) -> str:
     """SVG labelling each row with ``column``, as the chart's JavaScript computes it."""
-    return hg.Chart(derived, width=200, height=100).text(x=0, y=0, text_field=column).to_svg()
+    return (
+        hg.Chart(derived, width=200, height=100)
+        .text(x=0, y=0, label=hg.Label(field=column))
+        .to_svg()
+    )
 
 
 def test_counts_keep_the_source_rows_through_one_real_column():
@@ -154,7 +158,7 @@ def test_counts_keep_the_source_rows_through_one_real_column():
         hg.derive(data).aggregate(n="count"),
         hg.derive(hg.derive(data).calculate("blob", 2)).aggregate(n="count"),
     ):
-        spec, _ = hg.Chart(counted).text(x=0, y=0, text_field="n").to_spec()
+        spec, _ = hg.Chart(counted).text(x=0, y=0, label=hg.Label(field="n")).to_spec()
         assert list(spec["data"]["data"]["columns"]) == ["x"]
         assert ">3</text>" in _labelled(counted, "n")
     # A source column a step replaces is not sent for a later step that reads it.
@@ -166,7 +170,7 @@ def test_counts_keep_the_source_rows_through_one_real_column():
     with pytest.raises(
         ValueError, match="derive: counting the rows .* column 'blob' holds unsupported values"
     ):
-        hg.Chart(unsupported).text(x=0, y=0, text_field="n").to_spec()
+        hg.Chart(unsupported).text(x=0, y=0, label=hg.Label(field="n")).to_spec()
 
 
 def test_rows_are_counted_for_every_kind_of_source():
@@ -187,7 +191,9 @@ def test_live_charts_append_to_sources_counted_through_one_column():
     from herceg._live import LiveChart
 
     data = {"blob": [{}, {}], "x": [1.0, 2.0]}
-    live = LiveChart(hg.Chart(hg.derive(data).aggregate(n="count")).text(x=0, y=0, text_field="n"))
+    live = LiveChart(
+        hg.Chart(hg.derive(data).aggregate(n="count")).text(x=0, y=0, label=hg.Label(field="n"))
+    )
     message, buffers = live.append({"blob": [{}, {}, {}], "x": [3.0, 4.0, 5.0]}, data=data)
     assert list(message["columns"]) == ["x"]
     assert np.frombuffer(buffers[0]).tolist() == [3.0, 4.0, 5.0]

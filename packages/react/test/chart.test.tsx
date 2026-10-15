@@ -127,7 +127,12 @@ describe("<Chart>", () => {
             }}
             renderer="svg"
           >
-            <Area data={metrics} x="t" y={["a", "b"]} stack={stack} stackOrder="inside-out" />
+            <Area
+              data={metrics}
+              x="t"
+              y={["a", "b"]}
+              stack={{ offset: stack, order: "inside-out" }}
+            />
           </Chart>,
         ),
       );
@@ -140,11 +145,49 @@ describe("<Chart>", () => {
       expect(chart!.toSVG()).not.toBe(before);
     });
   }
+  it("passes encodings, styles by series, markers, and conditions through React", async () => {
+    let chart: HercegChart | null = null;
+    const sites = table({ t: [0, 1, 0, 1], v: [1, 2, -1, 3], site: ["a", "a", "b", "b"] });
+    act(() =>
+      root.render(
+        <Chart
+          ref={(value) => {
+            chart = value;
+          }}
+          renderer="svg"
+          scales={{ color: { type: "ordinal", map: { b: "#00ab41" } } }}
+        >
+          <Line
+            data={sites}
+            x="t"
+            y="v"
+            series="site"
+            color="site"
+            markers
+            where={col("v").gt(0)}
+            style={{ by: { map: { a: { dash: "--" } } } }}
+          />
+          <Rule y={2} label={{ text: "Goal", place: { attachment: "start", outside: true } }} />
+        </Chart>,
+      ),
+    );
+    await act(() => chart!.loading);
+    const svg = chart!.toSVG();
+    expect(svg).toContain('stroke="#00ab41"');
+    expect(svg).toContain(">Goal<");
+  });
+
   it("accepts fill bar options through React", () => {
     act(() =>
       root.render(
         <Chart renderer="svg">
-          <Bar data={metrics} x="t" y={["a", "b"]} stack="fill" labels={{ style: "percent" }} />
+          <Bar
+            data={metrics}
+            x="t"
+            y={["a", "b"]}
+            stack="fill"
+            labels={{ format: { style: "percent" } }}
+          />
         </Chart>,
       ),
     );
@@ -566,7 +609,7 @@ describe("<Chart>", () => {
         <Chart>
           <Region x1={0.5} x2={1.5} />
           <Line data={metrics} x="t" y="a" />
-          <Rule data={events} x="at" textField="name" />
+          <Rule data={events} x="at" label={{ field: "name" }} />
           <Text x={3} y={4} label="peak" />
         </Chart>,
       ),

@@ -1,9 +1,12 @@
 // The values of a category field in order of first appearance, taking
-// places in a cycle of shapes or colors: point marks encode symbol and
-// category color fields this way, with a key of the values in the legend.
+// places in a cycle of shapes or colors: point marks encode symbol fields
+// this way, and 3D and map points category colors, with a key of the
+// values in the legend. (Points' colors go through the chart's color scale;
+// see marks/features.)
 
 import type { Schema, Table } from "../data/table.ts";
 import { symbolPath } from "../draw/symbols.ts";
+import type { CategoryColors } from "../model/features.ts";
 import type { Theme } from "../theme.ts";
 import type { GlyphKey } from "./mark.ts";
 
@@ -101,18 +104,38 @@ export function categoryTones(colors: Appearance, table: Table<Schema>, theme: T
 
 /** A key of a category `color` field's values in their colors, in order of appearance. */
 export function colorKey(colors: Appearance, table: Table<Schema>, theme: Theme): GlyphKey {
-  const { dictionary } = table.categories(colors.field as never);
   const palette = categoryColors(theme);
   const tones = categoryTones(colors, table, theme);
+  const { dictionary } = table.categories(colors.field as never);
+  return keyOf(colors.field, dictionary, colors.order(table), (code) => palette[tones[code]!]!);
+}
+
+/** A key of a category `color` field's values in the colors a color scale gives them. */
+export function scaleKey(categories: CategoryColors): GlyphKey {
+  const { colors, tones } = categories;
+  return keyOf(
+    categories.field,
+    categories.dictionary,
+    categories.order,
+    (code) => colors[tones[code]!]!,
+  );
+}
+
+function keyOf(
+  title: string,
+  dictionary: readonly string[],
+  order: readonly number[],
+  color: (code: number) => string,
+): GlyphKey {
   const glyph = symbolPath("circle", 0, 0, KEY_RADIUS);
   return {
-    title: colors.field,
+    title,
     channel: "color",
-    entries: colors.order(table).map((code) => ({
+    entries: order.map((code) => ({
       label: dictionary[code]!,
       glyph,
       r: KEY_RADIUS,
-      color: palette[tones[code]!]!,
+      color: color(code),
     })),
   };
 }

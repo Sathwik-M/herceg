@@ -19,7 +19,8 @@ export const ruleDrawing: Drawing<RuleGeometry> = {
   guide: true,
   size: () => 0,
   svg(rule, { theme }) {
-    let out = `<line x1="${n(rule.x1)}" y1="${n(rule.y1)}" x2="${n(rule.x2)}" y2="${n(rule.y2)}" stroke="${escapeXml(rule.stroke)}" stroke-width="${rule.strokeWidth}"${dashAttribute(rule.dash)}/>`;
+    const opacity = rule.opacity === undefined ? "" : ` stroke-opacity="${rule.opacity}"`;
+    let out = `<line x1="${n(rule.x1)}" y1="${n(rule.y1)}" x2="${n(rule.x2)}" y2="${n(rule.y2)}" stroke="${escapeXml(rule.stroke)}" stroke-width="${rule.strokeWidth}"${dashAttribute(rule.dash)}${opacity}/>`;
     if (rule.label) {
       const { x, y, anchor } = ruleLabel(rule, theme.fontSize);
       out += `<text x="${n(x)}" y="${n(y)}" text-anchor="${anchor}" fill="${escapeXml(theme.muted)}">${escapeXml(rule.label)}</text>`;

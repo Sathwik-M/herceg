@@ -59,6 +59,7 @@ import { panels } from "../../src/model/panels.ts";
 import { rowSelection } from "../../src/model/row-selection.ts";
 import { brushedRows } from "../../src/model/selected-rows.ts";
 import { renderToPDF } from "../../src/pdf.ts";
+import { staticCompilers } from "../../src/render/compilers.ts";
 import {
   type Geometry,
   guidesOf,
@@ -67,6 +68,7 @@ import {
   type SegmentGeometry,
   type TextGeometry,
 } from "../../src/scene/scene.ts";
+import { validateSpec } from "../../src/spec/validate.ts";
 import { legendOf, rampsOf } from "../helpers/guides.ts";
 
 function build(config: ChartConfig) {
@@ -256,7 +258,7 @@ const cartesian: MarkCase[] = [
   },
   {
     name: "rule",
-    make: (p) => rule({ x: 1, label: "Contract rule", ...p }),
+    make: (p) => rule({ x: 1, label: "Contract rule", contributeDomain: true, ...p }),
     kind: "rule",
     repeats: true,
     reading: "summary",
@@ -265,7 +267,16 @@ const cartesian: MarkCase[] = [
   },
   {
     name: "region",
-    make: (p) => region({ x1: 0, x2: 2, y1: 1, y2: 3, label: "Contract region", ...p }),
+    make: (p) =>
+      region({
+        x1: 0,
+        x2: 2,
+        y1: 1,
+        y2: 3,
+        label: "Contract region",
+        contributeDomain: true,
+        ...p,
+      }),
     kind: "rect",
     repeats: true,
     reading: "summary",
@@ -273,7 +284,7 @@ const cartesian: MarkCase[] = [
   },
   {
     name: "text",
-    make: (p) => text({ x: 1, y: 2, label: "Contract text", ...p }),
+    make: (p) => text({ x: 1, y: 2, label: "Contract text", contributeDomain: true, ...p }),
     kind: "text",
     repeats: true,
     reading: "summary",
@@ -564,17 +575,23 @@ describe("capabilities: facets", () => {
   const boundAnnotations = [
     {
       name: "rule",
-      make: (p?: Placement) => rule(samples, { x: "x", textField: "note", ...p }),
+      make: (p?: Placement) => rule(samples, { x: "x", label: { field: "note" }, ...p }),
       kind: "rule",
     },
     {
       name: "region",
-      make: (p?: Placement) => region(samples, { y1: "low", y2: "high", textField: "note", ...p }),
+      make: (p?: Placement) =>
+        region(samples, {
+          y1: "low",
+          y2: "high",
+          label: { field: "note" },
+          ...p,
+        }),
       kind: "rect",
     },
     {
       name: "text",
-      make: (p?: Placement) => text(samples, { x: "x", y: "y", textField: "note", ...p }),
+      make: (p?: Placement) => text(samples, { x: "x", y: "y", label: { field: "note" }, ...p }),
       kind: "text",
     },
   ] satisfies MarkCase[];
@@ -1859,4 +1876,42 @@ it("capabilities: line styles reach line and rule geometry as width-scaled dashe
   const [trace, guide] = scene.panels[0]!.marks;
   expect(trace).toMatchObject({ dash: [7.4, 3.2] });
   expect(guide).toMatchObject({ dash: [12.8, 3.2, 2, 3.2] });
+});
+
+describe("capabilities: encodings", () => {
+  const sites = table({ x: [0, 1, 0, 1], y: [1, 2, 3, 4], site: ["a", "a", "b", "b"] });
+  const featured = (config: ChartConfig) => {
+    const model = new ChartModel(
+      { locale: "en-US", timeZone: "UTC", ...config },
+      undefined,
+      ...staticCompilers(),
+    );
+    model.setSize(600, 400, 1);
+    return model.scene(estimateText);
+  };
+
+  it("lines, areas, and bars take channels and scales of categories", () => {
+    const scales = { color: { type: "ordinal" as const, map: { b: "#00ab41" } } };
+    const scene = featured({
+      scales,
+      marks: [
+        line(sites, { x: "x", y: "y", series: "site", color: "site" }),
+        area(sites, { x: "x", y: "y", series: "site", color: "site" }),
+        bar(sites, { x: "x", y: "y", color: "site" }),
+      ],
+    });
+    const paints = scene.panels[0]!.marks.map((g) => {
+      const { stroke, fill } = g as { stroke?: string; fill?: string };
+      return g.kind === "line" ? stroke : fill;
+    });
+    expect(paints.filter((paint) => paint === "#00ab41")).toHaveLength(3);
+  });
+
+  it("points and annotations take no encode in specs", () => {
+    for (const mark of [
+      { type: "point", x: "x", y: "y", encode: { color: { value: "#000000" } } },
+      { type: "rule", y: 1, encode: { stroke: { value: "#000000" } } },
+    ])
+      expect(() => validateSpec({ marks: [mark as never] })).toThrow(/encode/);
+  });
 });

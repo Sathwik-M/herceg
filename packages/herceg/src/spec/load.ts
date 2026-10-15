@@ -57,6 +57,7 @@ import { type RowSelection, rowSelection } from "../model/row-selection.ts";
 import { timeBreaks } from "../scale/breaks.ts";
 import { scheme } from "../scale/schemes.ts";
 import type {
+  AnnotationPosition,
   BinaryType,
   ChartSpec,
   ColumnSpec,
@@ -64,6 +65,7 @@ import type {
   DataSpec,
   Histogram1DSpec,
   Histogram2DSpec,
+  LabelSpec,
   MarkSpec,
   RowSelectionSpec,
   SelectionSpec,
@@ -511,14 +513,20 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
     // Annotations read a table only when a position or their text is a field.
     switch (spec.type) {
       case "rule":
-        return new RuleMark(spec, annotationTable(spec, [spec.x, spec.y], tables));
+        return new RuleMark(
+          spec,
+          annotationTable(spec, [spec.x, spec.y, ...(spec.span ?? [])], tables),
+        );
       case "region":
         return new RegionMark(
           spec,
           annotationTable(spec, [spec.x1, spec.x2, spec.y1, spec.y2], tables),
         );
       case "text":
-        return new TextMark(spec, annotationTable(spec, [spec.x, spec.y], tables));
+        return new TextMark(
+          spec,
+          annotationTable(spec, spec.at ? [spec.at.x, spec.at.y] : [spec.x, spec.y], tables),
+        );
     }
     const source = tableFor(spec.data, tables);
     switch (spec.type) {
@@ -612,11 +620,12 @@ function withScheme<T extends { colors?: string | readonly string[] | undefined 
 }
 
 function annotationTable(
-  spec: { data?: string; textField?: string },
-  positions: readonly (number | string | undefined)[],
+  spec: { data?: string; label?: string | LabelSpec },
+  positions: readonly (AnnotationPosition | undefined)[],
   tables: Map<string, Table>,
 ): Table | undefined {
-  return readsTable(positions, spec.textField) ? tableFor(spec.data, tables) : undefined;
+  const field = typeof spec.label === "object" ? spec.label.field : undefined;
+  return readsTable(positions, field) ? tableFor(spec.data, tables) : undefined;
 }
 
 function tableFor(name: string | undefined, tables: Map<string, Table>): Table {

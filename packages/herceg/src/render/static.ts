@@ -1,9 +1,8 @@
 import { checkFonts } from "../fonts/prepared.ts";
-import { guideCompiler } from "../guides/compile.ts";
 import { estimateText, type MeasureText } from "../layout/text.ts";
 import { describeChart } from "../model/describe.ts";
-import { GUIDE_KIT, type GuideCompiler } from "../model/guides.ts";
 import { type ChartConfig, ChartModel, STATIC_RASTER_RATIO } from "../model/model.ts";
+import { staticCompilers } from "./compilers.ts";
 import { NO_PAGE } from "./fallbacks.ts";
 import { pngDataUrl } from "./png.ts";
 import { checkSizing, renderSvg, type SvgSizing } from "./svg.ts";
@@ -25,12 +24,6 @@ export interface StaticOptions extends ChartConfig, SvgSizing {
 }
 
 let renders = 0;
-/** The guide compiler, made on first use. */
-let guides: GuideCompiler | undefined;
-const compiler = () => {
-  guides ??= guideCompiler(GUIDE_KIT);
-  return guides;
-};
 
 /**
  * Renders a chart to a standalone SVG string. Needs no DOM. With
@@ -43,7 +36,7 @@ export function renderToSVG(options: StaticOptions): string {
     throw new TypeError(
       "renderToSVG: fonts or measureText, not both; fonts measure their own text",
     );
-  const model = new ChartModel(options, NO_PAGE, compiler());
+  const model = new ChartModel(options, NO_PAGE, ...staticCompilers());
   model.setSize(options.width, options.height, 1, STATIC_RASTER_RATIO);
   // What the bound stores hold now is drawn as a mounted chart draws it.
   options.rowSelection?.highlight(model);

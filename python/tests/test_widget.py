@@ -230,7 +230,7 @@ def test_append_and_replace_reach_tables_of_other_marks():
     widget = (
         hg.Chart({"x": [0.0, 1.0], "y": [1.0, 2.0]})
         .line(x="x", y="y")
-        .rule(x="at", text_field="name", data=events)
+        .rule(x="at", label=hg.Label(field="name"), data=events)
         .widget()
     )
     browser = Browser(widget)

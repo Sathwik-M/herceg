@@ -4,7 +4,7 @@
 // say where everything goes, so this module places nothing itself.
 
 import { dashAttribute, escapeXml, n, rectMarkup } from "../draw/markup.ts";
-import { haloAttributes } from "../draw/text.ts";
+import { textItemMarkup } from "../draw/text.ts";
 import { gridStrokes } from "../scene/grid.ts";
 import {
   type ColorbarGuide,
@@ -17,7 +17,6 @@ import {
   type Scene,
   type ShapeItem,
   type SvgContext,
-  type TextItem,
   type TitleGuide,
 } from "../scene/scene.ts";
 import type { StrokePaint } from "../style/style.ts";
@@ -73,40 +72,6 @@ export function strokeAttributes(paint: StrokePaint): string {
   );
 }
 
-/**
- * A text item's markup: only what differs from what the document's root
- * sets (the theme's font and size, and its muted color).
- */
-function textMarkup(item: TextItem, root: Theme): string {
-  const { paint } = item;
-  let out = "";
-  if (item.box) {
-    const box = paint.background!;
-    out += rectMarkup(
-      item.box,
-      box.radius,
-      ` fill="${escapeXml(box.fill)}"${box.stroke ? ` stroke="${escapeXml(box.stroke)}" stroke-width="${box.strokeWidth ?? 1}"` : ""}${rotation(item)}`,
-    );
-  }
-  out += `<text x="${n(item.x)}" y="${n(item.y)}"`;
-  if (item.anchor !== "start") out += ` text-anchor="${item.anchor}"`;
-  if (item.baseline !== "alphabetic") out += ` dominant-baseline="${item.baseline}"`;
-  if (paint.font !== root.font) out += ` font-family="${escapeXml(paint.font)}"`;
-  if (paint.size !== root.fontSize) out += ` font-size="${paint.size}"`;
-  if (paint.italic) out += ` font-style="italic"`;
-  if (paint.weight !== 400) out += ` font-weight="${paint.weight}"`;
-  if (paint.color !== root.muted) out += ` fill="${escapeXml(paint.color)}"`;
-  const opacity = paint.opacity * (item.opacity ?? 1);
-  if (opacity !== 1) out += ` opacity="${opacity}"`;
-  if (item.halo) out += haloAttributes(item.halo);
-  out += rotation(item);
-  return `${out}>${escapeXml(item.text)}</text>`;
-}
-
-function rotation(item: TextItem): string {
-  return item.angle ? ` transform="rotate(${item.angle} ${n(item.x)} ${n(item.y)})"` : "";
-}
-
 /** A shape item's markup: its path about its point, outlined 1 pixel wide when it has a stroke. */
 export function shapeMarkup(item: ShapeItem): string {
   const opacity = item.opacity !== undefined ? ` opacity="${item.opacity}"` : "";
@@ -131,7 +96,7 @@ export function itemsMarkup(
   for (const item of items) {
     switch (item.type) {
       case "text":
-        out += textMarkup(item, root);
+        out += textItemMarkup(item, root);
         break;
       case "segments":
         if (item.coords.length > 0)

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { numberTickLabels, timeTickLabels } from "../../src/format/format.ts";
 import { fromWall, toWall, zoneOffset } from "../../src/format/zone.ts";
-import { isLightColor } from "../../src/scale/color.ts";
+import { alphaOf, isLightColor } from "../../src/scale/color.ts";
 import { BandScale, LinearScale, LogScale, niceLogDomain } from "../../src/scale/scale.ts";
 import { linearTicks, niceDomain, tickStep } from "../../src/scale/ticks.ts";
 import { chooseInterval, niceTimeDomain, TimeScale, timeTicks } from "../../src/scale/time.ts";
@@ -307,6 +307,19 @@ describe("tick labels", () => {
     expect(
       timeTickLabels(months, { unit: "month", step: 1, duration: 30 * 86_400_000 }, "UTC", "en-US"),
     ).toEqual(["Nov", "Dec", "2026"]);
+  });
+});
+
+describe("alphaOf", () => {
+  it("reads a color's own alpha, and takes colors it cannot read as opaque", () => {
+    expect(
+      ["transparent", "#f000", "#ff000000", "rgba(1, 2, 3, 0)", "rgb(1 2 3 / 0%)"].map(alphaOf),
+    ).toEqual([0, 0, 0, 0, 0]);
+    expect(alphaOf("oklch(0.5 0.1 200 / 0.25)")).toBe(0.25);
+    expect(alphaOf("rgb(0, 0, 0)")).toBe(1);
+    // Of a mix, only the mix's alpha would say; it is not read.
+    expect(alphaOf("color-mix(in srgb, rgb(255 0 0 / 0), blue)")).toBe(1);
+    expect(alphaOf("var(--series-1)")).toBe(1);
   });
 });
 

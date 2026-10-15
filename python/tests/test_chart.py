@@ -159,13 +159,15 @@ def test_area_and_series_options_are_checked_like_the_spec_loader():
     with pytest.raises(ValueError, match="area y2: a band needs both y1 and y2"):
         hg.Chart(DATA).area(x="t", y1="p50")
     with pytest.raises(
-        ValueError, match="area stack_gaps: applies to areas stacked by a series column"
+        ValueError, match="area stack gaps: for stacks by a series column; give series"
     ):
-        hg.Chart(DATA).area(x="t", y="p50", series="host", stack_gaps="zero")
+        hg.Chart(DATA).area(x="t", y=["p50", "p99"], stack=hg.Stack(gaps="zero"))
     with pytest.raises(
-        ValueError, match='area stack_gaps: expected "zero" or "interpolate"; received "linear"'
+        ValueError, match='Stack gaps: expected "zero" or "interpolate"; received "linear"'
     ):
-        hg.Chart(DATA).area(x="t", y="p50", series="host", stack=True, stack_gaps="linear")  # type: ignore[arg-type]
+        hg.Chart(DATA).area(x="t", y="p50", series="host", stack=hg.Stack(gaps="linear"))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="Stack order: inside-out orders nonnegative stacks"):
+        hg.Stack(order="inside-out")
     with pytest.raises(
         ValueError, match="line series: several value columns or a series column, not both"
     ):
@@ -201,15 +203,14 @@ def test_outlines_and_constant_fills_reach_the_spec():
 
 def test_areas_stack_by_a_series_column():
     values = {"t": [0.0, 1.0, 2.0, 0.0, 2.0], "n": [1.0, 2.0, 3.0, 10.0, 30.0], "s": [*"aaabb"]}
-    chart = hg.area(values, "t", "n", series="s", stack=True, stack_gaps="interpolate")
+    chart = hg.area(values, "t", "n", series="s", stack=hg.Stack(gaps="interpolate"))
     spec, _ = chart.to_spec()
     assert spec["marks"][0] == {
         "type": "area",
         "x": "t",
         "y": "n",
         "series": "s",
-        "stack": True,
-        "stackGaps": "interpolate",
+        "stack": {"gaps": "interpolate"},
         "data": "data",
     }
     # Both series are drawn, b through the minute it has no row at.
@@ -239,9 +240,14 @@ def test_annotations_take_constants_or_columns():
         hg.Chart(DATA, time_zone="UTC")
         .region(x1=dt.datetime(2026, 1, 1), x2=dt.datetime(2026, 1, 1, 0, 0, 20), label="warmup")
         .line(x="t", y="p50")
-        .rule(x="at", text_field="name", data=events)
-        .rule(y=np.float32(2.5), label="limit")
-        .text(x="t", y="p99", text_field="host", dy=-8)
+        .rule(x="at", label=hg.Label(field="name"), data=events)
+        .rule(y=np.float32(2.5), label="limit", contribute_domain=True)
+        .text(
+            x="t",
+            y=hg.DataPosition(field="p99", offset=-8),
+            label=hg.Label(field="host"),
+            contribute_domain=True,
+        )
     )
     spec, _ = chart.to_spec()
     marks = spec["marks"]
@@ -251,10 +257,13 @@ def test_annotations_take_constants_or_columns():
         "x2": 1767225620000.0,
         "label": "warmup",
     }
-    assert marks[2] == {"type": "rule", "x": "at", "textField": "name", "data": "data2"}
-    assert marks[3] == {"type": "rule", "y": 2.5, "label": "limit"}
-    assert (marks[4]["data"], marks[4]["textField"]) == ("data", "host")
-    crowded, _ = hg.Chart(DATA).text(x="t", y="p50", text_field="host", overlap="move").to_spec()
+    assert marks[2] == {"type": "rule", "x": "at", "label": {"field": "name"}, "data": "data2"}
+    assert marks[3] == {"type": "rule", "y": 2.5, "label": "limit", "contributeDomain": True}
+    assert (marks[4]["data"], marks[4]["label"]) == ("data", {"field": "host"})
+    assert marks[4]["y"] == {"field": "p99", "offset": -8.0}
+    crowded, _ = (
+        hg.Chart(DATA).text(x="t", y="p50", label={"field": "host"}, overlap="move").to_spec()
+    )
     assert crowded["marks"][0]["overlap"] == "move"
     assert sorted(spec["data"]["data"]["columns"]) == ["host", "p50", "p99", "t"]
     svg = chart.to_svg()
@@ -263,26 +272,34 @@ def test_annotations_take_constants_or_columns():
 
 
 def test_annotation_options_are_checked():
-    with pytest.raises(ValueError, match="text: needs exactly one of label and text_field"):
-        hg.Chart(DATA).text(x=1, y=2)
+    with pytest.raises(ValueError, match="Label: give text or field, one of them"):
+        hg.Chart(DATA).text(x=1, y=2, label=hg.Label())
     with pytest.raises(ValueError, match="region x2: needs both x1 and x2"):
         hg.Chart(DATA).region(x1=1)
     with pytest.raises(TypeError, match="rule x: column 'host'"):
         hg.Chart(DATA).rule(x="host")
-    with pytest.raises(TypeError, match="text text_field: column 't'"):
-        hg.Chart(DATA).text(x="t", y="p50", text_field="t")
+    with pytest.raises(TypeError, match="text label field: column 't'"):
+        hg.Chart(DATA).text(x="t", y="p50", label=hg.Label(field="t"))
     with pytest.raises(
         ValueError, match='text overlap: expected "show", "hide", or "move"; received "dodge"'
     ):
-        hg.Chart(DATA).text(x="t", y="p50", text_field="host", overlap="dodge")  # type: ignore[arg-type]
+        hg.Chart(DATA).text(x="t", y="p50", label="a", overlap="dodge")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="text at: a place, or its short forms x and y, not both"):
+        hg.Chart(DATA).text(x=1, at=hg.Position(x=1, y=2), label="a")
+    with pytest.raises(ValueError, match="text label: text goes where at says; drop place"):
+        hg.Chart(DATA).text(x=1, y=2, label=hg.Label(text="a", place={"attachment": "end"}))
     with pytest.raises(ValueError, match="Chart data: the chart has none"):
         hg.Chart().rule(x="at")
 
 
 def test_bars_write_their_values():
-    spec, _ = hg.bar(DATA, x="host", y="p50", labels={"maximumFractionDigits": 1}).to_spec()
-    assert spec["marks"][0]["labels"] == {"maximumFractionDigits": 1}
-    # Empty Intl options still turn labels on, as in the spec.
+    labels = hg.BarLabels(format={"maximumFractionDigits": 1}, min_length=12)
+    spec, _ = hg.bar(DATA, x="host", y="p50", labels=labels).to_spec()
+    assert spec["marks"][0]["labels"] == {
+        "format": {"maximumFractionDigits": 1},
+        "minLength": 12,
+    }
+    # Empty label options still turn labels on, as in the spec.
     spec, _ = hg.bar(DATA, x="host", y="p50", labels={}).to_spec()
     assert spec["marks"][0]["labels"] == {}
     svg = hg.bar(DATA, x="host", y="p50", labels=True, width=300, height=150).to_svg()
@@ -592,7 +609,7 @@ def test_histograms_and_box_plots_split_by_facets():
     )
     assert sideways.to_spec()[0]["y"]["scope"] == "panel"
     labeled = hg.Chart(load, facet="region", width=500, height=250).text(
-        x="ms", y="ms", text_field="host"
+        x="ms", y="ms", label=hg.Label(field="host")
     )
     spec, _ = labeled.to_spec()
     assert sorted(spec["data"]["data"]["columns"]) == ["host", "ms", "region"]
@@ -699,7 +716,7 @@ def test_encodings_are_checked():
     with pytest.raises(ValueError, match='point symbol: expected a shape.s name or {"field"'):
         hg.Chart(values).point("x", "y", symbol={"column": "kind"})
     with pytest.raises(TypeError, match="point symbol"):
-        hg.Chart(values).point("x", "y", symbol="x")
+        hg.Chart(values).point("x", "y", symbol={"field": "x"})
     with pytest.raises(ValueError, match="point colors: 'kind' is a category column"):
         hg.Chart(values).point("x", "y", color="kind", colors="viridis")
     with pytest.raises(ValueError, match='point colors: unknown scheme "virdis"'):
@@ -935,7 +952,7 @@ def test_scheme_and_symbol_names_match_typescript():
     schemes = (root / "scale" / "schemes.ts").read_text()
     table = schemes[schemes.index("export const schemes") :]
     assert tuple(re.findall(r"^  (\w+),$", table, re.MULTILINE)) == hg.SCHEMES
-    symbols = (root / "draw" / "symbols.ts").read_text()
+    symbols = (root / "draw" / "symbol-shapes.ts").read_text()
     order = symbols[symbols.index("export const SYMBOLS") :]
     assert tuple(re.findall(r'^  "([\w-]+)",$', order, re.MULTILINE)) == hg.SYMBOLS
 
@@ -1038,7 +1055,7 @@ def test_marks_say_what_they_are_cut_to():
         hg.Chart(DATA, padding=0)
         .line(x="t", y="p50", clip=False)
         .point(x="t", y="p50", clip="chart")
-        .text(x="t", y="p50", text_field="host", clip="plot")
+        .text(x="t", y="p50", label=hg.Label(field="host"), clip="plot")
     )
     spec, _ = chart.to_spec()
     assert [mark.get("clip") for mark in spec["marks"]] == [False, "chart", "plot"]
@@ -1089,8 +1106,8 @@ def test_format_options_match_typescript():
         ValueError, match='AxisOptions format: "maximumFractionDigts" is not an Intl format option'
     ):
         hg.AxisOptions(format={"maximumFractionDigts": 2})
-    with pytest.raises(ValueError, match='bar labels: "hour" is not an Intl format option'):
-        hg.Chart(DATA).bar(x="host", y="p50", labels={"hour": "2-digit"})
+    with pytest.raises(ValueError, match='bar labels format: "hour" is not an Intl format option'):
+        hg.Chart(DATA).bar(x="host", y="p50", labels=hg.BarLabels(format={"hour": "2-digit"}))
     root = Path(__file__).resolve().parents[2] / "packages" / "herceg" / "src"
     if not root.exists():
         pytest.skip("needs a source checkout")
@@ -1905,11 +1922,14 @@ def test_helpers_name_themselves_for_options_they_do_not_take():
         hg.line(DATA, "t", "p50", seris="host")
     # Other libraries' names point to herceg's.
     with pytest.raises(
-        TypeError, match=r"^line: no option 'color'; did you mean 'series' or 'stroke'\?$"
+        TypeError, match=r"^line: no option 'c'; did you mean 'color' or 'stroke'\?$"
     ):
-        hg.line(DATA, "t", "p50", color="red")
+        hg.line(DATA, "t", "p50", c="red")
     with pytest.raises(
-        TypeError, match=r"^bar: no option 'colour'; did you mean 'series' or 'fill'\?$"
+        TypeError,
+        match=(
+            r"^bar: no option 'colour'; did you mean 'color' or 'series' or 'stroke' or 'fill'\?$"
+        ),
     ):
         hg.bar(DATA, "t", "p50", colour="red")
     with pytest.raises(TypeError, match=r"see help\(herceg.scatter\) for the options it takes$"):
@@ -2421,8 +2441,8 @@ def test_area_stack_offsets(stack, horizontal):
         svg = chart.to_svg()
         assert 'fill-opacity="0.85"' in svg
         assert "NaN" not in svg
-    inside_out = hg.area(data, **xy, stack=stack, stack_order="inside-out")
-    assert inside_out.to_spec()[0]["marks"][0]["stackOrder"] == "inside-out"
+    inside_out = hg.area(data, **xy, stack=hg.Stack(offset=stack, order="inside-out"))
+    assert inside_out.to_spec()[0]["marks"][0]["stack"] == {"offset": stack, "order": "inside-out"}
     assert "<path" in inside_out.to_svg()
 
 
@@ -2430,7 +2450,7 @@ def test_area_stack_offsets(stack, horizontal):
 def test_bar_fill_stack(horizontal):
     data = {"band": ["N", "S"], "a": [2, 4], "b": [6, 4]}
     xy = {"y": "band", "x": ["a", "b"]} if horizontal else {"x": "band", "y": ["a", "b"]}
-    chart = hg.bar(data, **xy, stack="fill", labels={"style": "percent"})
+    chart = hg.bar(data, **xy, stack="fill", labels=hg.BarLabels(format={"style": "percent"}))
     assert chart.to_spec()[0]["marks"][0]["stack"] == "fill"
     assert ">25%</text>" in chart.to_svg()
     with pytest.raises(ValueError, match="bar stack:.*;.*use an area"):
@@ -2444,11 +2464,13 @@ def test_nonnegative_stack_validation_and_gaps(stack):
         hg.area(signed, x="t", y="v", stack=stack)
     assert hg.area(signed, x="t", y="v", stack=True).to_spec()[0]["marks"][0]["stack"] is True
     data = {"t": [0, 1, 2], "v": [2, np.nan, 4], "series": ["a", "a", "b"]}
-    chart = hg.area(data, x="t", y="v", series="series", stack=stack, stack_gaps="interpolate")
-    assert chart.to_spec()[0]["marks"][0]["stackGaps"] == "interpolate"
+    chart = hg.area(
+        data, x="t", y="v", series="series", stack=hg.Stack(offset=stack, gaps="interpolate")
+    )
+    assert chart.to_spec()[0]["marks"][0]["stack"] == {"offset": stack, "gaps": "interpolate"}
     assert "NaN" not in chart.to_svg()
-    with pytest.raises(ValueError, match="area stack_order:.*;.*give stack="):
-        hg.area(data, x="t", y="v", stack_order="inside-out")
+    with pytest.raises(ValueError, match="Stack order: inside-out orders nonnegative stacks"):
+        hg.area(data, x="t", y="v", stack={"order": "inside-out"})
 
 
 @pytest.mark.parametrize(
@@ -2494,7 +2516,7 @@ def test_halo_rejects_other_values_with_python_option_names():
 def test_text_surface_halo_and_opt_out_in_static_exports():
     for halo in ("auto", False):
         chart = hg.Chart(width=300, height=150).text(
-            x=1, y=1, label="note", fill="#e06600", halo=halo
+            x=1, y=1, label=hg.Label(text="note", style={"color": "#e06600"}), halo=halo
         )
         svg = chart.to_svg()
         assert ('stroke="#ffffff" stroke-opacity="1"' in svg) is (halo == "auto")
