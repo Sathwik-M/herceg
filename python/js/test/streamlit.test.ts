@@ -711,10 +711,13 @@ describe("Streamlit component with panels' own x scales", () => {
     expect(before.slice(0, 3)).toEqual(fitted.slice(0, 3));
     const outline = band(parent)!.getAttribute("d");
     run(parent, facets("After"));
-    await frame();
-    expect(figure(parent).getAttribute("aria-label")).toBe("After");
+    // The redraw restores the zoom and the selection once its panels exist,
+    // which can take more than a frame on a slow machine.
+    await expect
+      .poll(() => parent.querySelector('[role="figure"]')?.getAttribute("aria-label"))
+      .toBe("After");
+    await expect.poll(() => band(parent)?.getAttribute("d")).toBe(outline);
     expect(xLabels(parent)).toEqual(before);
-    expect(band(parent)!.getAttribute("d")).toBe(outline);
   });
 
   it("keeps a selection on a shared x scale when the panels change", async () => {

@@ -996,8 +996,8 @@ describe("notebook widget", () => {
       revision: 1,
       selection: { x: null, y: ["b", "b"], lasso: null },
     });
-    await frame();
-    expect(band(host!)!.getAttribute("visibility")).toBe("visible");
+    // The selection shows once the brush code has loaded.
+    await expect.poll(() => band(host!)?.getAttribute("visibility")).toBe("visible");
     expect(model.messages("select")).toEqual([]);
     // A lasso's outline is band positions, kept while the categories stay.
     const outline: [number, number][] = [
@@ -1382,8 +1382,8 @@ describe("widget item interaction", () => {
       expect(model.messages("drill")).toHaveLength(1);
       // Resync remounts and restores the root from the snapshot.
       model.set("_chart", items(type, { revision: 2, drill_root: root }));
-      await frame();
-      expect(first!.querySelector("nav")!.textContent).toContain("East");
+      // The remounted chart restores its root once it has drawn.
+      await expect.poll(() => first!.querySelector("nav")?.textContent).toContain("East");
       expect(model.messages("drill")).toHaveLength(1);
       model.set(
         "_chart",
