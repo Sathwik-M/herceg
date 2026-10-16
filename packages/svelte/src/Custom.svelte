@@ -7,14 +7,15 @@
     type Schema,
     type Table,
   } from "herceg";
-  import { built, type CustomProps, markAnchor, plain } from "./marks.js";
+  import { built, type CustomProps, markAnchor, panelled, plain } from "./marks.js";
 
   let { data, ...options }: CustomProps<T> = $props();
+  const inPanel = panelled("Custom");
   const mark = $derived(
     built(() =>
       data
-        ? custom(data as unknown as Table, plain(options) as CustomDataOptions<Schema>)
-        : custom(plain(options) as CustomOptions),
+        ? custom(data as unknown as Table, inPanel(plain(options)) as CustomDataOptions<Schema>)
+        : custom(inPanel(plain(options)) as CustomOptions),
     ),
   );
   const anchor = markAnchor("Custom", () => mark);

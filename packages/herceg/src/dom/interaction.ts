@@ -201,6 +201,9 @@ export class Interaction {
   #keyShared: number | string | null = null;
   /** A crosshair per panel shown; the first stays, hidden, when none is. */
   readonly #crosshairs: SVGLineElement[];
+  /** Clip paths keeping a panel's crosshair off the insets over it, by panel key; and how many were made. */
+  readonly #cuts = new Map<string, SVGClipPathElement>();
+  #cutsMade = 0;
   readonly #dots: SVGGElement;
   /** Outlines the item inspected in charts of a layout mark (a pie slice). */
   readonly #outline: SVGPathElement;
@@ -348,6 +351,12 @@ export class Interaction {
     if (!scene) return;
     const { theme } = scene;
     const panels = host.model.panels();
+    // Panels without insets over them any more need no clip.
+    for (const [key, clip] of this.#cuts)
+      if (!scene.panels.some((panel) => panel.key === key && panel.visible)) {
+        clip.remove();
+        this.#cuts.delete(key);
+      }
     const options = host.options();
     const showTooltip = options.tooltip ?? true;
     // Hover listeners get the inspection even without the built-in tooltip,
@@ -396,8 +405,15 @@ export class Interaction {
       const inspection = drawn[i];
       if (!inspection || inspection.axis === "item") line.setAttribute("visibility", "hidden");
       if (!inspection) continue;
+      // What the pointer draws in a panel stays off the insets over it.
+      const target = panels.find(({ key }) => key === (inspection.panel ?? "")) ?? panels[0];
+      const named = inspection.panel ?? target?.key;
+      const shown = scene.panels.find(({ key }) => key === named);
+      const cut = shown?.visible && this.#cut(shown.key, shown.visible);
       // Items are outlined instead of crossed, and their tooltip points at them.
       if (inspection.axis === "item") {
+        if (cut) this.#outline.setAttribute("clip-path", cut);
+        else this.#outline.removeAttribute("clip-path");
         this.#outline.setAttribute("d", inspection.outline);
         this.#outline.setAttribute("stroke", theme.text);
         this.#outline.setAttribute("visibility", "visible");
@@ -406,7 +422,10 @@ export class Interaction {
         if (tips.has(inspection)) this.#tip(tipped++).show(inspection, theme, anchor, bounds);
         continue;
       }
-      const { plot } = panels.find(({ key }) => key === (inspection.panel ?? "")) ?? panels[0]!;
+      const { plot } = target!;
+      const visible = shown?.visible;
+      if (cut) line.setAttribute("clip-path", cut);
+      else line.removeAttribute("clip-path");
       // The crosshair crosses the plot at the inspected position: a vertical
       // line for x, a horizontal one for y.
       const at = String(Math.round(inspection.position) + 0.5);
@@ -419,10 +438,13 @@ export class Interaction {
       line.setAttribute("visibility", "visible");
       // A bar may end outside the plot; its marker would land on the axes.
       const inside = (point: { px: number; py: number }) =>
-        point.px >= plot.x - 0.5 &&
-        point.px <= plot.x + plot.width + 0.5 &&
-        point.py >= plot.y - 0.5 &&
-        point.py <= plot.y + plot.height + 0.5;
+        (visible ?? [plot]).some(
+          (box) =>
+            point.px >= box.x - 0.5 &&
+            point.px <= box.x + box.width + 0.5 &&
+            point.py >= box.y - 0.5 &&
+            point.py <= box.y + box.height + 0.5,
+        );
       for (const point of inspection.points.filter(inside)) {
         dots.push(
           svgElement(document, "circle", {
@@ -432,6 +454,7 @@ export class Interaction {
             fill: point.color,
             stroke: theme.background === "transparent" ? "#ffffff" : theme.background,
             "stroke-width": "1.5",
+            ...(cut && { "clip-path": cut }),
           }),
         );
       }
@@ -576,8 +599,8 @@ export class Interaction {
         if (!scale || scale.type === "band" || panels.find((p) => groupOf(p) === group) !== panel)
           continue;
         // A view fitted to the data is at the data's ends: only the extent bounds it then.
-        // The data bounds a zoomed x scale every panel shares.
-        const zoomed = name === "x" && model.sharesX && model.viewportOf(panel.key);
+        // The data bounds a zoomed x scale every panel shares (not an inset's own).
+        const zoomed = name === "x" && model.sharesX && !group && model.viewportOf(panel.key);
         const data = zoomed ? model.dataXExtent() : undefined;
         const domain = [Math.min(...scale.domain), Math.max(...scale.domain)] as const;
         // Log axes measure by ratios, where ends that are not positive bound nothing (as limits do).
@@ -834,7 +857,7 @@ export class Interaction {
         // shares; with several, on none, and the page scrolls.
         const panel =
           this.#panelAt(point.x, point.y) ??
-          (host.model.sharesX ? host.model.panels()[0] : undefined);
+          (host.model.sharesX ? host.model.chartPanel() : undefined);
         const focused = root.ownerDocument.activeElement === root;
         const action = panel && this.#bindings.match("wheel", event, OWN, focused)?.action;
         if (!action || (action.type !== "pan" && action.type !== "zoom")) return;
@@ -963,7 +986,7 @@ export class Interaction {
       if (this.#onItems(x, y)) return;
       const panel = this.#panelAt(x, y);
       const action = this.#bindings.match("doubleClick", event, OWN)?.action;
-      if (action?.type === "reset") this.#reset(host.model.sharesX ? undefined : panel);
+      if (action?.type === "reset") this.#reset(panel);
       else if (action?.type === "zoom" && panel)
         this.#zoomAt(this.#shown(panel), { x, y }, 1 / (action.factor ?? 2), action.axes);
     });
@@ -1232,14 +1255,45 @@ export class Interaction {
     });
   }
 
-  /** The panel whose plot holds a point of the chart. */
-  #panelAt(x: number, y: number): DrawnPanel | undefined {
-    return this.#host.model.panels().find(({ plot }) => holds(plot, x, y));
+  /**
+   * A clip path of the parts of panel `key`'s plot insets leave `visible`,
+   * kept per panel, as a `url(...)`.
+   */
+  #cut(key: string, visible: readonly PlotRect[]): string {
+    const host = this.#host;
+    const { svgElement } = this.#kit;
+    const document = host.root.ownerDocument;
+    let clip = this.#cuts.get(key);
+    if (!clip) {
+      clip = svgElement(document, "clipPath", { id: `${host.id}-cut-${++this.#cutsMade}` });
+      host.overlay.prepend(clip);
+      this.#cuts.set(key, clip);
+    }
+    clip.replaceChildren(
+      ...visible.map(({ x, y, width, height }) =>
+        svgElement(document, "rect", {
+          x: String(x),
+          y: String(y),
+          width: String(width),
+          height: String(height),
+        }),
+      ),
+    );
+    return `url(#${clip.id})`;
   }
 
-  /** Whether a point of the chart is in a panel a layout mark drew in. */
+  /** The panel with axes whose plot holds a point of the chart, unless an inset covers it there. */
+  #panelAt(x: number, y: number): DrawnPanel | undefined {
+    const { model } = this.#host;
+    return model.panels().find((p) => holds(p.plot, x, y) && !model.coveredAt(p.key, x, y));
+  }
+
+  /** Whether a point of the chart is in a panel a layout mark drew in, unless an inset covers it there. */
   #onItems(x: number, y: number): boolean {
-    return this.#host.model.allPanels().some(({ items, plot }) => items && holds(plot, x, y));
+    const { model } = this.#host;
+    return model
+      .allPanels()
+      .some((p) => p.items && holds(p.plot, x, y) && !model.coveredAt(p.key, x, y));
   }
 
   /**
@@ -1471,7 +1525,7 @@ export class Interaction {
     } else if (action.type === "zoom") {
       const middle = { x: plot.x + plot.width / 2, y: plot.y + plot.height / 2 };
       this.#zoomAt(shown, middle, 1 / (action.factor ?? 1.25), action.axes);
-    } else if (action.type === "reset") this.#reset(host.model.sharesX ? undefined : shown.panel);
+    } else if (action.type === "reset") this.#reset(shown.panel);
     return true;
   }
 

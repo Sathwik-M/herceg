@@ -297,18 +297,19 @@ def test_none_resets_every_option_without_sending_nested_nones():
         assert not any(nested_none(value) for value in sent.values()), (option, sent)
 
 
-def test_live_charts_share_x():
+def test_live_facet_panels_share_x():
     chart = hg.Chart(data(), facet="host", x=hg.AxisOptions(scope="panel")).line(x="t", y="v")
     with pytest.raises(
         ValueError,
-        match='Chart x scope: expected "chart" in a live chart',
+        match='Chart x scope: expected "chart" in a live faceted chart',
     ):
         chart.widget()
-    widget, browser = live(zoom=True)
+    widget = hg.Chart(data(), facet="host", zoom=True).line(x="t", y="v").widget()
+    browser = Browser(widget)
     count = len(browser.messages)
     with pytest.raises(
         ValueError,
-        match='Chart x scope: expected "chart" in a live chart',
+        match='Chart x scope: expected "chart" in a live faceted chart',
     ):
         widget.update(x=hg.AxisOptions(scope="row"))
     # The refused change changed nothing.

@@ -51,14 +51,18 @@ import {
   type DerivedSpec,
   type GeometryColumnSpec,
   type GridFacetSpec,
-  type GridSpec,
+  type GridLayoutSpec,
+  type InsetIndicatorSpec,
+  type InsetSpec,
   type InsidePlace,
   type InteractionSpec,
+  type LayoutCellSpec,
   type LegendEntrySpec,
   type LegendGuideSpec,
   type LegendSpec,
   type MarkSpec,
   type NavigatorSpec,
+  type PanelLayoutSpec,
   type PanelSpec,
   type PanelTitleSpec,
   type PlotStyle,
@@ -713,8 +717,19 @@ const tickLabels: Check = (v, path) => {
   } satisfies ChecksOf<TickLabelsSpec>);
 };
 
-/** Which panels share a scale. */
-const scope = oneOf("chart", "panel", "row", "column");
+/**
+ * Which panels share a scale: a name, the rows or columns of a layout
+ * grid, or panels by id (checked against the layout as panels load).
+ */
+const scope: Check = (v, path) => {
+  if (typeof v === "string") return oneOf("chart", "panel", "row", "column")(v, path);
+  if (!isRecord(v))
+    fail(path, '"chart", "panel", "row", "column", { layout, by }, or { panels }', v);
+  if ("panels" in v) return checkProperties(v, path, ["panels"], { panels: strings });
+  checkProperties(v, path, ["layout", "by"], { layout: string, by: oneOf("row", "column") });
+};
+/** Where panels sharing a scale label it. */
+const labelRepeat = oneOf("outer", "all");
 
 /**
  * A y axis (`chart`, the chart's y or yRight, whose scale panels may share),
@@ -729,10 +744,16 @@ function anyAxis(v: unknown, path: string, chart: boolean): void {
   if (spec.seams !== undefined)
     fail(`${path}.seams`, "seams on the chart's x axis only", spec.seams);
   if (chart)
-    properties(spec, path, { ...axisChecks(spec), scope } satisfies ChecksOf<ChartAxisSpec>);
+    properties(spec, path, {
+      ...axisChecks(spec),
+      scope,
+      repeat: labelRepeat,
+    } satisfies ChecksOf<ChartAxisSpec>);
   else {
     if (spec.scope !== undefined)
       fail(`${path}.scope`, "scope on the chart's x, y, or yRight only", spec.scope);
+    if (spec.repeat !== undefined)
+      fail(`${path}.repeat`, "repeat on the chart's x, y, or yRight only", spec.repeat);
     properties(spec, path, axisChecks(spec));
   }
 }
@@ -746,6 +767,7 @@ const xAxis: Check = (v, path) => {
   properties(spec, path, {
     ...axisChecks(spec),
     scope,
+    repeat: labelRepeat,
     // Whether any x scale is a time scale shows only once panels are planned.
     breaks: (v, at) => {
       checkBreaks(v, at);
@@ -1098,6 +1120,7 @@ function guideList(typeOf: (scale: unknown) => unknown): Check {
           type: string,
           id: string,
           scales: scaleRefs,
+          panel: string,
           show: boolean,
         } satisfies ChecksOf<LegendGuideSpec>);
       else if (guide.type === "colorbar")
@@ -1156,9 +1179,133 @@ function axisGuide(guide: Record<string, unknown>, path: string, type: unknown):
     grid: boolean,
     layers: tickLayers(type),
     show: boolean,
+    repeat: labelRepeat,
     style: axisStyle,
   } satisfies ChecksOf<AxisGuideSpec>);
 }
+
+/** A row or column of a layout grid: a weight, a weight with a least size, or pixels. */
+const track: Check = (v, path) => {
+  if (typeof v === "number") return positive(v, path);
+  if (!isRecord(v)) fail(path, "a weight, { weight, min }, or { px }", v);
+  if ("px" in v) return checkProperties(v, path, ["px"], { px: positive });
+  checkProperties(v, path, ["weight"], { weight: positive, min: width });
+};
+const tracks: Check = (v, path) => {
+  if (!Array.isArray(v) || v.length === 0) fail(path, "a list of tracks", v);
+  for (const [i, item] of v.entries()) track(item, `${path}[${i}]`);
+};
+const wholeFromZero: Check = (v, path) => {
+  if (!Number.isInteger(v) || (v as number) < 0) fail(path, "a whole number from 0", v);
+};
+const insetSize: Check = (v, path) => {
+  if (!isRecord(v)) fail(path, "{ fraction } or { px }", v);
+  if ("px" in v) return checkProperties(v, path, ["px"], { px: positive });
+  checkProperties(v, path, ["fraction"], {
+    fraction: (f, at) => {
+      if (typeof f !== "number" || !(f > 0 && f <= 1)) fail(at, "a fraction above 0, at most 1", f);
+    },
+  });
+};
+/** Where an inset goes: inside its parent's plot, or with an anchor at a position of fractions or pixels. */
+const insetPlace: Check = (v, path) => {
+  object(v, path);
+  const spec = v as Record<string, unknown>;
+  if (spec.inside !== undefined)
+    return checkProperties(spec, path, ["inside"], {
+      inside: oneOf(
+        "top-left",
+        "top",
+        "top-right",
+        "right",
+        "bottom-right",
+        "bottom",
+        "bottom-left",
+        "left",
+      ),
+      inset: width,
+    });
+  const coordinate: Check = (c, at) => {
+    if (!isRecord(c) || !("fraction" in c || "px" in c))
+      fail(at, "{ fraction } or { px }, of the plot or the chart", c);
+    const frame = oneOf("plot", "chart");
+    if ("px" in c) return checkProperties(c, at, ["px"], { px: finite, frame, offset: finite });
+    checkProperties(c, at, ["fraction"], { fraction: finite, frame, offset: finite });
+  };
+  checkProperties(spec, path, ["at"], {
+    at: (p, at) => {
+      object(p, at);
+      checkProperties(p as Record<string, unknown>, at, ["x", "y"], {
+        x: coordinate,
+        y: coordinate,
+      });
+    },
+    anchor: oneOf("top-left", "top-right", "bottom-left", "bottom-right", "center"),
+  });
+};
+const insetList: Check = (v, path) => {
+  if (!Array.isArray(v)) fail(path, "a list of insets", v);
+  for (const [i, item] of v.entries()) {
+    const at = `${path}[${i}]`;
+    object(item, at);
+    checkProperties(item as Record<string, unknown>, at, ["panel"], {
+      panel: string,
+      place: insetPlace,
+      width: insetSize,
+      height: insetSize,
+      indicator: (d, where) => {
+        if (typeof d === "boolean") return;
+        object(d, where);
+        properties(d as Record<string, unknown>, where, {
+          connectors: boolean,
+          style: strokeStyle,
+        } satisfies ChecksOf<InsetIndicatorSpec>);
+      },
+      insets: insetList,
+    } satisfies ChecksOf<InsetSpec>);
+  }
+};
+/** A layout: a grid of cells, or one panel with its insets. */
+const layoutNode: Check = (v, path) => {
+  object(v, path);
+  const node = v as Record<string, unknown>;
+  if (node.type === "panel")
+    return checkProperties(node, path, ["panel"], {
+      type: string,
+      panel: string,
+      insets: insetList,
+    } satisfies ChecksOf<PanelLayoutSpec>);
+  if (node.type !== "grid") fail(`${path}.type`, '"grid" or "panel"', node.type);
+  properties(node, path, {
+    type: string,
+    id: string,
+    rows: tracks,
+    columns: tracks,
+    cells: (c, at) => {
+      if (!Array.isArray(c)) fail(at, "a list of cells", c);
+      for (const [i, cell] of c.entries()) {
+        object(cell, `${at}[${i}]`);
+        checkProperties(
+          cell as Record<string, unknown>,
+          `${at}[${i}]`,
+          ["row", "column", "content"],
+          {
+            row: wholeFromZero,
+            column: wholeFromZero,
+            rowSpan: count,
+            columnSpan: count,
+            content: layoutNode,
+          } satisfies ChecksOf<LayoutCellSpec>,
+        );
+      }
+    },
+    gap: (g, at) => {
+      if (typeof g === "number") return width(g, at);
+      object(g, at);
+      properties(g as Record<string, unknown>, at, { row: width, column: width });
+    },
+  } satisfies ChecksOf<GridLayoutSpec>);
+};
 
 /** An axis' or colorbar's tick layers on a scale of `type`, each with an id of its own. */
 function tickLayers(type: unknown): Check {
@@ -2579,20 +2726,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
           ids.add(id);
         }
       },
-      grid: (g, path) => {
-        object(g, path);
-        properties(g as Record<string, unknown>, path, {
-          columns: count,
-          rowHeights: (v, at) => {
-            if (!Array.isArray(v) || v.length === 0) fail(at, "a list of relative heights", v);
-            for (const [i, height] of v.entries()) positive(height, `${at}[${i}]`);
-          },
-          columnWidths: (v, at) => {
-            if (!Array.isArray(v) || v.length === 0) fail(at, "a list of relative widths", v);
-            for (const [i, width] of v.entries()) positive(width, `${at}[${i}]`);
-          },
-        } satisfies ChecksOf<GridSpec>);
-      },
+      layout: layoutNode,
       facet: (f, path) => {
         object(f, path);
         const spec = f as Record<string, unknown>;
@@ -2804,7 +2938,8 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
       fail(`spec.${name}`, "a spec with point3d, line3d, or surface marks", chart[name]);
   // Marks name panels the chart has; with panels, every mark names one.
   const panels = chart.panels as { id: string }[] | undefined;
-  if (chart.grid !== undefined && !panels) fail("spec.grid", "a spec with panels", chart.grid);
+  if (chart.layout !== undefined && !panels)
+    fail("spec.layout", "a spec with panels", chart.layout);
   const ids = new Set(panels?.map(({ id }) => id));
   for (const [i, item] of (chart.marks as Record<string, unknown>[]).entries()) {
     const panel = item.panel;

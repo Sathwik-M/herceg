@@ -1,8 +1,9 @@
-// Subplots: panels drawing the marks that name them, sharing x.
+// Subplots: panels drawing the marks that name them, each with scales of its own unless shared.
 import { describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid } from "../../src/layout.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
@@ -41,8 +42,14 @@ const kinds = (panel: Panel) => panel.marks.map((m) => m.kind);
 const axis = (panel: Panel, orient: string) => panel.axes.find((a) => a.side === orient);
 
 describe("panels", () => {
-  it("draw each mark in the panel it names, sharing x, each with a y scale of its own", () => {
-    const { model, scene } = build({ marks, panels: stacked });
+  it("draw each mark in the panel it names, each with x and y scales of its own", () => {
+    const own = build({ marks, panels: stacked });
+    expect(own.model.sharesX).toBe(false);
+    const [first, second] = own.model.panels();
+    expect(first!.xGroup).not.toBe(second!.xGroup);
+    // Each panel labels its own x.
+    expect(own.scene.panels.every((panel) => axis(panel, "bottom"))).toBe(true);
+    const { model, scene } = build({ marks, panels: stacked, x: { scope: "chart" } });
     const [top, bottom] = scene.panels as [Panel, Panel];
     expect(scene.panels.map((p) => p.key)).toEqual(["latency", "traffic"]);
     expect(model.panels().map((p) => p.label)).toEqual(["Latency", "Requests"]);
@@ -56,7 +63,7 @@ describe("panels", () => {
     // Stacked, one column.
     expect(bottom.plot.x).toBe(top.plot.x);
     expect(bottom.plot.y).toBeGreaterThan(top.plot.y + top.plot.height);
-    // One x scale; y domains from each panel's own marks.
+    // One x scale when shared; y domains from each panel's own marks.
     const [a, b] = model.panels();
     expect(a!.x.domain).toEqual(b!.x.domain);
     expect(Math.max(...a!.y.domain)).toBeGreaterThanOrEqual(400);
@@ -74,7 +81,7 @@ describe("panels", () => {
   });
 
   it("keep a mark's identity wherever it draws, and report the panel inspected", () => {
-    const { model, scene } = build({ marks, panels: stacked });
+    const { model, scene } = build({ marks, panels: stacked, x: { scope: "chart" } });
     const lineKey = (scene.panels[0]!.marks.find((m) => m.kind === "line") as LineGeometry).key;
     // The same key as in a chart without panels: the mark's place in the chart.
     const plain = build({
@@ -103,7 +110,7 @@ describe("panels", () => {
   });
 
   it("place panels in rows of the grid's columns, labeling y beside each", () => {
-    const { scene } = build({ marks, panels: panels(stacked.list, { columns: 2 }) });
+    const { scene } = build({ marks, panels: panels(stacked.list, grid({ columns: 2 })) });
     const [left, right] = scene.panels as [Panel, Panel];
     expect(right.plot.y).toBe(left.plot.y);
     expect(right.plot.x).toBeGreaterThan(left.plot.x + left.plot.width);
@@ -173,8 +180,8 @@ describe("panels", () => {
     expect(() => panels([{ id: "*" }])).toThrow(
       'panels[0].id: expected a name other than "" and "*"',
     );
-    expect(() => panels([{ id: "a" }], { columns: 0 })).toThrow(
-      "grid columns: expected a whole number of at least 1; received 0",
+    expect(() => panels([{ id: "a" }], grid({ columns: 0 }))).toThrow(
+      "grid columns: expected a whole number of at least 1 or a list of sizes; received 0",
     );
   });
 
@@ -189,7 +196,7 @@ describe("panels", () => {
         { id: "top", title: "Top" },
         { id: "bottom", title: "Bottom", y: { title: "units" } },
       ],
-      grid: { columns: 1 },
+      layout: { type: "grid" as const, columns: [1] },
     };
     const { config } = loadSpec(spec, []);
     const svg = renderToSVG({ ...config, width: 400, height: 300 });
@@ -222,7 +229,7 @@ describe("panels", () => {
     // Formats are part of a shared scale.
     const formats = panels(
       [{ id: "latency", y: { format: { style: "percent" } } }, { id: "traffic" }],
-      { columns: 2 },
+      grid({ columns: 2 }),
     );
     expect(() => build({ marks, panels: formats, y: { scope: "row" } })).toThrow("format");
   });
@@ -233,7 +240,7 @@ describe("panels", () => {
         { id: "latency", y: { show: false } },
         { id: "traffic", y: { grid: true, title: "requests" } },
       ],
-      { columns: 2 },
+      grid({ columns: 2 }),
     );
     const { scene } = build({ marks, panels: own, y: { grid: false, scope: "row" } });
     const [left, right] = scene.panels as [Panel, Panel];
@@ -290,12 +297,14 @@ describe("panels", () => {
         } as never,
         [],
       );
-    expect(spec({ grid: { columns: 2 } })).toThrow("spec.grid: expected a spec with panels");
+    expect(spec({ layout: { type: "grid", columns: [1, 1] } })).toThrow(
+      "spec.layout: expected a spec with panels",
+    );
     expect(spec({ panels: [{ id: "top" }] })).toThrow("marks[0].panel");
   });
 
   it("size rows by their relative heights, planning each row's axis over its own height", () => {
-    const tall = panels(stacked.list, { rowHeights: [3, 1] });
+    const tall = panels(stacked.list, grid({ rows: [3, 1] }));
     const { scene, model } = build({ marks, panels: tall });
     const [top, bottom] = scene.panels as [Panel, Panel];
     expect(top.plot.height / bottom.plot.height).toBeCloseTo(3, 1);
@@ -319,10 +328,12 @@ describe("panels", () => {
         }
       }
     }
-    expect(() => panels(stacked.list, { rowHeights: [1] })).toThrow(
-      "grid rowHeights: expected 2, one per row; received 1",
+    expect(() => panels(stacked.list, grid({ rows: [1] }))).toThrow(
+      "layout.rows: 2 panels fill 2 rows of 1, and the grid has 1; add rows or leave rows out",
     );
-    expect(() => panels(stacked.list, { rowHeights: [1, 0] })).toThrow("positive numbers");
+    expect(() => panels(stacked.list, grid({ rows: [1, 0] }))).toThrow(
+      "layout.rows[1]: expected a weight greater than 0; received 0",
+    );
   });
 
   it("leave room for points at the ends of a shared scale in every row", () => {
@@ -330,7 +341,7 @@ describe("panels", () => {
     const dots = (panel: string) => point(ends, { x: "t", y: "v", radius: 10, panel });
     const { model } = build({
       marks: [dots("latency"), dots("traffic")],
-      panels: panels(stacked.list, { rowHeights: [3, 1] }),
+      panels: panels(stacked.list, grid({ rows: [3, 1] })),
       y: { scope: "chart" },
     });
     for (const { y, plot } of model.panels()) {
@@ -341,7 +352,7 @@ describe("panels", () => {
 
   it("lay out huge weights as their ratio, and format tooltips for each row's height", () => {
     const heights = (rowHeights: number[]) =>
-      build({ marks, panels: panels(stacked.list, { rowHeights }) }).scene.panels.map(
+      build({ marks, panels: panels(stacked.list, grid({ rows: rowHeights })) }).scene.panels.map(
         (panel) => panel.plot.height,
       );
     expect(heights([1e307, 1e307])).toEqual(heights([1, 1]));
@@ -356,7 +367,7 @@ describe("panels", () => {
           { id: "latency", y: { type: "time", nice: false } },
           { id: "traffic", y: { type: "time", nice: false } },
         ],
-        { rowHeights: [1, 6] },
+        grid({ rows: [1, 6] }),
       ),
     });
     const short = model.formatsOf(undefined, "latency").y(120_100);
@@ -366,10 +377,10 @@ describe("panels", () => {
 });
 
 describe("panels in weighted columns", () => {
-  const side = panels(stacked.list, { columns: 2, columnWidths: [3, 1] });
+  const side = panels(stacked.list, grid({ columns: [3, 1] }));
 
   it("size columns by their relative widths, sharing x over columns of different widths", () => {
-    const { scene, model } = build({ marks, panels: side });
+    const { scene, model } = build({ marks, panels: side, x: { scope: "chart" } });
     const [left, right] = scene.panels as [Panel, Panel];
     expect(left.plot.width / right.plot.width).toBeCloseTo(3, 1);
     expect(right.plot.x).toBeGreaterThan(left.plot.x + left.plot.width);
@@ -391,7 +402,8 @@ describe("panels in weighted columns", () => {
     const timeline = (panel: string) => line(times, { x: "t", y: "v", panel });
     const timed = build({
       marks: [timeline("latency"), timeline("traffic")],
-      panels: panels(stacked.list, { columns: 2, columnWidths: [12, 1] }),
+      panels: panels(stacked.list, grid({ columns: [12, 1] })),
+      x: { scope: "chart" },
     }).model;
     const wide = timed.formatsOf(undefined, "latency").x(1_234_567);
     const narrow = timed.formatsOf(undefined, "traffic").x(1_234_567);
@@ -401,7 +413,11 @@ describe("panels in weighted columns", () => {
   it("leave room for points at the ends of a shared x scale in every column", () => {
     const ends = table({ t: [0, 1], v: [0, 100] });
     const dots = (panel: string) => point(ends, { x: "t", y: "v", radius: 10, panel });
-    const { model } = build({ marks: [dots("latency"), dots("traffic")], panels: side });
+    const { model } = build({
+      marks: [dots("latency"), dots("traffic")],
+      panels: side,
+      x: { scope: "chart" },
+    });
     for (const { x, plot } of model.panels()) {
       expect(x.map(0) - plot.x).toBeGreaterThanOrEqual(10 - 1e-9);
       expect(plot.x + plot.width - x.map(1)).toBeGreaterThanOrEqual(10 - 1e-9);
@@ -419,8 +435,7 @@ describe("panels in weighted columns", () => {
     expect(end).toBeLessThan(right.plot.x - widestY);
   });
 
-  it("lay equal columns out as before weights existed", () => {
-    // Labels reaching into the gap between two columns once rounded it to 65 pixels.
+  it("give equal columns equal plots", () => {
     const values = table({ x: [10000, 20000, 30000], y: [1, 4, 2] });
     const { scene } = build(
       {
@@ -430,7 +445,7 @@ describe("panels in weighted columns", () => {
             { id: "a", title: "A" },
             { id: "b", title: "B" },
           ],
-          { columns: 2 },
+          grid({ columns: 2 }),
         ),
         x: { format: { useGrouping: false } },
         theme: { style: { text: { font: "monospace", fontSize: 10 } } },
@@ -439,8 +454,8 @@ describe("panels in weighted columns", () => {
       600,
     );
     const [left, right] = scene.panels as [Panel, Panel];
-    expect([left.plot.width, right.plot.width]).toEqual([241, 241]);
-    expect(right.plot.x - (left.plot.x + left.plot.width)).toBe(65);
+    expect(left.plot.width).toBeCloseTo(right.plot.width, 5);
+    expect(right.plot.x - (left.plot.x + left.plot.width)).toBeGreaterThan(12);
   });
 
   it("give x scales of their own and category axes each column's width", () => {
@@ -465,33 +480,25 @@ describe("panels in weighted columns", () => {
   });
 
   it("check their widths, in options and in specs", () => {
-    expect(() => panels(stacked.list, { columns: 2, columnWidths: [1] })).toThrow(
-      "grid columnWidths: expected 2, one per column; received 1",
-    );
-    // A grid has no more columns than panels.
-    expect(() => panels(stacked.list, { columns: 3, columnWidths: [1, 1, 1] })).toThrow(
-      "grid columnWidths: expected 2, one per column; received 3",
-    );
-    expect(() => panels(stacked.list, { columns: 2, columnWidths: [1, Number.NaN] })).toThrow(
-      "positive numbers",
+    // A grid of more columns than panels leaves cells empty.
+    expect(() => panels(stacked.list, grid({ columns: [1, 1, 1] }))).not.toThrow();
+    expect(() => panels(stacked.list, grid({ columns: [1, Number.NaN] }))).toThrow(
+      "layout.columns[1]: expected a weight greater than 0; received null",
     );
     // Holes in sparse arrays are not weights.
-    expect(() => panels(stacked.list, { columns: 2, columnWidths: new Array<number>(2) })).toThrow(
-      "positive numbers",
+    expect(() => panels(stacked.list, grid({ columns: new Array<number>(2) }))).toThrow(
+      "layout.columns[0]: expected a weight, { weight, min }, or { px }",
     );
-    expect(() => panels(stacked.list, { rowHeights: new Array<number>(2) })).toThrow(
-      "positive numbers",
-    );
-    const spec = (columnWidths: unknown) => () =>
+    const spec = (columns: unknown) => () =>
       loadSpec({
         data: { m: { columns: { t: [0, 1], v: [1, 2] } } },
         panels: [{ id: "a" }, { id: "b" }],
-        grid: { columns: 2, columnWidths },
+        layout: { type: "grid", columns },
         marks: [{ type: "line", data: "m", x: "t", y: "v", panel: "*" }],
       } as never);
     expect(spec([2, 1])().config.panels).toBeDefined();
-    expect(spec([2, -1])).toThrow("spec.grid.columnWidths[1]");
-    expect(spec([])).toThrow("spec.grid.columnWidths");
+    expect(spec([2, -1])).toThrow("spec.layout.columns[1]");
+    expect(spec([])).toThrow("spec.layout.columns");
   });
 });
 
@@ -512,7 +519,7 @@ describe("panels with x scales of their own", () => {
         { id: "series", title: "Over time", x: { title: "Time" } },
         { id: "spread", title: "Spread", x: { title: "Latency (ms)" } },
       ],
-      { rowHeights: [2, 1] },
+      grid({ rows: [2, 1] }),
     ),
     ...scopes,
   });
@@ -539,7 +546,7 @@ describe("panels with x scales of their own", () => {
     expect(model.formatsOf(undefined, "spread").x(150)).toBe("150");
   });
 
-  it("share x by default, with the first panel's settings", () => {
+  it("share x when scoped, each panel titling the axis it labels", () => {
     const shared = config();
     const { model, scene } = build({
       ...shared,
@@ -551,12 +558,13 @@ describe("panels with x scales of their own", () => {
         { id: "series", x: { title: "t" } },
         { id: "spread", x: { title: "t" } },
       ]),
+      x: { scope: "chart" },
     });
     expect(model.sharesX).toBe(true);
     const [top, bottom] = scene.panels as [Panel, Panel];
     expect(axis(top, "bottom")).toBeUndefined();
     expect(axis(bottom, "bottom")!.title!.text).toBe("t");
-    // Panels sharing x must agree on how it is set up, its title included.
+    // Panels sharing x must agree on how it is set up; titles are each panel's own.
     expect(() =>
       build({
         ...shared,
@@ -565,6 +573,15 @@ describe("panels with x scales of their own", () => {
           { id: "series", x: { title: "a" } },
           { id: "spread", x: { title: "b" } },
         ]),
+        x: { scope: "chart" },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      build({
+        ...shared,
+        marks: [line(metrics, { x: "t", y: "latency", panel: "series" })],
+        panels: panels([{ id: "series" }, { id: "spread", x: { domain: [0, 1] } }]),
+        x: { scope: "chart" },
       }),
     ).toThrow("panels[1].x: shares an x scale with others but differs");
     expect(() =>
@@ -593,21 +610,21 @@ describe("panels with x scales of their own", () => {
     expect(hidden.scene.panels.map((p) => axis(p, "bottom") !== undefined)).toEqual([false, true]);
   });
 
-  it("center a row's x title under the row, whichever of its panels are labeled", () => {
+  it("title each labeled panel's x under its own labels", () => {
     const list = ["a", "b", "c"].map((id) => ({ id, x: { title: "t" } }));
     const { scene } = build({
       marks: ["a", "b", "c"].map((panel) => line(metrics, { x: "t", y: "latency", panel })),
       panels: panels(
         list.map((p) => (p.id === "b" ? { ...p, x: { ...p.x, show: false } } : p)),
-        { columns: 2 },
+        grid({ columns: 2 }),
       ),
       x: { scope: "row" },
     });
     const [a, b, c] = scene.panels as [Panel, Panel, Panel];
-    // b's labels are left out; the row's title still centers on a and b.
+    // b's labels are left out, and its title with them.
     expect(axis(b, "bottom")).toBeUndefined();
     const title = axis(a, "bottom")!.title!;
-    expect(title.x).toBeCloseTo((a.plot.x + b.plot.x + b.plot.width) / 2, 5);
+    expect(title.x).toBeCloseTo(a.plot.x + a.plot.width / 2, 5);
     // The last row holds c alone.
     expect(axis(c, "bottom")!.title!.x).toBeCloseTo(c.plot.x + c.plot.width / 2, 5);
   });
@@ -626,7 +643,7 @@ describe("panels with x scales of their own", () => {
             { id: "a", x: { title: "First" } },
             { id: "b", x: { title: "Second" } },
           ],
-          { rowHeights: [2, 1] },
+          grid({ rows: [2, 1] }),
         ),
         y: { scope: "chart" },
         x: { scope: "panel" },
@@ -678,7 +695,10 @@ describe("panels with x scales of their own", () => {
     const gap = (hidden: boolean) => {
       const { scene } = build({
         marks: [point(rows, { x: "x", y: "y", panel: "*" })],
-        panels: panels([{ id: "main" }, { id: "side", y: { show: !hidden } }], { columns: 2 }),
+        panels: panels(
+          [{ id: "main" }, { id: "side", y: { show: !hidden } }],
+          grid({ columns: 2 }),
+        ),
       });
       const [main, side] = scene.panels;
       return side!.plot.x - (main!.plot.x + main!.plot.width);

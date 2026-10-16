@@ -6,8 +6,10 @@ import { table } from "../../src/data/table.ts";
 import { guideCompiler } from "../../src/guides/compile.ts";
 import { axis } from "../../src/guides/options.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid } from "../../src/layout.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { line } from "../../src/marks/line.ts";
+import { facet } from "../../src/model/facet.ts";
 import { GUIDE_KIT } from "../../src/model/guides.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { panels } from "../../src/model/panels.ts";
@@ -149,7 +151,7 @@ describe("axes on other sides", () => {
             { id: "a", y: { title: "First" } },
             { id: "b", y: { title: "Second" } },
           ],
-          { columns: 1 },
+          grid({ columns: 1 }),
         ),
         marks: ["a", "b"].map((panel) => line(week, { x: "t", y: "v", panel })),
         guides: [axis({ scale: "y", place: { side: "right" } })],
@@ -166,7 +168,7 @@ describe("axes on other sides", () => {
   it("leave out of a moved axis the subplots that hide it", () => {
     const { scene } = build(
       {
-        panels: panels([{ id: "a", y: { show: false } }, { id: "b" }], { columns: 1 }),
+        panels: panels([{ id: "a", y: { show: false } }, { id: "b" }], grid({ columns: 1 })),
         marks: ["a", "b"].map((panel) => line(week, { x: "t", y: "v", panel })),
         guides: [axis({ scale: "y", place: { side: "right" } })],
       },
@@ -182,7 +184,7 @@ describe("axes on other sides", () => {
   it("refuse a subplot showing an axis moved elsewhere on its default side", () => {
     expect(() =>
       build({
-        panels: panels([{ id: "a", x: { show: true } }, { id: "b" }], { columns: 2 }),
+        panels: panels([{ id: "a", x: { show: true } }, { id: "b" }], grid({ columns: 2 })),
         marks: ["a", "b"].map((panel) => line(week, { x: "t", y: "v", panel })),
         guides: [axis({ scale: "x", place: { side: "top" } })],
       }),
@@ -199,7 +201,7 @@ describe("axes on other sides", () => {
             { id: "a", y: { style: { tickLabel: { color: "#cc0000" } } } },
             { id: "b", y: { style: { tickLabel: { color: "#00cc00" } } } },
           ],
-          { columns: 1 },
+          grid({ columns: 1 }),
         ),
         marks: ["a", "b"].map((panel) => line(week, { x: "t", y: "v", panel })),
         y: { style: { tickLabel: { color: "#0000cc" } } },
@@ -270,15 +272,31 @@ describe("axes on other sides", () => {
     expect(scene.panels[0]!.plot).toEqual(plain.scene.panels[0]!.plot);
   });
 
-  it("refuse a y axis on the right of rows whose panels have y scales of their own", () => {
+  it("put a y axis on the right beside each subplot with a y scale of its own, or a row's last", () => {
+    const right = (y?: ChartConfig["y"]) =>
+      build({
+        panels: panels([{ id: "a" }, { id: "b" }], grid({ columns: 2 })),
+        marks: ["a", "b"].map((panel) => line(week, { x: "t", y: "v", panel })),
+        guides: [axis({ scale: "y", place: { side: "right" } })],
+        ...(y && { y }),
+      }).scene.panels.map((panel) => panel.axes.some((a) => a.side === "right"));
+    expect(right()).toEqual([true, true]);
+    expect(right({ scope: "row" })).toEqual([false, true]);
+    // Facet rows put it beside their last panel only, so they must share y.
     expect(() =>
       build({
-        panels: panels([{ id: "a" }, { id: "b" }], { columns: 2 }),
-        marks: ["a", "b"].map((panel) => line(week, { x: "t", y: "v", panel })),
+        marks: [
+          line(table({ t: [0, 1, 0, 1], v: [1, 2, 3, 4], g: ["a", "a", "b", "b"] }), {
+            x: "t",
+            y: "v",
+          }),
+        ],
+        facet: facet("g", { columns: 2 }),
+        y: { scope: "panel" },
         guides: [axis({ scale: "y", place: { side: "right" } })],
       }),
     ).toThrow(
-      'chart guides[0].place.side: a y axis on the right stands beside each row\'s last panel, so the panels of a row must share y; give y scope "row" or "chart", or keep the axis on the left',
+      'chart guides[0].place.side: a y axis on the right stands beside each row\'s last panel, so the panels of a row must share y; give y scope "row" or "chart", repeat "all" for one beside every panel, or keep the axis on the left',
     );
   });
 
@@ -511,7 +529,7 @@ describe("tick labels", () => {
       {
         panels: panels(
           ids.map((id) => ({ id })),
-          { columns: 3 },
+          grid({ columns: 3 }),
         ),
         marks: ids.map((panel) => bar(regions, { x: "name", y: "v", panel })),
         guides: [axis({ scale: "x", labels: { rotation: { candidates: [0, -90] } } })],
@@ -722,7 +740,7 @@ describe("tick labels", () => {
     const long = () => "A very long label for a value";
     for (const config of [
       {
-        panels: panels([{ id: "a" }, { id: "b" }], { columns: 1 }),
+        panels: panels([{ id: "a" }, { id: "b" }], grid({ columns: 1 })),
         marks: ["a", "b"].map((panel) => line(data, { x: "x", y: "v", panel })),
         guides: [
           axis({ scale: "x", ticks: { values: [0, 10] }, format: long, labels: { rotation: -45 } }),

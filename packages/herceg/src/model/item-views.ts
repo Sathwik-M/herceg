@@ -276,6 +276,8 @@ export class ItemViews {
   /** The chart whose layout marks these are. */
   readonly #model: ChartModel;
   #views: ItemView[] = [];
+  /** Whether a scene has drawn a layout mark, whose views say which states stay (see `#begin`). */
+  #drew = false;
   /** Whether the panels are facets or subplots, whose inspections name them, not a chart's one. */
   #named = true;
   /** What the user changed, by state (see `ItemView.state`). */
@@ -514,12 +516,15 @@ export class ItemViews {
   /**
    * Starts a scene: the states of panels the last one drew stay; those of
    * subplots it left out go, so a subplot that comes back starts afresh.
+   * Until a scene draws one, every state stays: positions adopted from the
+   * chart this one replaces (see `adoptPositions`) wait for its panels.
    */
   #begin(named: boolean): void {
     this.configureCameras();
     const used = new Set(this.#views.map(({ state }) => state));
-    for (const state of this.#states.keys())
-      if (!used.has(state) && !this.#states.get(state)?.camera) this.#states.delete(state);
+    if (this.#drew)
+      for (const state of this.#states.keys())
+        if (!used.has(state) && !this.#states.get(state)?.camera) this.#states.delete(state);
     this.#views = [];
     this.#named = named;
     // A mounted chart's scenes share a frame's time with drawing; others
@@ -599,6 +604,7 @@ export class ItemViews {
       camera,
     });
     const { indices } = mark;
+    this.#drew = true;
     this.#views.push({
       ...panel,
       items: true,
@@ -834,7 +840,6 @@ export class ItemViews {
   legends(): (readonly [string, LegendPart])[] {
     const model = this.#model;
     const { theme, config } = model;
-    if (config.legend === false) return [];
     return model.layouts.flatMap((mark) =>
       (mark.legends?.(theme, config.locale) ?? []).map((part) => [part.key, part] as const),
     );
@@ -964,7 +969,10 @@ export class ItemViews {
     const view =
       panel !== undefined
         ? this.#view(panel)
-        : this.#views.find(({ plot }) => !this.#named || inside(plot, px, py));
+        : this.#views.find(
+            ({ key, plot }) =>
+              !this.#named || (inside(plot, px, py) && !this.#model.coveredAt(key, px, py)),
+          );
     return view && this.#inspection(view, view.result.itemAt(px, py));
   }
 

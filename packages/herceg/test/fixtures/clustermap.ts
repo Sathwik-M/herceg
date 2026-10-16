@@ -1,4 +1,5 @@
 import { table } from "../../src/data/table.ts";
+import { grid } from "../../src/layout.ts";
 import { dendrogram } from "../../src/marks/dendrogram.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import type { ChartConfig } from "../../src/model/model.ts";
@@ -44,7 +45,7 @@ export function clustermap(): ChartConfig {
         { id: "left", x: { show: false } },
         { id: "matrix" },
       ],
-      { columns: 2, rowHeights: [1, 4], columnWidths: [1, 4] },
+      grid({ rows: [1, 4], columns: [1, 4] }),
     ),
     y: { scope: "row" },
     x: { scope: "column" },

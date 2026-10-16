@@ -4,7 +4,14 @@ import { defineConfig } from "vitest/config";
 import type { BrowserCommand } from "vitest/node";
 import { browsers } from "../../scripts/browser/browsers.ts";
 
-const herceg = new URL("../herceg/src/index.ts", import.meta.url).pathname;
+// Exact matches, so "herceg" does not also rewrite "herceg/layout".
+const herceg = [
+  { find: /^herceg$/, replacement: new URL("../herceg/src/index.ts", import.meta.url).pathname },
+  {
+    find: /^herceg\/layout$/,
+    replacement: new URL("../herceg/src/layout.ts", import.meta.url).pathname,
+  },
+];
 
 /**
  * Renders a test fixture on a server, as SvelteKit does: in Node, compiled
@@ -16,7 +23,7 @@ const renderOnServer: BrowserCommand<[fixture: string]> = async (_context, fixtu
     configFile: false,
     root: new URL(".", import.meta.url).pathname,
     plugins: [svelte({ configFile: false })],
-    resolve: { alias: { herceg } },
+    resolve: { alias: herceg },
     server: { middlewareMode: true, hmr: false, ws: false },
     appType: "custom",
     logLevel: "error",
@@ -42,7 +49,7 @@ export default defineConfig({
   // Discovering dependencies mid-test can reload the page and lose module mocks.
   // The Svelte plugin also includes the compiler's svelte/* runtime imports.
   optimizeDeps: { include: ["svelte"] },
-  resolve: { alias: { herceg } },
+  resolve: { alias: herceg },
   test: {
     // Test files use runes, which Svelte compiles only in `.svelte.ts` modules.
     include: ["test/**/*.test.svelte.ts"],

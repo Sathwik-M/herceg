@@ -354,19 +354,24 @@ export class MountedChart implements Chart, ExportsScene {
         return;
       }
       // Panels with scales of their own share cursors only: a view or a
-      // selection belongs to some of them.
+      // selection belongs to some of them. So do charts whose only axes
+      // are insets', with x scales of their own beside the chart's.
       if (!(scale === "y" ? model.sharesY : model.sharesX)) return;
+      const panels = model.panels();
+      if (scale !== "y" && panels.length > 0 && !panels.some(({ xGroup }) => !xGroup)) return;
       if (channel === "selection") {
         this.#select(this.#decode(value as SharedSelection | null, scale));
         return;
       }
       this.#settle();
       const range = value as readonly [number, number] | null;
+      // A reset is of the chart's x scale, not of insets' own.
+      const wide = range ? undefined : panels.find(({ xGroup }) => !xGroup)?.key;
       this.#changeView(
         () =>
           scale === "y"
             ? model.setYViewport({ ...model.yViewport, y: range })
-            : model.setViewport(range),
+            : model.setViewport(range, wide),
         false,
         "sync",
       );
@@ -478,11 +483,14 @@ export class MountedChart implements Chart, ExportsScene {
     this.#svg.overlay.append(this.#brushLayer);
     this.#legend = new Legend(
       document,
-      (keys) =>
-        this.setVisibility(
-          keys,
-          [keys].flat().every((key) => this.#model.hidden.has(key)),
-        ),
+      // An entry hidden, or hidden in some panels only, shows its series; one
+      // adopted from markup, without that state, as its keys are now.
+      (keys, panel, show) => {
+        const visible =
+          show ?? [keys].flat().every((key) => this.#model.hidden.hiddenIn(key, panel));
+        this.setVisibility(keys, visible, { panel });
+        return visible;
+      },
       adopted?.legend,
     );
     this.#description = adopted?.description ?? document.createElement("div");
@@ -635,8 +643,13 @@ export class MountedChart implements Chart, ExportsScene {
     const marks = this.#options.marks;
     const owners = new Set(marks.map((mark, i) => mark.spec.id ?? i));
     const scopes = this.#model.scopes();
-    const kept = [...this.#model.hidden].filter((key) => keepsKey(key, owners, scopes));
-    this.#hide(kept);
+    const keeps = (key: string) => keepsKey(key, owners, scopes);
+    const { hidden } = this.#model;
+    const { panels } = this.#options;
+    this.#hide(
+      [...hidden].filter(keeps),
+      panels ? panels.prune(hidden.panels, keeps) : hidden.panels.size ? new Map() : undefined,
+    );
     // Panels given y scales of their own let go of the y viewport, and
     // limits that changed move views inside them. Which x scales there are
     // now is known once drawn; listeners drawing calls (hover, select) may
@@ -660,7 +673,10 @@ export class MountedChart implements Chart, ExportsScene {
           })),
         );
       });
-      this.#shareView(movedX);
+      // Synced charts hear of the chart's x scale, where it still has one, not of insets' own.
+      this.#shareView(
+        model.sharesX && x.some(({ first, view }) => !first && model.viewportOf() !== view),
+      );
     }
   }
 
@@ -775,9 +791,12 @@ export class MountedChart implements Chart, ExportsScene {
     rows = true,
     plane?: SelectionOwner | null,
   ) {
+    const was = this.#owner?.x;
     this.#select(selection, panel, rows, plane);
     const channel = this.#channels.selection;
-    const shares = channel?.scale === "y" ? this.#model.sharesY : this.#model.sharesX;
+    // A selection of an inset's x scale (a group of its own) is the chart's alone.
+    const group = selection ? this.#owner?.x : was;
+    const shares = channel?.scale === "y" ? this.#model.sharesY : this.#model.sharesX && !group;
     if (channel && shares && !plane)
       broadcast("selection", channel.group, this.#member, this.#encode(channel.scale));
   }
@@ -795,7 +814,7 @@ export class MountedChart implements Chart, ExportsScene {
     const given = Array.isArray(selection)
       ? { x: selection as readonly [number, number], y: null, lasso: null }
       : (selection as Selection | null);
-    const panel = plane ? undefined : (at ?? this.#model.panels()[0]);
+    const panel = plane ? undefined : (at ?? this.#model.chartPanel());
     const fit = (range: readonly [number, number] | null, scale: PositionScale | undefined) =>
       range && (scale ? normalize(scale, range[0], range[1]) : ascending(...range));
     const next =
@@ -842,7 +861,7 @@ export class MountedChart implements Chart, ExportsScene {
    */
   #encode(scale: ChannelOf["scale"]): SharedSelection | null {
     const selection = this.#selection;
-    const panel = this.#model.panels()[0];
+    const panel = this.#model.chartPanel();
     const named = (axis: "x" | "y") => {
       const range = selection![axis];
       const categories = panel?.[axis].categories;
@@ -858,7 +877,7 @@ export class MountedChart implements Chart, ExportsScene {
 
   /** A selection a synced chart shared, on this chart's scales: names as categories' indices. */
   #decode(shared: SharedSelection | null, scale: ChannelOf["scale"]): Selection | null {
-    const panel = this.#model.panels()[0];
+    const panel = this.#model.chartPanel();
     const ranged = (values: SharedSelection[0], axis: "x" | "y"): Range | null => {
       const categories = panel?.[axis].categories;
       if (!values || !categories !== (typeof values[0] === "number")) return null;
@@ -945,11 +964,10 @@ export class MountedChart implements Chart, ExportsScene {
     const drawn = this.#model.panels();
     let at = 0;
     // Panels a layout mark drew in have no axes.
-    return this.#model
-      .allPanels()
-      .map(({ key, label, plot, items }) =>
-        items ? { key, label, plot: { ...plot } } : panelInfo(drawn[at++]!),
-      );
+    return this.#model.allPanels().map(({ key, label, plot, items }) => ({
+      ...(items ? { key, label, plot: { ...plot } } : panelInfo(drawn[at++]!)),
+      parent: this.#options.panels?.parentKey(key),
+    }));
   }
 
   toPixel(value: number, { panel, axis }: AxisTarget): number | undefined {
@@ -1002,43 +1020,67 @@ export class MountedChart implements Chart, ExportsScene {
     return this.#model.legendEntries().map(({ key, label, color }) => ({ key, label, color }));
   }
 
-  getHiddenKeys(): readonly string[] {
-    return [...this.#model.hidden];
+  getHiddenKeys({ panel }: { panel?: string | undefined } = {}): readonly string[] {
+    const hidden = this.#model.hidden;
+    return this.#options.panels?.hiddenKeys(hidden, panel) ?? [...hidden];
   }
 
   setHiddenKeys(keys: readonly string[]): void {
-    this.#hide(keys);
+    this.#hide(keys, new Map());
   }
 
-  setVisibility(keys: string | readonly string[], visible: boolean): void {
-    const hidden = new Set(this.#model.hidden);
-    const { groups } = this.#model.hidden;
-    for (const key of typeof keys === "string" ? [keys] : keys) {
+  setVisibility(
+    keys: string | readonly string[],
+    visible: boolean,
+    { panel }: { panel?: string | undefined } = {},
+  ): void {
+    const model = this.#model.hidden;
+    const list = typeof keys === "string" ? [keys] : keys;
+    // What subplots' legends set of them: in one panel as `panel` says, else let go.
+    const own = this.#options.panels?.visibility(model, list, visible, panel);
+    if (panel !== undefined && !own)
+      throw new Error("setVisibility panel: the chart has no subplots; drop panel");
+    const hidden = new Set(model);
+    const { groups } = model;
+    for (const key of panel === undefined ? list : []) {
       // A series of a legend group shows and hides with its group's entry.
       const stored = groups.get(key) ?? key;
       if (visible) hidden.delete(stored);
       else hidden.add(stored);
     }
-    this.#hide(hidden);
+    this.#hide(hidden, own);
   }
 
   /**
-   * Hides what `next` names and shows the rest: how the legend, the
-   * visibility methods, and updates that remove marks all hide series and
-   * items, reporting once when something changed.
+   * Hides what `next` names and shows the rest, and in each of `panels`
+   * as it says: how the legends, the visibility methods, and updates that
+   * remove marks all hide series and items, reporting once when something
+   * changed.
    */
-  #hide(next: Iterable<string>): void {
+  #hide(next: Iterable<string>, panels?: Map<string, Map<string, boolean>>): void {
     const hidden = this.#model.hidden;
     // A series of a legend group goes with its group's entry.
     const keys = new Set<string>();
     for (const key of next) keys.add(hidden.groups.get(key) ?? key);
-    if (keys.size === hidden.size && [...hidden].every((key) => keys.has(key))) return;
+    if (
+      keys.size === hidden.size &&
+      [...hidden].every((key) => keys.has(key)) &&
+      !(panels && panels !== hidden.panels && (panels.size || hidden.panels.size))
+    )
+      return;
     // Scenes draw with copies of the model's set, made as they are built.
     hidden.clear();
     for (const key of keys) hidden.add(key);
+    if (panels) {
+      hidden.panels = panels;
+      this.#loadCompilers();
+    }
     this.#settle();
     this.#invalidate();
-    this.#events.emit("visibility", { hiddenKeys: [...hidden] });
+    this.#events.emit("visibility", {
+      hiddenKeys: [...hidden],
+      ...this.#options.panels?.overrides(hidden.panels),
+    });
   }
 
   render(): void {
@@ -1268,7 +1310,7 @@ export class MountedChart implements Chart, ExportsScene {
     const brush = this.#brush;
     const x = brush?.dragging ? this.#controller?.dragged : this.#owner?.x;
     brush?.draw(
-      x ? panels.filter(({ xGroup }) => xGroup === x) : panels,
+      x !== undefined ? panels.filter(({ xGroup }) => xGroup === x) : panels,
       scene.theme,
       this.#selection,
     );
@@ -1288,6 +1330,9 @@ export class MountedChart implements Chart, ExportsScene {
     this.#cause = cause;
     const scales = this.#xScales();
     const before = scales.map((first) => this.#viewOf(first?.key));
+    // The chart's x view, where panels share one.
+    const wide = () => (this.#model.sharesX ? this.#model.viewport : null);
+    const was = wide();
     this.#changingView = true;
     try {
       change();
@@ -1297,8 +1342,9 @@ export class MountedChart implements Chart, ExportsScene {
     this.#invalidate(false);
     this.#reportViews(scales, before);
     // A listener may have changed the view again: share where it ended up.
-    // What a synced chart shared is not shared again.
-    if (cause !== "sync") this.#shareView(shareX);
+    // What a synced chart shared is not shared again, nor a change of an
+    // inset's x scale alone.
+    if (cause !== "sync") this.#shareView(shareX && !sameRange(was, wide()));
   }
 
   /**
@@ -1354,12 +1400,16 @@ export class MountedChart implements Chart, ExportsScene {
     }
   }
 
-  /** The first panel of each x scale; one undefined when every panel shares x. */
+  /**
+   * The first panel of each x scale; undefined for the one every panel
+   * shares (beside which insets have their own).
+   */
   #xScales(): (DrawnPanel | undefined)[] {
     const panels = this.#model.panels();
-    return this.#model.sharesX
-      ? [undefined]
-      : panels.filter((p, i) => panels.findIndex(({ xGroup }) => xGroup === p.xGroup) === i);
+    const firsts = panels.filter(
+      (p, i) => panels.findIndex(({ xGroup }) => xGroup === p.xGroup) === i,
+    );
+    return this.#model.sharesX ? [undefined, ...firsts.filter(({ xGroup }) => xGroup)] : firsts;
   }
 
   /** The keys of the panels drawn with the x scale named `x`. */

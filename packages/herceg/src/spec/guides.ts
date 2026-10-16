@@ -170,6 +170,11 @@ export interface AxisGuideSpec {
   layers?: readonly TickLayerSpec[];
   /** Draw the axis; true by default. */
   show?: boolean;
+  /**
+   * Where panels sharing the scale label it: on the outer edge of panels
+   * lined up with each other ("outer", the default), or on every panel ("all").
+   */
+  repeat?: "outer" | "all";
   style?: AxisStyles;
 }
 
@@ -234,6 +239,12 @@ export interface LegendGuideSpec extends LegendOptionsSpec {
   id?: string;
   /** The scales whose entries it lists; every one a legend shows by default. */
   scales?: readonly ScaleRef[];
+  /**
+   * The id of the subplot (or inset) whose marks it lists: it goes above
+   * that panel by default, and its entries hide and show them there only.
+   * The chart's own legend then lists what no panel's legend does.
+   */
+  panel?: string;
   show?: boolean;
 }
 

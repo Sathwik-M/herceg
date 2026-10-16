@@ -7,9 +7,11 @@ import {
   type ChartUpdate,
   chartError,
   createChart,
+  type GuideOptions,
   type Chart as HercegChart,
   type Hydration,
   type Inspection,
+  type Panels,
   type RenderTooltip,
   showFailure,
   tablesOf,
@@ -126,12 +128,46 @@ function useChartEvent<K extends keyof ChartEvents>(
   return latest;
 }
 
-function marksFrom(children: ReactNode, out: ChartMark[] = []): ChartMark[] {
+/** What a chart's children add to its options: marks, guides, and (from layout elements) its panels. */
+export interface Parts {
+  marks: ChartMark[];
+  guides: GuideOptions[];
+  panels?: Panels | undefined;
+}
+
+/**
+ * What a <Panel> or an <Inset> gives the elements inside it (see
+ * layout.tsx): its panel's id, and their props in it, refused where a
+ * `panel` of their own names another.
+ */
+export interface Placing {
+  readonly panel: string;
+  props(type: unknown, props: object): object;
+}
+
+/**
+ * An element that adds to its chart's options as it says (layout and guide
+ * elements); mark elements add their mark.
+ */
+export interface PartElement<P> {
+  (props: P): null;
+  displayName: string;
+  /** Adds what the element's props describe, as `placing` says inside a panel. */
+  addTo: (props: P, parts: Parts, placing: Placing | undefined) => void;
+}
+
+/** Adds what `children` describe to `parts`, marks and guides as `placing` says inside a panel. */
+export function collect(children: ReactNode, parts: Parts, placing?: Placing): Parts {
   for (const child of Children.toArray(children)) {
     if (!isValidElement(child)) continue;
     const props = child.props as { children?: ReactNode };
     if (child.type === Fragment) {
-      marksFrom(props.children, out);
+      collect(props.children, parts, placing);
+      continue;
+    }
+    const element = child.type as Partial<PartElement<unknown>>;
+    if (typeof element.addTo === "function") {
+      element.addTo(child.props, parts, placing);
       continue;
     }
     const build = markBuilder(child.type);
@@ -139,9 +175,11 @@ function marksFrom(children: ReactNode, out: ChartMark[] = []): ChartMark[] {
       throw new Error(
         "<Chart> children must be mark elements such as <Line> or <Rule>, not components wrapping them: call a function that returns marks, or pass marks={...}",
       );
-    out.push(build(child.props));
+    parts.marks.push(
+      build(placing ? placing.props(child.type, child.props as object) : child.props),
+    );
   }
-  return out;
+  return parts;
 }
 
 /**
@@ -364,14 +402,24 @@ export function Chart({
   // Mark elements refused (an unknown field) leave the chart as it was, saying why.
   let marks: ChartMark[] = applied.current?.marks.slice() ?? [];
   let refused: ChartError | undefined;
+  let given: Partial<Pick<Options, "panels" | "guides">> = {};
   try {
-    marks = [...(markProp ?? []), ...marksFrom(children)];
+    const parts = collect(children, { marks: [], guides: [] });
+    marks = [...(markProp ?? []), ...parts.marks];
+    if (parts.panels && props.panels)
+      throw new Error(
+        "<Chart> panels: layout elements among its children place its panels; drop panels, or the layout elements",
+      );
+    given = {
+      ...(parts.panels && { panels: parts.panels }),
+      ...(parts.guides.length > 0 && { guides: [...(props.guides ?? []), ...parts.guides] }),
+    };
   } catch (error) {
     if (props.errorMode === "throw") throw error;
     refused = chartError(error, "validate");
   }
   const tooltip = useTooltip(renderTooltip);
-  const shown: Options = { ...props, onError: failing.report };
+  const shown: Options = { ...props, ...given, onError: failing.report };
   const options: Options = tooltip.option ? { ...shown, renderTooltip: tooltip.option } : shown;
   // The tooltip's renderer is new when its version is: canonical JSON
   // compares functions by identity.

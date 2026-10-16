@@ -37,14 +37,15 @@ export type SnapshotGeometry =
 /** What the runtime's layers drew, in their order, for taking their nodes over. */
 export interface SnapshotState {
   /** Each panel's key and the geometry of its data group and of its drawings above. */
-  panels: [key: string, data: SnapshotGeometry[], above: SnapshotGeometry[]][];
+  /** Each panel's drawings, and an inset's the hash of the markup of its box, plot, and grid under them. */
+  panels: [key: string, data: SnapshotGeometry[], above: SnapshotGeometry[], cover?: number][];
   /** Hashes of the markup under the data (backgrounds, grid) and of the guides. */
   under: number;
   guides: number;
   /** Whether the layer made the chart's own clip path, for marks cut to the chart. */
   chartClip: boolean;
-  /** Each legend button's key and the keys it hides and shows. */
-  legend: [id: string, targets: string | readonly string[]][];
+  /** Each legend button's key, the keys it hides and shows, and for a panel's legend, there. */
+  legend: [id: string, targets: string | readonly string[], panel?: string][];
 }
 
 /**

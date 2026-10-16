@@ -9,12 +9,13 @@ from typing import Any, Literal, cast
 
 import numpy as np
 
-from .._chart import Chart, Dash, HelperOptions
+from .._chart import Chart, Dash
 from .._data import Column
 from . import _numerics as numerics
 from ._common import (
     ErrorBar,
     ErrorMethod,
+    ExpressOptions,
     Levels,
     Source,
     Statistics,
@@ -84,7 +85,7 @@ def barplot(
     weight: str | None = None,
     units: str | None = None,
     palette: Sequence[str] | None = None,
-    **options: Unpack[HelperOptions],
+    **options: Unpack[ExpressOptions],
 ) -> Chart:
     """Bars of an estimate of a number column per category, with error bars
     over each.
@@ -154,7 +155,7 @@ def pointplot(
     linestyle: LineStyle | None = None,
     join: bool | None = None,
     palette: Sequence[str] | None = None,
-    **options: Unpack[HelperOptions],
+    **options: Unpack[ExpressOptions],
 ) -> Chart:
     """Points at an estimate of a number column per category, with error
     bars, as ``barplot`` computes them, joined by a line per ``series``
@@ -261,7 +262,7 @@ def lineplot(
     error_style: Literal["band", "bars"] = "band",
     sort: bool = True,
     palette: Sequence[str] | None = None,
-    **options: Unpack[HelperOptions],
+    **options: Unpack[ExpressOptions],
 ) -> Chart:
     """Lines through an estimate of ``y`` at each distinct ``x`` (a number or
     time column), with an interval as a band (``error_style="band"``) or

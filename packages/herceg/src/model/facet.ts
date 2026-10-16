@@ -8,13 +8,15 @@
 import type { NumericArray } from "../data/column.ts";
 import type { Table } from "../data/table.ts";
 import type { AxisOptions } from "../guides/options.ts";
-import { type Align, aligned } from "../layout/place.ts";
+import { aligned } from "../layout/place.ts";
+import type { MeasureText } from "../layout/text.ts";
 import type { CustomSpec } from "../marks/custom.ts";
 import type { LayoutMark } from "../marks/layout-mark.ts";
 import { type BandContext, type Bands, type Mark, usesY } from "../marks/mark.ts";
 import type { Series } from "../marks/series.ts";
-import type { Rect } from "../scene/scene.ts";
+import type { HeaderGuide, Rect } from "../scene/scene.ts";
 import type { FacetSpec, ScaleScope } from "../spec/spec.ts";
+import type { TextPaint } from "../style/style.ts";
 import type { MarkSeries } from "./inspect.ts";
 import {
   type AnnotatedPanel,
@@ -24,11 +26,11 @@ import {
   checkBands,
   checkFit,
   checkLayouts,
-  columnGap,
   type DescribeAnnotation,
   groups,
   groupsOf,
   type HeaderPlace,
+  headerGuides,
   type LayoutConfig,
   leastHeight,
   type PanelAxis,
@@ -36,15 +38,14 @@ import {
   type PanelChart,
   type PanelGrid,
   type PanelLayout,
+  type PanelPlacement,
   type PanelRoom,
   type PanelSplit,
-  type RowSpace,
-  rowGap,
   type ScaleGroups,
-  trackSizes,
   typedGroups,
 } from "./panel-layout.ts";
 import { type ScaledConfig, type Scopes, scopesOf } from "./scales.ts";
+import { uniformPlacement } from "./uniform-grid.ts";
 
 export interface FacetOptions {
   /** Panels per row; by default about as many columns as rows. */
@@ -83,16 +84,6 @@ export function facet(by: string | FacetGrid, options: FacetOptions = {}): Facet
 const ROWS = new Set(["rule", "region", "text"]);
 
 export class Facet implements PanelLayout {
-  columnGap(
-    labeled: readonly boolean[],
-    right: boolean,
-    columns: number,
-    room: number,
-    title: number,
-  ): number {
-    return columnGap(labeled, right, columns, room, title);
-  }
-
   /** The field whose values wrap into rows of `columns` panels. */
   readonly field: string | undefined;
   readonly columns: number | undefined;
@@ -173,6 +164,11 @@ export class Facet implements PanelLayout {
         );
     }
     const scopes = this.scopes(options);
+    for (const axis of ["x", "y", "yRight"] as const)
+      if (typeof scopes[axis] === "object")
+        throw new Error(
+          `chart ${axis}.scope: facets share a scale across the chart, by panel, row, or column; scopes naming layout grids or panels are for subplots`,
+        );
     checkBands(marks, options, scopes);
     // A y zoom or pan moves both y scales through the same pixels, so every panel must share each.
     const along = alongY(options.interaction);
@@ -265,21 +261,6 @@ export class Facet implements PanelLayout {
     return chart;
   }
 
-  rowGap(grid: PanelGrid, panels: number, space: RowSpace): number {
-    return rowGap(grid, panels, space);
-  }
-
-  tracks(
-    free: number,
-    count: number,
-    weights: readonly number[] | undefined,
-    panels: number,
-    columns: number,
-    room: PanelRoom,
-  ): number[] {
-    return trackSizes(free, count, weights, panels, columns, room, this.remedy);
-  }
-
   /** Every panel's axes are the chart's, and draw every mark. */
   groups(
     scope: ScaleScope,
@@ -288,7 +269,11 @@ export class Facet implements PanelLayout {
     axis: PanelAxis,
     chart: AxisOptions | undefined,
   ): ScaleGroups {
-    return typedGroups(groups(scope, split, columns, axis), axis, () => chart);
+    return typedGroups(
+      groups(groupsOf(scope, split.panels.length, columns), split, axis),
+      axis,
+      () => chart,
+    );
   }
 
   across(
@@ -297,6 +282,11 @@ export class Facet implements PanelLayout {
     by: readonly number[],
   ): [number, MarkSeries[]][][] {
     return across(split, groupOf, by);
+  }
+
+  /** Panels go in a uniform grid (see `uniformPlacement`). */
+  placement(split: PanelSplit, grid: PanelGrid): PanelPlacement {
+    return uniformPlacement(grid, split.keys.length, this.remedy);
   }
 
   /** How a split's panels are placed, with headers a line of text tall. */
@@ -332,32 +322,37 @@ export class Facet implements PanelLayout {
     column: number,
     plot: Rect,
     grid: PanelGrid,
-    fit: (text: string, room: number) => string,
+    paint: TextPaint,
     aside: number,
-    align: Align | undefined,
-  ): HeaderPlace[] {
-    const out: HeaderPlace[] = [];
-    // The one panel of a facet without values has nothing to name.
-    if (values.length === 0) return out;
-    const { header, columnHeader, rowHeader } = grid;
-    if (header) {
-      const text = fit(values.join(", "), plot.width);
-      const { at, anchor } = aligned(align ?? "start", plot.x, plot.width);
-      out.push({ text, x: at, y: plot.y - header / 2, anchor, angle: 0 });
-    }
-    if (columnHeader && row === 0) {
-      const text = fit(values.at(-1)!, plot.width);
-      const { at, anchor } = aligned(align ?? "center", plot.x, plot.width);
-      out.push({ text, x: at, y: plot.y - columnHeader / 2, anchor, angle: 0 });
-    }
-    if (rowHeader && column === grid.columns - 1) {
-      const text = fit(values[0]!, plot.height);
-      const x = plot.x + plot.width + aside + rowHeader / 2 + 4;
-      // Turned clockwise, the text's start is at the top.
-      const { at, anchor } = aligned(align ?? "center", plot.y, plot.height);
-      out.push({ text, x, y: at, anchor, angle: 90 });
-    }
-    return out;
+    surface: string,
+    measure: MeasureText,
+    key: string,
+  ): HeaderGuide[] {
+    const { align } = paint;
+    return headerGuides(key, paint, surface, measure, (fit) => {
+      const out: HeaderPlace[] = [];
+      // The one panel of a facet without values has nothing to name.
+      if (values.length === 0) return out;
+      const { header, columnHeader, rowHeader } = grid;
+      if (header) {
+        const text = fit(values.join(", "), plot.width);
+        const { at, anchor } = aligned(align ?? "start", plot.x, plot.width);
+        out.push({ text, x: at, y: plot.y - header / 2, anchor, angle: 0 });
+      }
+      if (columnHeader && row === 0) {
+        const text = fit(values.at(-1)!, plot.width);
+        const { at, anchor } = aligned(align ?? "center", plot.x, plot.width);
+        out.push({ text, x: at, y: plot.y - columnHeader / 2, anchor, angle: 0 });
+      }
+      if (rowHeader && column === grid.columns - 1) {
+        const text = fit(values[0]!, plot.height);
+        const x = plot.x + plot.width + aside + rowHeader / 2 + 4;
+        // Turned clockwise, the text's start is at the top.
+        const { at, anchor } = aligned(align ?? "center", plot.y, plot.height);
+        out.push({ text, x, y: at, anchor, angle: 90 });
+      }
+      return out;
+    });
   }
 
   annotations(
@@ -557,7 +552,13 @@ export class Splitter {
           : { mark: layout, index, rows: byPart[0]![p] },
       );
     }
-    this.#bands.place(split, columns, bands, scopes, context);
+    this.#bands.place(
+      split,
+      (scope) => groupsOf(scope, split.panels.length, columns),
+      bands,
+      scopes,
+      context,
+    );
     return split;
   }
 

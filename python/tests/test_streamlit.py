@@ -102,16 +102,11 @@ def test_reactions_are_checked():
         hst.chart(chart(), on_select="always")
 
 
-def test_charts_with_x_scales_of_their_own_show_but_cannot_report_selections():
+def test_charts_with_x_scales_of_their_own_report_views_and_selections_by_panel():
     data = {"x": [0.0, 1.0, 10.0, 11.0], "y": [1.0, 2.0, 3.0, 4.0], "g": ["a", "a", "b", "b"]}
     split = hg.Chart(data, facet="g", x=hg.AxisOptions(scope="panel"), brush="x").line(x="x", y="y")
-    assert hst.chart(split) == hst.ChartState()
-    assert hst.chart(split, on_click="rerun") == hst.ChartState()
-    with pytest.raises(
-        ValueError,
-        match="streamlit.chart on_select: reports one selection, so the chart's panels",
-    ):
-        hst.chart(split, on_select="rerun")
+    for events in ({}, {"on_click": "rerun"}, {"on_select": "rerun", "on_viewport": "rerun"}):
+        assert hst.chart(split, **events) == hst.ChartState()
 
 
 def test_outside_a_running_app_the_chart_has_no_state():

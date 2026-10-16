@@ -40,6 +40,7 @@ import {
   showItemPositions,
   statePanels,
   targetOf,
+  type ViewportPayload,
   viewportPayload,
 } from "./events.ts";
 import { planeKeys as planeKeysOf } from "./planes.ts";
@@ -106,6 +107,12 @@ interface Instance {
   sentViewport: string;
   sentPositions: string;
   itemFrame: number | undefined;
+  /**
+   * While the chart waits for its first scene to restore what the user had,
+   * the latest run since (`queued`), which is drawn once it has, as if it
+   * had come then.
+   */
+  waiting?: { queued: Component | undefined } | undefined;
 }
 
 const DEFAULT_HEIGHT = 320;
@@ -121,7 +128,14 @@ export default function herceg(component: Component): () => void {
   let instance = instances.get(parentElement);
   if (instance && sameBytes(instance.bytes, data)) {
     instance.component = component;
+    // The chart this run sends again is the one to show.
+    if (instance.waiting) instance.waiting.queued = undefined;
     followApp(instance);
+  } else if (instance?.waiting) {
+    // A chart still restoring what the user had takes this run once it has:
+    // what it restored is then what this run keeps.
+    instance.component = component;
+    instance.waiting.queued = component;
   } else {
     try {
       instance = mount(component, data, instance);
@@ -139,17 +153,28 @@ export default function herceg(component: Component): () => void {
         height: DEFAULT_HEIGHT,
       });
       failures.set(parentElement, failure);
-      return () => failure.remove();
+      return cleanupOf(parentElement);
     }
     instances.set(parentElement, instance);
   }
-  // Streamlit runs the cleanup it got last, when the component leaves the page.
-  const current = instance;
+  return cleanupOf(parentElement);
+}
+
+/**
+ * What Streamlit runs, the cleanup it got last, when the component leaves
+ * the page: it takes what the component shows then, a chart or a failure,
+ * which a queued run may have drawn.
+ */
+function cleanupOf(parentElement: Component["parentElement"]): () => void {
   return () => {
+    failures.get(parentElement)?.remove();
+    failures.delete(parentElement);
+    const current = instances.get(parentElement);
+    if (!current) return;
     if (current.itemFrame !== undefined) cancelAnimationFrame(current.itemFrame);
     current.chart.destroy();
     current.element.remove();
-    if (instances.get(parentElement) === current) instances.delete(parentElement);
+    instances.delete(parentElement);
   };
 }
 
@@ -188,33 +213,32 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
   const moves = statePanels(config, MOVES);
   const planes = config.panels ? statePanels(config, PLANES) : [];
   const positions = new Map<string, ItemPositionsPayload>();
-  if (header.itemEpoch !== undefined && header.itemEpoch === previous?.itemEpoch)
-    for (const panel of moves) {
-      const held: ItemPositionsPayload = {};
-      positions.set(panel, held);
-      showItemPositions(chart, previous!.positions.get(panel) ?? {}, held, true, panel);
-    }
+  const sameItems = header.itemEpoch !== undefined && header.itemEpoch === previous?.itemEpoch;
   const planeKeys = planeKeysOf(config);
   const plane = planeKeys.get("");
-  const compatiblePlane =
-    plane === previous?.plane &&
-    (plane?.startsWith("map:") ||
-      (header.itemEpoch !== undefined && header.itemEpoch === previous?.itemEpoch));
-  if (kept)
-    restore(
-      chart,
-      kept,
-      drills,
-      compatiblePlane ? plane : undefined,
-      planeKeys,
-      header.itemEpoch !== undefined && header.itemEpoch === previous?.itemEpoch,
-    );
-  // What the brush wrote as it was restored, before the chart had listeners.
+  const compatiblePlane = plane === previous?.plane && (plane?.startsWith("map:") || sameItems);
   const brushed = new WeakSet<object>();
-  bindings.forEach(({ store, channel }, i) => {
-    const selection = store.get(channel);
-    if (selection && selection !== unbrushed[i]) brushed.add(selection);
-  });
+  const settle = () => {
+    // Networks of the same items keep their nodes' moves, before views and lassos over them.
+    if (sameItems)
+      for (const panel of moves) {
+        const held: ItemPositionsPayload = {};
+        positions.set(panel, held);
+        showItemPositions(chart, previous!.positions.get(panel) ?? {}, held, true, panel);
+      }
+    if (kept)
+      restore(chart, kept, drills, compatiblePlane ? plane : undefined, planeKeys, sameItems);
+    // What the brush wrote as it was restored, before the chart had listeners.
+    bindings.forEach(({ store, channel }, i) => {
+      const selection = store.get(channel);
+      if (selection && selection !== unbrushed[i]) brushed.add(selection);
+    });
+  };
+  // A subplot chart whose first scene waits for its guides has no panels
+  // yet: what the user had comes back once it has, and the script hears
+  // then what it would have heard now.
+  const waiting = config.panels && chart.getPanels().length === 0 ? chart.loading : undefined;
+  if (!waiting) settle();
   const instance: Instance = {
     bytes,
     element,
@@ -246,8 +270,6 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
     sentPositions: previous?.sentPositions ?? movesSent(header.itemEpoch, new Map(), moves),
     itemFrame: undefined,
   };
-  // The script hears if the brush could not be kept, or now covers other categories.
-  reportSelection(instance);
   chart.on("select", ({ rows }) => {
     for (const { selection } of rows ?? []) if (selection) brushed.add(selection);
     reportSelection(instance);
@@ -256,12 +278,8 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
     if (!inspection || !instance.events.includes("click")) return;
     instance.component.setTriggerValue("click", inspectionPayload(chart, inspection));
   });
-  reportCamera(instance);
   chart.on("camera", () => reportCamera(instance));
-  reportViewport(instance);
   chart.on("viewport", () => reportViewport(instance));
-  reportDrill(instance);
-  reportPositions(instance);
   chart.on("drill", () => reportDrill(instance));
   chart.on("itemMove", ({ key, position, panels }) => {
     const panel = panels?.[0] ?? "";
@@ -289,19 +307,49 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
     });
   };
   chart.on("rowSelection", reportRows);
-  // A brush kept across a redraw wrote its rows before the chart had
-  // listeners, one that could not be kept took its rows with it, and rows
-  // or data may have changed while the script did not listen: it hears what
-  // the channels hold, as of this payload, unless it was last sent that
-  // (the same rows of the same data).
-  if (kept)
-    for (const { store, channel } of bindings) {
-      const selection = store.get(channel);
-      const now = JSON.stringify([header.epoch, rowsValue(selection)]);
-      const sent = instance.reported.get(`${nameOf(store.source)}\u0000${channel}`);
-      if (now !== (sent ?? JSON.stringify([previous?.epoch, null])))
-        reportRows({ table: store.source, channel, selection });
-    }
+  const report = () => {
+    // The script hears if the brush could not be kept, or now covers other categories.
+    reportSelection(instance);
+    reportCamera(instance);
+    reportViewport(instance);
+    reportDrill(instance);
+    reportPositions(instance);
+    // A brush kept across a redraw wrote its rows before the chart had
+    // listeners, one that could not be kept took its rows with it, and rows
+    // or data may have changed while the script did not listen: it hears what
+    // the channels hold, as of this payload, unless it was last sent that
+    // (the same rows of the same data).
+    if (kept)
+      for (const { store, channel } of bindings) {
+        const selection = store.get(channel);
+        const now = JSON.stringify([header.epoch, rowsValue(selection)]);
+        const sent = instance.reported.get(`${nameOf(store.source)}\u0000${channel}`);
+        if (now !== (sent ?? JSON.stringify([previous?.epoch, null])))
+          reportRows({ table: store.source, channel, selection });
+      }
+  };
+  if (!waiting) report();
+  else {
+    instance.waiting = { queued: undefined };
+    waiting.then(
+      () => {
+        // Unless the page took the chart away.
+        if (!chart.root.isConnected) return;
+        const queued = instance.waiting?.queued;
+        instance.waiting = undefined;
+        chart.render();
+        settle();
+        report();
+        // The run that came meanwhile, from what this chart restored.
+        if (queued) herceg(queued);
+      },
+      () => {
+        const queued = instance.waiting?.queued;
+        instance.waiting = undefined;
+        if (queued && chart.root.isConnected) herceg(queued);
+      },
+    );
+  }
   return instance;
 }
 
@@ -406,7 +454,10 @@ function restore(
     return;
   }
   const panels = chart.getPanels().filter((panel) => panel.x);
-  const [first] = kept.panels;
+  // The chart's own view is of the panels sharing x (an inset may come first).
+  const shared = <P extends { x?: { group: string } | undefined }>(list: readonly P[]) =>
+    list.find(({ x }) => x?.group === "") ?? list[0];
+  const first = shared(kept.panels);
   // A panel's x range carries to the panel of the same key; one every panel
   // shares, also to a panel that is new. Panels sharing a scale take the
   // first one's.
@@ -421,7 +472,7 @@ function restore(
   }
   // Each y axis keeps its range where it can; charts whose panels have y
   // scales of their own have none.
-  const [now] = panels;
+  const now = shared(panels);
   const y: Partial<Viewport> = {};
   if (now?.y?.canSetViewport) y.y = carry(first?.view.y ?? null, first?.y, now.y);
   if (now?.yRight?.canSetViewport)
@@ -434,7 +485,7 @@ function restore(
   const from = kept.panels.find(({ key }) => selectionPanels?.includes(key));
   const at =
     panels.find(({ key }) => selectionPanels?.includes(key)) ??
-    (panels[0]?.x?.group === "" ? panels[0] : undefined);
+    panels.find(({ x }) => x!.group === "");
   const next = selection &&
     from &&
     at && {
@@ -618,21 +669,30 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
 function reportViewport(instance: Instance): void {
   if (!instance.events.includes("viewport")) return;
   const { chart } = instance;
-  // A chart whose panels are all maps or networks has no view but theirs.
-  const own = instance.planes.length === 0 || chart.getPanels().some(({ x }) => x);
+  // The chart's view is of the x scale its panels share. Subplots' maps and
+  // networks have views of their own, as panels with x scales of their own
+  // (insets, say) do; a chart of nothing else has no view but theirs.
+  const axes = chart.getPanels().filter(({ x }) => x);
+  const own = axes.length === 0 ? instance.planes.length === 0 : axes.some(({ x }) => !x!.group);
   const view = own ? viewportPayload(chart, chart.getViewport()) : null;
-  const panels = Object.fromEntries(
-    instance.planes.map((panel) => [
+  const panels: Record<string, ViewportPayload> = Object.fromEntries([
+    ...instance.planes.map((panel) => [
       panel,
       viewportPayload(chart, chart.getViewport({ panel }), true),
     ]),
-  );
+    ...axes
+      .filter(({ x }) => x!.group)
+      .map(({ key }) => [
+        key,
+        viewportPayload(chart, chart.getViewport({ panel: key }), false, key),
+      ]),
+  ]);
   const zoomed = view && (view.x || view.y || view.yRight);
   const planes = Object.values(panels).some(({ x, y }) => x || y);
   const payload = {
     ...view,
     ...((instance.plane === "graph" || instance.moves.length > 0) && { epoch: instance.itemEpoch }),
-    ...(instance.planes.length > 0 && { panels }),
+    ...(Object.keys(panels).length > 0 && { panels }),
   };
   const encoded = JSON.stringify(payload);
   if (encoded === instance.sentViewport || (instance.sentViewport === "null" && !zoomed && !planes))

@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid } from "../../src/layout.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { boxplot } from "../../src/marks/boxplot.ts";
 import { jitterOf } from "../../src/marks/dodge.ts";
@@ -253,7 +254,7 @@ describe("dodge across marks and panels", () => {
     const rows = table({ day: ["thu", "fri"], sex: ["f", "m"], v: [1, 2] });
     const model = build({
       marks: [point(rows, { x: "day", y: "v", series: "sex", dodge: true, panel: "*" })],
-      panels: panels([{ id: "wide" }, { id: "narrow" }], { columns: 2, columnWidths: [3, 1] }),
+      panels: panels([{ id: "wide" }, { id: "narrow" }], grid({ columns: [3, 1] })),
     });
     const scene = model.scene(estimateText);
     for (const [index, panel] of [
@@ -321,7 +322,7 @@ describe("dodge across marks and panels", () => {
             panel: "*",
           } as never),
         ],
-        panels: panels([{ id: "wide" }, { id: "narrow" }], { columns: 2, columnWidths: [3, 1] }),
+        panels: panels([{ id: "wide" }, { id: "narrow" }], grid({ columns: [3, 1] })),
       });
       const scene = model.scene(estimateText);
       for (const [index, panel] of [
@@ -354,7 +355,7 @@ describe("dodge across marks and panels", () => {
             panel: "*",
           } as never),
         ],
-        panels: panels([{ id: "wide" }, { id: "narrow" }], { columns: 2, columnWidths: [3, 1] }),
+        panels: panels([{ id: "wide" }, { id: "narrow" }], grid({ columns: [3, 1] })),
       });
       const scene = model.scene(estimateText);
       for (const [index, panel] of [

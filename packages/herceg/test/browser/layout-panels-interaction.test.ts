@@ -9,6 +9,7 @@ import { selectionStore } from "../../src/data/selection.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
 import type { ChartEvents } from "../../src/dom/events.ts";
+import { grid } from "../../src/layout.ts";
 import { geoshape } from "../../src/marks/geoshape.ts";
 import { graph } from "../../src/marks/graph.ts";
 import { treemap } from "../../src/marks/treemap.ts";
@@ -247,7 +248,7 @@ describe("maps in subplots", () => {
         geoshape(regions, { labelField: "name", panel: "a" }),
         geoshape(regions, { labelField: "name", panel: "b" }),
       ],
-      panels: panels([{ id: "a" }, { id: "b" }], { columns: 2 }),
+      panels: panels([{ id: "a" }, { id: "b" }], grid({ columns: 2 })),
       projection: "equirectangular",
       interaction: { zoom: true },
     });
@@ -290,7 +291,7 @@ describe("maps in subplots", () => {
     const regions = fromGeoJSON(countries());
     const chart = await mount({
       marks: [geoshape(regions, { panel: "a" }), geoshape(regions, { panel: "b" })],
-      panels: panels([{ id: "a" }, { id: "b" }], { columns: 2 }),
+      panels: panels([{ id: "a" }, { id: "b" }], grid({ columns: 2 })),
       projection: "equirectangular",
       interaction: { zoom: true },
     });
@@ -322,7 +323,7 @@ describe("maps in subplots", () => {
     const regions = fromGeoJSON(countries());
     const chart = await mount({
       marks: [geoshape(regions, { panel: "a" }), geoshape(regions, { panel: "b" })],
-      panels: panels([{ id: "a" }, { id: "b" }], { columns: 2 }),
+      panels: panels([{ id: "a" }, { id: "b" }], grid({ columns: 2 })),
       projection: "equirectangular",
       interaction: { brush: "lasso" },
     });
@@ -352,7 +353,7 @@ describe("networks in subplots", () => {
       graph(links, { source: "from", target: "to", labels: false, panel });
     const chart = await mount({
       marks: [network("a"), network("b")],
-      panels: panels([{ id: "a" }, { id: "b" }], { columns: 2 }),
+      panels: panels([{ id: "a" }, { id: "b" }], grid({ columns: 2 })),
       interaction: { drag: true },
     });
     const moves = heard(chart, "itemMove");

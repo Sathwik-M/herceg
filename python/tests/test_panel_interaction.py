@@ -7,6 +7,7 @@ import pytest
 
 import herceg as hg
 from herceg._events import decode_selection, encode_selection
+from herceg._live import _scale_groups
 
 SALES = {
     "year": ["2023", "2023", "2024", "2024"],
@@ -52,7 +53,7 @@ def test_maps_split_their_layers_in_facets_or_repeat_them():
 
 def test_maps_and_networks_fill_subplots_of_their_own():
     chart = (
-        hg.Chart(CITIES, panels=["map", "net"], panel_columns=2, zoom=True, drag=True)
+        hg.Chart(CITIES, panels=["map", "net"], layout=hg.Grid(columns=2), zoom=True, drag=True)
         .geoshape(data=SQUARE, panel="map")
         .geopoint("lon", "lat", panel="map")
         .graph("source", "target", data=LINKS, panel="net")
@@ -341,3 +342,245 @@ def test_streamlit_state_holds_each_subplot_state():
     assert state.panel_drill_roots == {"b": ('[1,"Asia"]',)}
     assert state.panel_item_positions == {"n": {'[2,"a"]': (1.0, 2.0)}}
     assert state.panel_viewports == {"m": hg.Viewport(x=(0.0, 1.0), y=(2.0, 3.0))}
+
+
+LATENCY = {
+    "t": [0.0, 1.0, 2.0, 3.0],
+    "p99": [120.0, 180.0, 150.0, 130.0],
+    "errors": [3.0, 5.0, 2.0, 4.0],
+}
+
+
+def two_panels(**options):
+    """Two subplots side by side, each with an x scale of its own."""
+    chart = hg.Chart(LATENCY, zoom="x", brush="x", **options)
+    left, right = chart.columns([2, 1])
+    left.panel("latency").line(x="t", y="p99")
+    right.panel("errors").line(x="t", y="errors")
+    return chart
+
+
+def view(x):
+    return {"x": x, "y": None, "yRight": None, "time": []}
+
+
+def test_live_subplots_keep_each_panels_view_and_selection():
+    widget = two_panels().widget()
+    browser = Browser(widget)
+    assert widget.panel_viewports == {"latency": hg.Viewport(), "errors": hg.Viewport()}
+    heard = []
+    widget.on_viewport(heard.append, panel="errors")
+    # Zooming each panel in a browser changes that panel's view only.
+    browser.reply({"type": "viewport", "viewport": view([0, 1]), "panel": "latency"})
+    browser.reply({"type": "viewport", "viewport": view([2, 3]), "panel": "errors"})
+    assert widget.panel_viewports == {
+        "latency": hg.Viewport(x=(0.0, 1.0)),
+        "errors": hg.Viewport(x=(2.0, 3.0)),
+    }
+    assert heard == [hg.Viewport(x=(2.0, 3.0))]
+    # Python sets one panel's view, which the browsers show there.
+    widget.panel_viewports = {"latency": (0.5, 1.5)}
+    sent = browser.messages[-1]
+    assert (sent["type"], sent["panel"], sent["viewport"]["x"]) == (
+        "viewport",
+        "latency",
+        [0.5, 1.5],
+    )
+    assert widget.panel_viewports["errors"] == hg.Viewport(x=(2.0, 3.0))
+    # No view or selection is the whole chart's.
+    with pytest.raises(ValueError, match="widget.viewport: the chart.s panels with axes have x"):
+        widget.viewport = (0.0, 1.0)
+    with pytest.raises(ValueError, match="widget.on_viewport: the chart's panels with axes have x"):
+        widget.on_viewport(print)
+    with pytest.raises(
+        ValueError, match=r"panel_viewports\['errors'\]: subplots zoom along x only"
+    ):
+        widget.panel_viewports = {"errors": hg.Viewport(x=(0.0, 1.0), y=(0.0, 1.0))}
+    with pytest.raises(ValueError, match="widget.selection: the chart's panels have x scales"):
+        widget.selection = (0.0, 1.0)
+    with pytest.raises(ValueError, match="widget.selection panels: no panel 'p50'"):
+        widget.selection = hg.Selection(x=(0.0, 1.0), panels=("p50",))
+    # A brush in a panel is the selection, of that panel; Python brushes another.
+    selections = []
+    widget.on_select(selections.append)
+    brushed = {"x": [1, 2], "y": None, "lasso": None, "panels": ["errors"], "time": []}
+    browser.reply({"type": "select", "selection": brushed})
+    assert widget.selection == hg.Selection(x=(1.0, 2.0), panels=("errors",))
+    widget.selection = hg.Selection(x=(0.0, 1.0), panels=("latency",))
+    assert browser.messages[-1]["selection"]["panels"] == ["latency"]
+    assert selections == [
+        hg.Selection(x=(1.0, 2.0), panels=("errors",)),
+        hg.Selection(x=(0.0, 1.0), panels=("latency",)),
+    ]
+
+
+def test_live_charts_whose_panels_share_x_keep_one_view_and_insets_their_own():
+    chart = hg.Chart(LATENCY, zoom="x", x=hg.AxisOptions(scope="chart"))
+    [cell] = chart.columns([1])
+    main = cell.panel("main")
+    main.line(x="t", y="p99")
+    main.inset("detail", x=hg.AxisOptions(domain=(1.0, 2.0))).line(x="t", y="p99")
+    widget = chart.widget()
+    browser = Browser(widget)
+    assert widget.panel_viewports == {"detail": hg.Viewport()}
+    widget.viewport = (0.0, 2.0)
+    assert "panel" not in browser.messages[-1]
+    browser.reply({"type": "viewport", "viewport": view([1.2, 1.8]), "panel": "detail"})
+    assert widget.panel_viewports == {"detail": hg.Viewport(x=(1.2, 1.8))}
+    assert widget.viewport == hg.Viewport(x=(0.0, 2.0))
+    # Giving the main panel an x scale of its own leaves the inset's as it was.
+    widget.update(x=hg.AxisOptions(scope="panel"))
+    assert widget.panel_viewports == {
+        "main": hg.Viewport(),
+        "detail": hg.Viewport(x=(1.2, 1.8)),
+    }
+
+
+def test_live_views_refuse_reports_from_before_their_scales_changed():
+    widget = two_panels().widget()
+    browser = Browser(widget)
+    assert widget.panel_viewports == {"latency": hg.Viewport(), "errors": hg.Viewport()}
+    # The panels of a row share a scale now; a browser's zoom from before arrives.
+    widget.update(x=hg.AxisOptions(scope="row"))
+    browser.reply(
+        {
+            "type": "viewport",
+            "viewport": view([1.0, 2.0]),
+            "panel": "latency",
+            "origin": "old",
+            "revision": 0,
+        }
+    )
+    assert widget.panel_viewports["latency"] == hg.Viewport()
+
+
+def test_live_charts_whose_only_axes_are_insets_have_no_view_of_their_own():
+    data = LATENCY | {"g": ["a", "b", "a", "b"]}
+    chart = hg.Chart(data, zoom="x", brush="x", x=hg.AxisOptions(scope="chart"))
+    [cell] = chart.columns([1])
+    share = cell.panel("share")
+    share.pie("g", "p99")
+    share.inset("detail").line(x="t", y="p99")
+    widget = chart.widget()
+    assert widget.panel_viewports == {"detail": hg.Viewport()}
+    with pytest.raises(ValueError, match="widget.panel_viewports"):
+        widget.viewport = (5.0, 10.0)
+    with pytest.raises(ValueError, match="name the panel brushed"):
+        widget.selection = (5.0, 10.0)
+    widget.selection = hg.Selection(x=(1.0, 2.0), panels=("detail",))
+
+
+def test_live_facet_panels_share_x():
+    split = hg.Chart(
+        LATENCY | {"g": ["a", "a", "b", "b"]}, facet="g", x=hg.AxisOptions(scope="panel")
+    )
+    with pytest.raises(ValueError, match='Chart x scope: expected "chart" in a live faceted chart'):
+        split.line(x="t", y="p99").widget()
+    rows = hg.Chart(
+        LATENCY | {"g": ["a", "a", "b", "b"]}, facet_row="g", x=hg.AxisOptions(scope="panel")
+    )
+    with pytest.raises(ValueError, match='Chart x scope: expected "chart" in a live faceted chart'):
+        rows.line(x="t", y="p99").widget()
+    widget = (
+        hg.Chart(LATENCY | {"g": ["a", "a", "b", "b"]}, facet="g").line(x="t", y="p99").widget()
+    )
+    with pytest.raises(ValueError, match='Chart x scope: expected "chart" in a live faceted chart'):
+        widget.update(x=hg.AxisOptions(scope="row"))
+    # Subplots take one: their panels' views are each their own.
+    two_panels().widget().update(x=hg.AxisOptions(scope="panel"))
+
+
+def test_streamlit_state_holds_each_panels_own_view():
+    hst = pytest.importorskip("herceg.streamlit")
+    assert hst.chart(two_panels(), on_select="rerun", on_viewport="rerun") == hst.ChartState()
+    state = hst._state(
+        {"viewport": {"panels": {"latency": view([0, 1]), "errors": view([2, 3])}}},
+        item_epoch=None,
+    )
+    assert state.viewport is None
+    assert state.panel_viewports == {
+        "latency": hg.Viewport(x=(0.0, 1.0)),
+        "errors": hg.Viewport(x=(2.0, 3.0)),
+    }
+
+
+def test_live_subplots_follow_a_change_of_their_x_scope():
+    widget = two_panels(x=hg.AxisOptions(scope="chart")).widget()
+    browser = Browser(widget)
+    assert widget.panel_viewports == {}
+    widget.viewport = (0.0, 1.0)
+    widget.update(x=hg.AxisOptions(scope="panel"))
+    # Each panel's view starts over, and the chart's goes, as in the browser.
+    assert widget.panel_viewports == {"latency": hg.Viewport(), "errors": hg.Viewport()}
+    assert widget.viewport == hg.Viewport()
+    assert browser.messages[-1]["type"] in ("viewport", "options")
+    browser.reply({"type": "viewport", "viewport": view([0, 1]), "panel": "errors"})
+    assert widget.panel_viewports["errors"] == hg.Viewport(x=(0.0, 1.0))
+    widget.update(x=hg.AxisOptions(scope="chart"))
+    assert widget.panel_viewports == {}
+    widget.viewport = (0.5, 1.0)
+
+
+def test_live_subplots_sharing_an_x_scale_by_scope_share_its_view():
+    chart = hg.Chart(LATENCY, zoom="x", x=hg.AxisOptions(scope="row"))
+    grid = chart.grid(rows=2, columns=2)
+    grid.cell(row=0, column=0).panel("a").line(x="t", y="p99")
+    grid.cell(row=0, column=1).panel("b").line(x="t", y="errors")
+    grid.cell(row=1, column=0, column_span=2).panel("c").line(x="t", y="p99")
+    widget = chart.widget()
+    browser = Browser(widget)
+    heard = []
+    widget.on_viewport(heard.append, panel="b")
+    # Setting a's view sets b's, which share the row's x scale; c keeps its own.
+    widget.panel_viewports = {"a": (0.0, 1.0)}
+    assert widget.panel_viewports == {
+        "a": hg.Viewport(x=(0.0, 1.0)),
+        "b": hg.Viewport(x=(0.0, 1.0)),
+        "c": hg.Viewport(),
+    }
+    assert heard == [hg.Viewport(x=(0.0, 1.0))]
+    assert {message.get("panel") for message in browser.messages[-2:]} == {"a", "b"}
+    with pytest.raises(ValueError, match="'a' and 'b' share an x scale"):
+        widget.panel_viewports = {"a": (0.0, 1.0), "b": (1.0, 2.0)}
+    # Once the panels' scales are their own, their views start over.
+    widget.update(x=hg.AxisOptions(scope="panel"))
+    assert widget.panel_viewports == {"a": hg.Viewport(), "b": hg.Viewport(), "c": hg.Viewport()}
+    widget.panel_viewports = {"a": (0.0, 1.0)}
+    assert widget.panel_viewports["b"] == hg.Viewport()
+
+
+def test_live_subplots_group_views_as_the_engine_groups_scales():
+    def groups(scope):
+        chart = hg.Chart(LATENCY, zoom="x", x=hg.AxisOptions(scope=scope))
+        left, right = chart.columns(2)
+        top, bottom = right.rows(2)
+        main = left.panel("a")
+        main.line(x="t", y="p99")
+        top.panel("b").line(x="t", y="errors")
+        bottom.panel("c").line(x="t", y="p99")
+        main.inset("d").line(x="t", y="p99")
+        return chart.widget()._live.view_groups
+
+    # A column of the inner grid holds b and c; the outer grid's columns part a from them.
+    assert groups("column")["b"] == ["b", "c"]
+    assert groups("row")["a"] == ["a"]
+    assert groups({"panels": ["a", "c"]})["a"] == ["a", "c"]
+    # Insets keep their own unless a list names them.
+    assert groups("column")["d"] == ["d"]
+    assert groups({"panels": ["a", "d"]})["d"] == ["a", "d"]
+
+
+def test_live_subplots_group_views_in_the_engine_reading_order():
+    # The first grid in reading order takes the panels: the two-column one
+    # above, listed after the one-column grid below it.
+    layout = {
+        "type": "grid",
+        "rows": [1, 1],
+        "columns": [1],
+        "cells": [
+            {"row": 1, "column": 0, "content": {"type": "grid", "columns": [1]}},
+            {"row": 0, "column": 0, "content": {"type": "grid", "columns": [1, 1]}},
+        ],
+    }
+    keys = _scale_groups(layout, ["a", "b", "c", "d"], "row")
+    assert keys["a"] == keys["b"] and keys["c"] == keys["d"] and keys["a"] != keys["c"]

@@ -3,8 +3,9 @@
 // specs.
 import { describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
-import { table } from "../../src/data/table.ts";
+import { type Table, table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid, inset, panel } from "../../src/layout.ts";
 import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { candlestick } from "../../src/marks/candlestick.ts";
@@ -18,6 +19,7 @@ import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { NAVIGATOR_PANEL, Navigator, rangeNavigator } from "../../src/model/navigator.ts";
 import { panels } from "../../src/model/panels.ts";
+import { clickedRows } from "../../src/model/selected-rows.ts";
 import { renderToPDF } from "../../src/pdf.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
@@ -25,6 +27,7 @@ import type {
   LineGeometry,
   Panel,
   PointGeometry,
+  RectGeometry,
   Scene,
   ShapesGeometry,
   TextGeometry,
@@ -503,7 +506,7 @@ describe("a navigator's strip under panels", () => {
           line(prices(), { x: "t", y: "close", panel: "price", id: "close" }),
           bar(prices(), { x: "t", y: "volume", panel: "volume", id: "volume" }),
         ],
-        panels: panels([{ id: "price" }, { id: "volume" }], { rowHeights: [3, 1] }),
+        panels: panels([{ id: "price" }, { id: "volume" }], grid({ rows: [3, 1] })),
         x: { title: "Time" },
         navigator: rangeNavigator(),
       },
@@ -526,6 +529,42 @@ describe("a navigator's strip under panels", () => {
     // The weighted rows keep their shares of what the strip leaves.
     expect(price!.plot.height / volume!.plot.height).toBeCloseTo(3, 5);
     expect(model.panels()).toHaveLength(2);
+  });
+
+  it("groups each panel's bars as the panel draws them, leaving the panels' clicks alone", () => {
+    const groups = table({
+      t: [0, 0, 0, 1, 1, 1, 2, 2, 2],
+      s: ["a", "b", "c", "a", "b", "c", "a", "b", "c"],
+      v: [1, 2, 3, 2, 3, 4, 3, 4, 5],
+    });
+    const { model } = build({
+      marks: [
+        bar(groups, { x: "t", y: "v", series: "s", panel: "p1", id: "one" }),
+        bar(groups, { x: "t", y: "v", series: "s", panel: "p2", id: "two" }),
+      ],
+      panels: panels([{ id: "p1" }, { id: "p2" }], grid({ rows: [1, 1] })),
+      x: { scope: "chart" },
+      navigator: rangeNavigator(),
+    });
+    // a hidden in p1 only: p2 groups three bars, in its overview too.
+    model.hidden.panels.set("p1", new Map([['["one","a"]', true]]));
+    const scene = model.scene(estimateText);
+    const firstCenter = ({ rects }: RectGeometry) => rects[0]! + rects[2]! / 2;
+    const overview = stripOf(scene).marks.filter(
+      (m): m is RectGeometry => m.kind === "rect" && m.key.endsWith("~1"),
+    );
+    expect(new Set(overview.map(firstCenter)).size).toBe(3);
+    // A click on p2's bar of c at t = 1 selects its row.
+    const p2 = scene.panels.find(({ key }) => key === "p2")!;
+    const c = p2.marks.find(
+      (m): m is RectGeometry => m.kind === "rect" && m.key === '["two","c"]',
+    )!;
+    const [x, y, w, h] = [c.rects[4]!, c.rects[5]!, c.rects[6]!, c.rects[7]!];
+    expect(
+      Array.from(
+        clickedRows(model, new Set([groups as unknown as Table]), x + w / 2, y + h / 2)!.rows,
+      ),
+    ).toEqual([5]);
   });
 
   it("draws every panel's marks, each over the y scale of its own panel", () => {
@@ -603,10 +642,7 @@ describe("a navigator's strip under panels", () => {
           line(data, { x: "t", y: "close", panel: "b" }),
           point(data, { x: "t", y: "close", panel: "c" }),
         ],
-        panels: panels([{ id: "a" }, { id: "b" }, { id: "c" }], {
-          columns: 2,
-          columnWidths: [1, 3],
-        }),
+        panels: panels([{ id: "a" }, { id: "b" }, { id: "c" }], grid({ columns: [1, 3] })),
         navigator: rangeNavigator(),
       },
       800,
@@ -708,6 +744,116 @@ describe("a navigator's strip under panels", () => {
     expect(linesOf(strip())).toHaveLength(4);
     expect(linesOf(strip({ y: { scope: "panel" } }))).toHaveLength(6);
     expect(new Set(linesOf(strip({ y: { scope: "panel" } })).map(({ key }) => key)).size).toBe(6);
+  });
+
+  it("leaves out what a panel hides there", () => {
+    const rows = table({ t: [0, 1, 0, 1], v: [1, 2, 3, 4], s: ["p", "p", "q", "q"] });
+    const { model } = build(
+      {
+        marks: [
+          line(rows, { x: "t", y: "v", series: "s", panel: "a" }),
+          line(rows, { x: "t", y: "v", series: "s", panel: "b", id: "second" }),
+        ],
+        panels: panels([{ id: "a" }, { id: "b" }]),
+        navigator: rangeNavigator(),
+      },
+      600,
+      400,
+    );
+    const drawnLines = () =>
+      linesOf(stripOf(model.scene(estimateText))).filter(({ path }) => path.count > 0);
+    expect(drawnLines()).toHaveLength(4);
+    const [hidden] = model.series().filter((s) => s.key.startsWith('["second"'));
+    model.hidden.panels.set("b", new Map([[hidden!.key, true]]));
+    expect(drawnLines()).toHaveLength(3);
+    // Hidden by what it stands for, in one panel of three, then in another.
+    const three = build(
+      {
+        marks: ["a", "b", "c"].map((panel) =>
+          line(rows, { x: "t", y: "v", series: "s", panel, id: panel }),
+        ),
+        panels: panels([{ id: "a" }, { id: "b" }, { id: "c" }]),
+        y: { domain: [0, 5], scope: "chart" },
+        navigator: rangeNavigator(),
+      },
+      600,
+      500,
+    ).model;
+    const identity = three.legendEntries()[0]!.key;
+    const keysOf = () =>
+      linesOf(stripOf(three.scene(estimateText)))
+        .filter(({ path }) => path.count > 0)
+        .map(({ key }) => key);
+    three.scene(estimateText);
+    three.hidden.panels.set("b", new Map([[identity, true]]));
+    const inB = keysOf();
+    three.hidden.panels = new Map([["c", new Map([[identity, true]])]]);
+    const inC = keysOf();
+    expect(inB).toHaveLength(5);
+    expect(inC).toHaveLength(5);
+    expect(inC).not.toEqual(inB);
+  });
+
+  it("shows and moves the chart's x scale, not an inset's own", () => {
+    const { model, scene } = build(
+      {
+        marks: [
+          line(table({ t: [0, 10], v: [0, 1] }), { x: "t", y: "v", panel: "main" }),
+          line(table({ t: [100, 200], v: [0, 1] }), { x: "t", y: "v", panel: "detail" }),
+        ],
+        panels: panels(panel("main", [inset("detail")])),
+        navigator: rangeNavigator(),
+      },
+      600,
+      400,
+    );
+    const strip = stripOf(scene);
+    // The parent's line alone, across the strip.
+    const [only, ...rest] = linesOf(strip);
+    expect(rest).toHaveLength(0);
+    const xs = xsOf(only!);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(strip.plot.width * 0.8);
+    expect(describeChart(model)).toContain(
+      "it controls the x range the panels share, not the insets' own",
+    );
+    // The strip's key is none of the panels', insets' included.
+    const named = build(
+      {
+        marks: [
+          line(table({ t: [0, 10], v: [0, 1] }), { x: "t", y: "v", panel: "main" }),
+          line(table({ t: [0, 1], v: [0, 1] }), { x: "t", y: "v", panel: NAVIGATOR_PANEL }),
+        ],
+        panels: panels(panel("main", [inset(NAVIGATOR_PANEL)])),
+        navigator: rangeNavigator(),
+      },
+      600,
+      400,
+    ).scene;
+    const keys = named.panels.map(({ key }) => key);
+    expect(new Set(keys).size).toBe(keys.length);
+    // An inset is inside its parent's plot, clear of the strip under it.
+    expect(() =>
+      build(
+        {
+          marks: [
+            line(table({ t: [0, 10], v: [0, 1] }), { x: "t", y: "v", panel: "main" }),
+            line(table({ t: [0, 1], v: [0, 1] }), { x: "t", y: "v", panel: "low" }),
+          ],
+          panels: panels(
+            panel("main", [
+              inset("low", {
+                place: { at: { x: { px: 300, frame: "chart" }, y: { px: 330, frame: "chart" } } },
+                width: { px: 200 },
+                height: { px: 60 },
+              }),
+            ]),
+          ),
+          navigator: rangeNavigator(),
+        },
+        600,
+        400,
+      ),
+    ).toThrow(/inset "low" reaches outside its parent's plot down/);
   });
 
   it("goes under a grid of facets, short of the row headers", () => {
@@ -812,16 +958,20 @@ describe("a navigator's strip under panels", () => {
     const data = prices(20);
     const marks = ["a", "b", "c", "d"].map((panel) => line(data, { x: "t", y: "close", panel }));
     const layout = panels(["a", "b", "c", "d"].map((id) => ({ id })));
-    // Each row needs 20 pixels: 4 rows and a 40-pixel strip would not fit.
-    for (const height of [215, 245, 260, 300]) {
+    // Each row needs 32 pixels: 4 rows and a 40-pixel strip would not fit.
+    for (const height of [225, 250, 260, 300]) {
       const { model, scene } = build(
         { marks, panels: layout, navigator: rangeNavigator() },
         600,
         height,
       );
-      const without = build({ marks, panels: layout }, 600, height).model.panels();
+      const without = build(
+        { marks, panels: layout, x: { scope: "chart" } },
+        600,
+        height,
+      ).model.panels();
       const rows = model.panels().map(({ plot }) => plot.height);
-      expect(Math.min(...rows)).toBeGreaterThanOrEqual(20);
+      expect(Math.min(...rows)).toBeGreaterThanOrEqual(32);
       const strip = scene.panels.find(({ key }) => key === NAVIGATOR_PANEL);
       if (strip) {
         expect(strip.plot.height).toBeGreaterThanOrEqual(16);
@@ -833,9 +983,9 @@ describe("a navigator's strip under panels", () => {
       build({ marks, panels: layout, navigator: rangeNavigator() }, 600, height).scene.panels.find(
         ({ key }) => key === NAVIGATOR_PANEL,
       )?.plot.height;
-    expect(strip(215)).toBeUndefined();
-    expect(strip(225)).toBe(22);
-    expect(strip(245)).toBe(40);
+    expect(strip(225)).toBeUndefined();
+    expect(strip(230)).toBe(18);
+    expect(strip(260)).toBe(40);
   });
 
   it("leaves weighted rows what they need, to the pixel, and takes huge weights", () => {
@@ -849,7 +999,7 @@ describe("a navigator's strip under panels", () => {
       build(
         {
           marks,
-          panels: panels([{ id: "a" }, { id: "b" }], { rowHeights }),
+          panels: panels([{ id: "a" }, { id: "b" }], grid({ rows: rowHeights })),
           ...hidden,
           navigator: rangeNavigator(),
         },

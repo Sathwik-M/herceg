@@ -877,6 +877,8 @@ export interface LegendItem {
     | { readonly width: number; readonly height: number; readonly items: readonly GuideItem[] }
     | undefined;
   hidden: boolean;
+  /** Hidden in some panels and shown in others, by panels' own legends. */
+  mixed?: boolean | undefined;
   x: number;
   y: number;
 }
@@ -889,6 +891,8 @@ export interface LegendItem {
 export interface LegendGuide extends GuideBase {
   readonly kind: "legend";
   readonly entries: readonly LegendItem[];
+  /** A panel's legend: the subplot whose marks its entries hide and show, there only. */
+  readonly panel?: string | undefined;
   readonly label: TextPaint;
   /** The labels' halo over what the legend is drawn on. */
   readonly halo: ResolvedHalo | undefined;
@@ -986,10 +990,26 @@ export interface Panel {
     y: number[];
     xPaint?: StrokePaint | undefined;
     yPaint?: StrokePaint | undefined;
+    /**
+     * With insets over the plot, the spans of each line their boxes leave
+     * clear of its stroke: along y for the lines at `x`, along x for those at `y`.
+     */
+    xSpans?: readonly (readonly (readonly [number, number])[])[] | undefined;
+    ySpans?: readonly (readonly (readonly [number, number])[])[] | undefined;
   };
   axes: AxisGuide[];
   /** Geometry in drawing order; guides among it are drawn above the rest. */
   marks: Geometry[];
+  /**
+   * An inset's box, its title and axes included, which it covers with the
+   * chart's background over the panels drawn before it.
+   */
+  cover?: Rect | undefined;
+  /**
+   * Where a panel with insets over it draws: its plot without their boxes,
+   * as rectangles that do not overlap.
+   */
+  visible?: readonly Rect[] | undefined;
 }
 
 export interface Scene {
@@ -999,6 +1019,12 @@ export interface Scene {
   theme: Theme;
   /** Plotting areas; a chart without facets has one. */
   panels: Panel[];
+  /**
+   * With insets, the panels in the layers they are drawn in: those in cells
+   * (and a navigator's strip) together, then each inset over its box; else
+   * one layer of every panel.
+   */
+  layers?: readonly (readonly Panel[])[] | undefined;
   /** The title, panels' titles and headers, and legends, in drawing order. */
   guides: Guide[];
   /** Points in all mark geometry after level-of-detail reduction. */

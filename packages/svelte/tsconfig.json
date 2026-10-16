@@ -4,7 +4,10 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "types": [],
-    "paths": { "herceg": ["../herceg/src/index.ts"] }
+    "paths": {
+      "herceg": ["../herceg/src/index.ts"],
+      "herceg/layout": ["../herceg/src/layout.ts"]
+    }
   },
   "include": ["src", "test", "vitest.config.ts"]
 }

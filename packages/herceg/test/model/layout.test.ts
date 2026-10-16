@@ -5,15 +5,17 @@ import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { insideAt } from "../../src/layout/place.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid } from "../../src/layout.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
+import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { panels } from "../../src/model/panels.ts";
 import { renderToPDF } from "../../src/pdf.ts";
 import { renderToSVG } from "../../src/render/static.ts";
-import type { AxisGuide, Panel, Scene, TextItem } from "../../src/scene/scene.ts";
+import type { AxisGuide, Panel, Rect, Scene, TextItem } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import { headersOf, legendOf, titleOf } from "../helpers/guides.ts";
 
@@ -216,8 +218,24 @@ describe("legends", () => {
     expect(() =>
       build({ ...config, legend: { place: { inside: "top-left", panel: "z" } } }),
     ).toThrow('chart legend.place.panel: no panel "z"; name one of "p", "q"');
+    // Beside one subplot (the first by default), it takes room beside that panel.
+    const beside = build({
+      ...config,
+      legend: { place: { side: "right", scope: "panel", panel: "q" } },
+    }).scene;
+    const [p, besideQ] = beside.panels.map(({ plot }) => plot) as [Rect, Rect];
+    const [first] = legendOf(beside);
+    expect(first!.x).toBeGreaterThan(besideQ.x + besideQ.width);
+    expect(first!.y).toBeGreaterThanOrEqual(besideQ.y);
+    // Plots on the same column keep their edges lined up.
+    expect(p.x + p.width).toBe(besideQ.x + besideQ.width);
+    // A facet's sides are the chart's.
     expect(() =>
-      build({ ...config, legend: { place: { side: "right", scope: "panel" } } }),
+      build({
+        marks: [line(table({ t: [0, 1], v: [1, 2], g: ["a", "b"] }), { x: "t", y: "v" })],
+        facet: facet("g"),
+        legend: { place: { side: "right", scope: "panel" } },
+      }),
     ).toThrow("chart legend.place.scope: a legend on a side goes beside the whole chart");
   });
 
@@ -503,7 +521,7 @@ describe("guide text", () => {
             { id: "p", title: { text: long, style: pad({ left: 30, right: 30 }) } },
             { id: "q", title: { text: long, style: pad({ left: 30, right: 30 }) } },
           ],
-          { columns: 2 },
+          grid({ columns: 2 }),
         ),
       },
       600,
@@ -798,7 +816,7 @@ describe("guide text", () => {
           { id: "p", style: { tickLabel: { fontSize: 12 } } },
           { id: "q", style: { tickLabel: { fontSize: 14 } } },
         ],
-        { columns: 2 },
+        grid({ columns: 2 }),
       ),
     });
     let calls = 0;
@@ -819,7 +837,7 @@ describe("guide text", () => {
         line(metrics, { x: "t", y: "a", panel: "p" }),
         line(metrics, { x: "t", y: "b", panel: "q" }),
       ],
-      panels: panels([{ id: "p" }, { id: "q", style: { tickLabel: pad } }], { columns: 2 }),
+      panels: panels([{ id: "p" }, { id: "q", style: { tickLabel: pad } }], grid({ columns: 2 })),
     });
     const items = axis(scene.panels[1]!, "bottom")!.items;
     for (const item of items)

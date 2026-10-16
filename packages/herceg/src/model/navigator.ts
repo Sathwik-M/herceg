@@ -84,9 +84,16 @@ export interface DrawnStrip {
  */
 export interface StripSource {
   readonly key: string;
+  /** Its place among the scene's panels, whose settings it reads. */
+  readonly index: number;
   readonly yGroup: string;
   readonly yRightGroup: string;
   readonly inspector: Inspector;
+}
+
+/** The frame a mark was drawn with in its panel, whose hidden series it leaves out. */
+function drawnFrame(sources: readonly StripSource[], { at, entry }: Drawn): Frame {
+  return entry.frame ?? sources[at]!.inspector.frame;
 }
 
 /** A mark the strip draws as panel `at` of its sources draws it. */
@@ -211,7 +218,14 @@ export class Navigator {
     if (!strip) return undefined;
     const format = model.formatsOf(undefined, strip.panels[0]).x;
     const [start, end] = strip.shown;
-    return `A range navigator shows the whole x range, with ${format(start)} to ${format(end)} in view${strip.panels.length > 1 ? "; it controls every panel's x range" : ""}.`;
+    // Insets keep x ranges of their own.
+    const controls =
+      strip.panels.length === model.panels().length
+        ? strip.panels.length > 1
+          ? "; it controls every panel's x range"
+          : ""
+        : "; it controls the x range the panels share, not the insets' own";
+    return `A range navigator shows the whole x range, with ${format(start)} to ${format(end)} in view${controls}.`;
   }
 
   /**
@@ -264,19 +278,20 @@ export class Navigator {
 
   /**
    * The strip's panel for a scene of the chart `owner`, at the bottom of the
-   * `room` pixels it took (see `room`), under the plots of `sources`, the
-   * scene's panels, whose marks it draws; `plan` plans x over a domain as
-   * the plots' shared axis is planned, along a width, and `context` is that
-   * axis.
+   * `room` pixels it took (see `room`), under the plots of the scene's
+   * panels `views` sharing the chart's x scale (not insets, with their own),
+   * whose marks it draws; `plan` plans x over a domain as the plots' shared
+   * axis is planned, along a width, and `context` is that axis.
    */
   panel(
     owner: Owner & { readonly height: number },
-    sources: readonly StripSource[],
+    views: readonly (Omit<StripSource, "index"> & { readonly xGroup: string })[],
     plan: XPlan,
     context: AxisContext,
     room: number,
     lift = 0,
   ): Panel {
+    const sources = views.flatMap((view, index) => (view.xGroup ? [] : [{ ...view, index }]));
     let state = states.get(owner);
     if (!state) {
       state = {
@@ -317,6 +332,7 @@ export class Navigator {
     );
     const { scale } = rail;
     const drawn = this.#drawnMarks(sources);
+    const sets = [...new Set(drawn.map((d) => drawnFrame(sources, d).hidden))];
     const key = JSON.stringify([
       labeled,
       scale.type,
@@ -332,7 +348,10 @@ export class Navigator {
         inspector.frame.y.type,
         inspector.rightFrame?.y.type,
       ]),
-      [...frame.hidden],
+      // What each mark hides as drawn in its panel: the sets (most marks
+      // share one), then which each mark draws with.
+      sets.map((hidden) => [...hidden]),
+      drawn.map((d) => sets.indexOf(drawnFrame(sources, d).hidden)),
       [...new Set(drawn.map(({ entry }) => entry.mark))].flatMap((mark) => [
         ...tablesOf(mark).map((table) => table.version),
         viewOf(mark)?.revision ?? -1,
@@ -359,7 +378,7 @@ export class Navigator {
     if (state.labels) marks.push(state.labels);
     // A key no panel has: renderers keep each panel's drawing by its key.
     let name = NAVIGATOR_PANEL;
-    while (sources.some((source) => source.key === name)) name += "~";
+    while (views.some((view) => view.key === name)) name += "~";
     return { key: name, plot: strip, grid: { x: state.grid, y: [] }, axes: [], marks };
   }
 
@@ -521,8 +540,10 @@ function overview(
   const groupOf = (right: boolean, at: number) =>
     `${right} ${right ? sources[at]!.yRightGroup : sources[at]!.yGroup}`;
   const groups = new Map<string, { y: PositionScale; seen: Set<Series> }>();
+  const frameOf = (d: Drawn) => drawnFrame(sources, d);
   const out: Geometry[] = [];
-  for (const { at, entry } of drawn) {
+  for (const drawnMark of drawn) {
+    const { at, entry } = drawnMark;
     const { mark, series, index } = entry;
     const right = mark.spec.axis === "right";
     const group = groupOf(right, at);
@@ -530,14 +551,15 @@ function overview(
     if (!found) {
       const axis = right ? "yRight" : "y";
       const { inspector } = sources[at]!;
+      // Each mark's series as its panel shows or hides them.
       const among = drawn.flatMap((other) =>
         (other.entry.mark.spec.axis === "right") === right && groupOf(right, other.at) === group
-          ? [other.entry]
+          ? [{ ...other.entry, hidden: frameOf(other).hidden }]
           : [],
       );
       const type = (right ? inspector.rightFrame : inspector.frame)?.y.type ?? "linear";
-      const spec = layout ? layout.panelAxis(axis, at, config[axis]) : config[axis];
-      found = { y: yScale(among, type, frame.hidden, rail, strip, spec, context), seen: new Set() };
+      const spec = layout ? layout.panelAxis(axis, sources[at]!.index, config[axis]) : config[axis];
+      found = { y: yScale(among, type, rail, strip, spec, context), seen: new Set() };
       groups.set(group, found);
     }
     // What another panel sharing the scale drew whole is drawn already.
@@ -546,8 +568,12 @@ function overview(
     for (const s of series) seen.add(s);
     // Each panel's parts of marks draw into buffers of their own.
     const tag = at ? `~${at}` : "";
+    // Hidden and grouped as its panel draws it.
+    const drawnWith = frameOf(drawnMark);
     const own: Frame = {
       ...frame,
+      hidden: drawnWith.hidden,
+      groupSeries: drawnWith.groupSeries,
       x: rail,
       y,
       plot: strip,
@@ -578,9 +604,8 @@ function overview(
  * x domain, or the axis' configured domain, from zero when it or a mark asks.
  */
 function yScale(
-  marks: readonly InspectedMark[],
+  marks: readonly (InspectedMark & { readonly hidden: ReadonlySet<string> })[],
   plotType: PositionScale["type"],
-  hidden: ReadonlySet<string>,
   rail: PositionScale,
   strip: Rect,
   spec: ChartConfig["y"],
@@ -591,7 +616,7 @@ function yScale(
   const [x0, x1] = ascending(rail.domain);
   let stands = false;
   const data = unionExtent(
-    marks.map(({ mark, series }) => {
+    marks.map(({ mark, series, hidden }) => {
       const visible = series.filter((s) => !hidden.has(s.key));
       if (mark.zero === "y" && (visible.length > 0 || mark.seriesless)) stands = true;
       return mark.yExtent(visible, x0, x1, log, x.breaks);

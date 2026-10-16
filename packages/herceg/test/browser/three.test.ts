@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { category } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
+import { grid } from "../../src/layout.ts";
 import { geopoint } from "../../src/marks/geopoint.ts";
 import { line } from "../../src/marks/line.ts";
 import { line3d } from "../../src/marks/line3d.ts";
@@ -503,7 +504,7 @@ describe("3D subplots", () => {
             { id: "a", camera: { azimuth: -60, elevation: 60 } },
             { id: "b", camera: { azimuth: 120, elevation: -60, perspective: true } },
           ],
-          { columns: 2 },
+          grid({ columns: 2 }),
         ),
         marks: ["a", "b"].flatMap((panel) => [
           surface(plane, {
@@ -595,7 +596,7 @@ describe("3D subplots", () => {
           { id: "a", camera: { azimuth: 20 } },
           { id: "b", camera: { azimuth: 90 } },
         ],
-        { columns: 2 },
+        grid({ columns: 2 }),
       ),
       marks: ["a", "b"].map((panel) =>
         point3d(points, { x: "x", y: "y", z: "z", fill: "#ff0000", radius: 8, panel }),
@@ -641,7 +642,7 @@ describe("3D subplots", () => {
           { id: "trend", title: "Trend" },
           { id: "b", title: "Fit", camera: { azimuth: 90 } },
         ],
-        { columns: 3 },
+        grid({ columns: 3 }),
       ),
       marks: [
         point3d(points, { x: "x", y: "y", z: "z", panel: "a" }),
@@ -705,7 +706,7 @@ describe("3D subplots", () => {
     const painted = vi.spyOn(CanvasRenderingContext2D.prototype, "arc");
     const chart = await mount({
       renderer: "canvas",
-      panels: panels([{ id: "a" }, { id: "b" }], { columns: 2 }),
+      panels: panels([{ id: "a" }, { id: "b" }], grid({ columns: 2 })),
       marks: ["a", "b"].map((panel) => point3d(cloud, { x: "x", y: "y", z: "z", panel })),
     });
     painted.mockClear();
@@ -721,7 +722,7 @@ describe("3D subplots", () => {
 it("combines map and orbit touch controls while keeping gestures in their panels", async () => {
   const places = table({ lon: [0, 10], lat: [0, 10] });
   const chart = await mount({
-    panels: panels([{ id: "cloud" }, { id: "map" }], { columns: 2 }),
+    panels: panels([{ id: "cloud" }, { id: "map" }], grid({ columns: 2 })),
     marks: [
       point3d(points, { x: "x", y: "y", z: "z", panel: "cloud" }),
       geopoint(places, { longitude: "lon", latitude: "lat", panel: "map" }),
@@ -752,7 +753,7 @@ it("ends a drag when its subplot loses its camera and refreshes retained toolbar
         { id: "a", title: "Cloud" },
         { id: "b", title: "Fit" },
       ],
-      { columns: 2 },
+      grid({ columns: 2 }),
     ),
     marks: ["a", "b"].map((panel) => point3d(points, { x: "x", y: "y", z: "z", panel })),
   });
@@ -760,7 +761,7 @@ it("ends a drag when its subplot loses its camera and refreshes retained toolbar
   const stale = chart.root.querySelector<HTMLButtonElement>('[aria-label="View, Cloud"] button')!;
   at(chart, "pointerdown", a.x + a.width / 2, a.y + a.height / 2);
   chart.update({
-    panels: panels([{ id: "a" }, { id: "b", title: "New fit" }], { columns: 2 }),
+    panels: panels([{ id: "a" }, { id: "b", title: "New fit" }], grid({ columns: 2 })),
     marks: [
       line(points, { x: "x", y: "z", panel: "a" }),
       point3d(points, { x: "x", y: "y", z: "z", panel: "b" }),

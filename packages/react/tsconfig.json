@@ -7,7 +7,8 @@
     "types": [],
     "paths": {
       "herceg": ["../herceg/src/index.ts"],
-      "herceg/grid": ["../herceg/src/grid.ts"]
+      "herceg/grid": ["../herceg/src/grid.ts"],
+      "herceg/layout": ["../herceg/src/layout.ts"]
     }
   },
   "include": ["src", "test", "vitest.config.ts"]

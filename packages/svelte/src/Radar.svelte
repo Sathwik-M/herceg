@@ -1,10 +1,11 @@
 <!-- A radar: `category` and `value`, or a list of `fields`, a spoke each. It has its chart, each facet panel, or its `panel` to itself. -->
 <script lang="ts" generics="S extends Schema">
   import { type RadarOptions, radar, type Schema } from "herceg";
-  import { built, markAnchor, plain, type WithData } from "./marks.js";
+  import { built, markAnchor, panelled, plain, type WithData } from "./marks.js";
 
   let { data, ...options }: WithData<RadarOptions<S>, S> = $props();
-  const mark = $derived(built(() => radar(data, plain(options) as RadarOptions<S>)));
+  const inPanel = panelled("Radar");
+  const mark = $derived(built(() => radar(data, inPanel(plain(options)) as RadarOptions<S>)));
   const anchor = markAnchor("Radar", () => mark);
 </script>
 

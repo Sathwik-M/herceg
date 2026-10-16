@@ -1,5 +1,6 @@
+import { rectMarkup } from "../draw/markup.ts";
 import { canvasRasterUrl } from "../render/canvas.ts";
-import { cutToChart, guidesMarkup, underMarkup } from "../render/svg.ts";
+import { cutToChart, guidesMarkup, keepPath, underMarkup } from "../render/svg.ts";
 import {
   clipOf,
   type Geometry,
@@ -60,7 +61,8 @@ export function hash(text: string): number {
 /** What the layer keeps for one panel: its clip, and its data and annotation groups. */
 export interface PanelNodes {
   clip: SVGClipPathElement;
-  clipRect: SVGRectElement;
+  /** The markup of its clip's rectangles: its plot's, or with insets over it those they leave visible. */
+  cut: string;
   /** Data, clipped to the panel's plot. */
   marks: SVGGElement;
   /**
@@ -70,6 +72,10 @@ export interface PanelNodes {
   annotations: SVGGElement;
   markNodes: Map<string, Retained>;
   annotationNodes: Map<string, Retained>;
+  /** An inset's box, plot background, and grid, under its drawings, and its markup's hash. */
+  cover?: { under: SVGGElement; hash: number } | undefined;
+  /** In a Canvas chart, with insets over the panel, what its annotations keep to (see `#renderPanel`). */
+  keep?: { clip: SVGClipPathElement; path: string } | undefined;
 }
 
 /**
@@ -196,10 +202,11 @@ export class SvgLayer {
     if (nodes) return nodes;
     const document = this.#document;
     const id = `${this.#id}-clip-${this.#clips++}`;
-    const clipRect = this.#clipPath(id);
+    const clip = element(document, "clipPath", { id });
+    this.#defs.append(clip);
     nodes = {
-      clip: clipRect.parentNode as SVGClipPathElement,
-      clipRect,
+      clip,
+      cut: "",
       marks: element(document, "g", { "clip-path": `url(#${id})` }),
       annotations: element(document, "g"),
       markNodes: new Map(),
@@ -226,8 +233,10 @@ export class SvgLayer {
     set(svg, "font-size", String(theme.fontSize));
     set(svg, "fill", theme.muted);
 
-    // Backgrounds and grid lines are the canvas' when it draws the marks.
-    const under = options.marks ? underMarkup(scene) : "";
+    // Backgrounds and grid lines are the canvas' when it draws the marks;
+    // insets draw theirs over the panels drawn before them.
+    const layered = scene.layers ?? [scene.panels];
+    const under = options.marks ? underMarkup(scene, layered[0]) : "";
     const underHash = hash(under);
     if (underHash !== this.#underHash) {
       this.#under.innerHTML = under;
@@ -245,21 +254,28 @@ export class SvgLayer {
       set(this.#chartClip, "width", String(width));
       set(this.#chartClip, "height", String(height));
     }
-    const panels = scene.panels.map((panel) => {
-      seen.add(panel.key);
-      const nodes = this.#panelNodes(panel.key);
-      this.#renderPanel(nodes, panel, options.marks, context);
-      return nodes;
-    });
-    // Data groups follow the grid in panel order, annotation groups follow them.
+    // Data groups follow the grid in panel order, annotation groups follow
+    // them; an inset's follow its box and grid. Axes go over every layer.
     let previous: Element = this.#under;
-    for (const nodes of panels) previous = keepOrder(svg, nodes.marks, previous);
-    for (const nodes of panels) previous = keepOrder(svg, nodes.annotations, previous);
+    for (const panels of layered) {
+      const nodes = panels.map((panel) => {
+        seen.add(panel.key);
+        const kept = this.#panelNodes(panel.key);
+        this.#renderPanel(kept, panel, options.marks, context, scene);
+        return kept;
+      });
+      if (panels[0]?.cover)
+        previous = keepOrder(svg, this.#cover(nodes[0]!, scene, panels, options.marks), previous);
+      for (const kept of nodes) previous = keepOrder(svg, kept.marks, previous);
+      for (const kept of nodes) previous = keepOrder(svg, kept.annotations, previous);
+    }
     for (const [key, nodes] of this.#panels) {
       if (seen.has(key)) continue;
       nodes.clip.remove();
       nodes.marks.remove();
       nodes.annotations.remove();
+      nodes.cover?.under.remove();
+      nodes.keep?.clip.remove();
       this.#panels.delete(key);
     }
     // The series legend is the chart's HTML buttons.
@@ -271,16 +287,56 @@ export class SvgLayer {
     }
   }
 
-  #renderPanel(nodes: PanelNodes, panel: Panel, marks: boolean, context: SvgContext): void {
-    const { plot } = panel;
-    set(nodes.clipRect, "x", String(plot.x));
-    set(nodes.clipRect, "y", String(plot.y));
-    set(nodes.clipRect, "width", String(plot.width));
-    set(nodes.clipRect, "height", String(plot.height));
+  /** The group of an inset's box, plot background, and grid (those only where `marks` are SVG's). */
+  #cover(nodes: PanelNodes, scene: Scene, panels: readonly Panel[], marks: boolean): SVGGElement {
+    nodes.cover ??= { under: element(this.#document, "g"), hash: 0 };
+    const { cover } = nodes;
+    const markup = marks ? underMarkup(scene, panels) : "";
+    const markupHash = hash(markup);
+    if (markupHash !== cover.hash) {
+      cover.under.innerHTML = markup;
+      cover.hash = markupHash;
+    }
+    return cover.under;
+  }
+
+  #renderPanel(
+    nodes: PanelNodes,
+    panel: Panel,
+    marks: boolean,
+    context: SvgContext,
+    scene: Scene,
+  ): void {
+    // A panel no longer drawn over others draws no box.
+    if (!panel.cover && nodes.cover) {
+      nodes.cover.under.remove();
+      nodes.cover = undefined;
+    }
+    // With insets over the panel, the parts of its plot they leave visible.
+    const cut = (panel.visible ?? [panel.plot]).map((rect) => rectMarkup(rect, 0, "")).join("");
+    if (cut !== nodes.cut) {
+      nodes.clip.innerHTML = cut;
+      nodes.cut = cut;
+    }
     const { data, above } = panelDrawing(panel, marks);
     this.#renderKeyed(nodes.marks, nodes.markNodes, data, context);
     const plotClip = `url(#${nodes.clip.id})`;
     const chartClip = `url(#${this.#id}-clip-chart)`;
+    // Its annotations keep off the insets over it as its data does (over
+    // a Canvas chart's insets too, which the canvas under them draws).
+    const keep = keepPath(scene, panel);
+    if (keep && !nodes.keep) {
+      const clip = element(this.#document, "clipPath", { id: `${nodes.clip.id}-keep` });
+      clip.append(element(this.#document, "path", { "clip-rule": "evenodd" }));
+      this.#defs.append(clip);
+      nodes.keep = { clip, path: "" };
+    }
+    if (nodes.keep && keep !== nodes.keep.path) {
+      set(nodes.keep.clip.firstElementChild as SVGPathElement, "d", keep);
+      nodes.keep.path = keep;
+    }
+    if (keep) set(nodes.annotations, "clip-path", `url(#${nodes.clip.id}-keep)`);
+    else nodes.annotations.removeAttribute("clip-path");
     this.#renderKeyed(nodes.annotations, nodes.annotationNodes, above, context, (mark) => {
       const clip = clipOf(mark);
       return clip === "plot" ? plotClip : clip === "chart" ? chartClip : undefined;

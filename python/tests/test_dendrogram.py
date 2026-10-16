@@ -161,9 +161,7 @@ def test_clustermap_panels():
             hg.Panel("left", x=hg.AxisOptions(show=False)),
             hg.Panel("matrix"),
         ],
-        panel_columns=2,
-        panel_row_heights=[1, 4],
-        panel_column_widths=[1, 4],
+        layout=hg.Grid(rows=[1, 4], columns=[1, 4]),
         x=hg.AxisOptions(scope="column"),
         y=hg.AxisOptions(scope="row"),
         width=800,
@@ -183,7 +181,7 @@ def test_clustermap_panels():
         panel="left",
     )
     spec, _ = chart.to_spec()
-    assert spec["grid"] == {"columns": 2, "rowHeights": [1, 4], "columnWidths": [1, 4]}
+    assert spec["layout"] == {"type": "grid", "rows": [1.0, 4.0], "columns": [1.0, 4.0]}
     assert (spec["x"], spec["y"]) == ({"scope": "column"}, {"scope": "row"})
     assert [m["panel"] for m in spec["marks"]] == ["matrix", "top", "left"]
     assert chart.to_svg().count('fill="none" stroke=') >= 2

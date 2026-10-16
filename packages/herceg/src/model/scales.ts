@@ -22,16 +22,19 @@ export interface ScaledConfig {
   readonly x?: ChartAxisOptions | undefined;
   readonly y?: ChartAxisOptions | undefined;
   readonly yRight?: ChartAxisOptions | undefined;
+  /** A range navigator, which moves an x range every panel shares. */
+  readonly navigator?: object | undefined;
 }
 
 /**
- * The scope of each position scale: its own, or by default the whole chart
- * for x, `yDefault` for y (each panel of subplots, the whole chart in
- * facets), and y's for yRight.
+ * The scope of each position scale: its own, or by default `own` for x and
+ * y (each panel of subplots, the whole chart in facets), and y's for yRight;
+ * a navigator's chart shares x.
  */
-export function scopesOf(config: ScaledConfig, yDefault: ScaleScope): Scopes {
-  const y = config.y?.scope ?? yDefault;
-  return { x: config.x?.scope ?? "chart", y, yRight: config.yRight?.scope ?? y };
+export function scopesOf(config: ScaledConfig, own: ScaleScope): Scopes {
+  const y = config.y?.scope ?? own;
+  const x = config.x?.scope ?? (config.navigator ? "chart" : own);
+  return { x, y, yRight: config.yRight?.scope ?? y };
 }
 
 /** Which scale an instance is of, and in subplots, how numbers placed with another's categories are refused. */

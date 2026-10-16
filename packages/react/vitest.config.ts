@@ -14,6 +14,7 @@ export default defineConfig({
     alias: [
       { find: /^herceg$/, replacement: engine("index.ts") },
       { find: /^herceg\/grid$/, replacement: engine("grid.ts") },
+      { find: /^herceg\/layout$/, replacement: engine("layout.ts") },
     ],
   },
   test: {

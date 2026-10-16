@@ -1629,7 +1629,7 @@ createChart(element, {
     { id: "top", y: { show: false } },
     { id: "left", x: { show: false } },
     { id: "matrix" },
-  ], { columns: 2, rowHeights: [1, 4], columnWidths: [1, 4] }),
+  ], grid({ rows: [1, 4], columns: [1, 4] })), // grid from "herceg/layout"
   x: { scope: "column" },
   y: { scope: "row" },
 });
@@ -1681,29 +1681,35 @@ Charts share their behaviors unevenly so far: the marks along x and y axes
 take part in everything, the others in less. ✓ supported, ◐ partly (see
 the notes), — not yet (refused with an error), · not applicable.
 
-| Marks | Facets | Subplots | Panel scales | Right axis | Zoom and pan | Brushes | Synced selection | Selected rows | Highlight | Legend toggle | Series from color | Colors by identity | Tooltip and keyboard | Tooltip fields | Value animation |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| line, area, bar (including normalized stacks and area stream offsets) | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ |
-| point | ◐ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| histogram, boxplot, boxen, violin | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ◐ | · | — |
-| rug | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| errorbar, candlestick | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | ◐ | ✓ | ✓ | — |
-| dendrogram | ◐ | ✓ | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | · | · | — |
-| heatmap | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | ✓ | · | · | · | ✓ | ✓ | — |
-| 2D histogram | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | ✓ | · | · | · | ✓ | · | — |
-| contour | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | ✓ | · | — |
-| rule, region, text | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · | · | · | · | · | ◐ | · | ◐ |
-| custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ◐ | · | ✓ | ◐ | ◐ | — |
-| pie | ✓ | ✓ | · | · | — | — | — | ✓ | ✓ | ✓ | · | ✓ | ✓ | · | ✓ |
-| treemap, sunburst | ✓ | ✓ | · | · | drilling | — | — | ✓ | ✓ | ✓ | · | ✓ | ✓ | · | — |
-| radar | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | · | ✓ | ✓ | · | — |
-| funnel, sankey | ✓ | ✓ | · | · | — | — | — | ✓ | ✓ | · | · | · | ✓ | · | — |
-| gauge | ✓ | ✓ | · | · | — | — | — | — | — | · | · | · | ✓ | · | — |
-| graph (force, circular, layered) | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ◐ | · | ✓ | ✓ | — | — |
-| geoshape, geopoint | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | — |
-| point3d, line3d | — | ✓ | · | · | turning | — | — | — | — | ✓ | ◐ | ✓ | ✓ | ✓ | — |
-| surface | — | ✓ | · | · | turning | — | — | — | — | · | · | · | ✓ | · | — |
+| Marks | Facets | Subplots | Insets | Panel scales | Right axis | Zoom and pan | Brushes | Synced selection | Selected rows | Highlight | Legend toggle | Series from color | Colors by identity | Tooltip and keyboard | Tooltip fields | Value animation |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| line, area, bar (including normalized stacks and area stream offsets) | ✓ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ |
+| point | ◐ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| histogram, boxplot, boxen, violin | ✓ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ◐ | · | — |
+| rug | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| errorbar, candlestick | ✓ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | ◐ | ✓ | ✓ | — |
+| dendrogram | ◐ | ✓ | ✓ | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | · | · | — |
+| heatmap | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | ✓ | · | · | · | ✓ | ✓ | — |
+| 2D histogram | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | ✓ | · | · | · | ✓ | · | — |
+| contour | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | ✓ | · | — |
+| rule, region, text | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · | · | · | · | · | ◐ | · | ◐ |
+| custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ◐ | · | ✓ | ◐ | ◐ | — |
+| pie | ✓ | ✓ | ✓ | · | · | — | — | — | ✓ | ✓ | ✓ | · | ✓ | ✓ | · | ✓ |
+| treemap, sunburst | ✓ | ✓ | ✓ | · | · | drilling | — | — | ✓ | ✓ | ✓ | · | ✓ | ✓ | · | — |
+| radar | ✓ | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | · | ✓ | ✓ | · | — |
+| funnel, sankey | ✓ | ✓ | ✓ | · | · | — | — | — | ✓ | ✓ | · | · | · | ✓ | · | — |
+| gauge | ✓ | ✓ | ✓ | · | · | — | — | — | — | — | · | · | · | ✓ | · | — |
+| graph (force, circular, layered) | ✓ | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ◐ | · | ✓ | ✓ | — | — |
+| geoshape, geopoint | ✓ | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | — |
+| point3d, line3d | — | ✓ | ✓ | · | · | turning | — | — | — | — | ✓ | ◐ | ✓ | ✓ | ✓ | — |
+| surface | — | ✓ | ✓ | · | · | turning | — | — | — | — | · | · | · | ✓ | · | — |
 
+- Insets: every mark draws in an inset (`inset(...)` in `herceg/layout`,
+  `panel.inset(...)` in Python), over a parent drawing any mark. The
+  indicator box needs number or time x and y axes of the same kind in the
+  inset and its parent, and is refused otherwise (category axes, layout
+  marks). A panel's legend (`legend({ panel })`) lists what its panel draws,
+  for every mark with a legend toggle, and hides and shows it there.
 - Lines, rules, and custom shapes support all four dash strings on SVG,
   Canvas (for data marks), and static SVG/PDF export.
 - Series from color: a category `color` names the series, as `series`
@@ -2468,13 +2474,14 @@ A 3D subplot names its panel on every layer, alongside any other panel:
 
 ```ts
 import { createChart, line, panels, point3d, surface } from "herceg";
+import { grid } from "herceg/layout";
 
 const chart = createChart(element, {
   panels: panels([
     { id: "trend", title: "Trend" },
     { id: "cloud", title: "Observations", camera: { azimuth: 30 } },
     { id: "fit", title: "Fit", camera: { azimuth: 90 } },
-  ], { columns: 3 }),
+  ], grid({ columns: 3 })),
   marks: [
     line(history, { x: "time", y: "yield", panel: "trend" }),
     point3d(trials, { x: "nitrogen", y: "rain", z: "yield", panel: "cloud" }),
@@ -2717,6 +2724,7 @@ show and move the x range every panel shares:
 
 ```ts
 import { bar, candlestick, createChart, panels, rangeNavigator } from "herceg";
+import { panel, rows } from "herceg/layout";
 
 createChart(element, {
   marks: [
@@ -2725,7 +2733,7 @@ createChart(element, {
     }),
     bar(prices, { x: "time", y: "volume", panel: "volume" }),
   ],
-  panels: panels([{ id: "price" }, { id: "volume" }], { rowHeights: [3, 1] }),
+  panels: panels([{ id: "price" }, { id: "volume" }], rows([3, 1], [panel("price"), panel("volume")])),
   navigator: rangeNavigator({ marks: ["price"] }),
 });
 ```
@@ -2922,72 +2930,192 @@ or brushed along a y axis of categories.
 
 ### Subplots
 
-`panels` draws different marks in different panels of one chart, sharing x
-unless `x.scope` says otherwise:
+`panels` draws different marks in different panels of one chart, placed by
+a layout from `herceg/layout`: columns of relative widths, rows of relative
+heights, and grids whose cells span tracks, nested as deep as needed.
 
 ```ts
-import { panels } from "herceg";
+import { columns, panel, panels, rows } from "herceg/layout";
 
 createChart(element, {
-  marks: [
-    line(metrics, { x: "time", y: ["p50", "p99"], panel: "latency" }),
-    bar(metrics, { x: "time", y: "requests", panel: "traffic" }),
-    rule({ x: deployedAt, label: "deploy", panel: "*" }), // in every panel
-  ],
+  height: 600,
   panels: panels(
-    [
-      { id: "latency", title: "Latency", y: { title: "ms" } },
-      { id: "traffic", title: "Requests", y: { type: "log" } },
-    ],
-    { columns: 1, rowHeights: [2, 1] }, // in a spec: "grid": { "columns": 1, "rowHeights": [2, 1] }
+    columns([2, 1], [
+      rows([2, 1], [
+        panel({ id: "latency", title: "p99", y: { title: "ms" } }),
+        panel({ id: "errors", title: "Errors" }),
+      ]),
+      panel({ id: "share", title: "By region" }),
+    ]),
   ),
+  marks: [
+    line(data, { panel: "latency", x: "time", y: "p99", color: "region" }),
+    bar(data, { panel: "errors", x: "time", y: "errors", color: "region" }),
+    pie(data, { panel: "share", category: "region", value: "requests" }),
+    rule({ x: deployedAt, label: "deploy", panel: "latency" }),
+    rule({ x: deployedAt, panel: "errors" }),
+  ],
 });
 ```
 
 Each mark names the panel it draws in with `panel`, or `"*"` for all of
-them; in a chart with panels, a mark without one is an error rather than
-drawn everywhere by accident. Panels fill rows of `columns` (one by default)
-in order, with their titles above them; `rowHeights` and `columnWidths` give
-the rows' heights and the columns' widths relative to each other (a shared
-scale keeps one domain over rows or columns of different sizes, each with
-ticks for its size). They share the x axis, labeled under
-the lowest panel of each column, and each has a y scale of its own, from its
-marks (on a category y axis, of horizontal bars, box plots, violins,
-heatmaps, or points, its own categories, as in Small multiples);
-`y: { scope: "chart" }` (or `"row"`, `"column"`) shares it
-instead, when the panels sharing it agree on its type, domain, `zero`, and
-`nice`. A panel's `y` takes the place of the chart's `y` settings for its
-own axis, so one panel can be logarithmic or show times while another is
-linear; a panel's y title is centered beside it. `x: { scope: "panel" }`
-(or `"row"`, `"column"`) gives panels x scales of their own in the same
-way, each from its panels' marks (a time axis when they place times, a
-category axis when they place categories, whatever other panels' scales
-hold) and its first panel's `x` settings, with labels and a title
-under its panels as in Small multiples; panels sharing an x scale must agree
-on its settings, title included, and a panel's `x: { show }` shows or leaves
-out its own labels. A time series over a time axis can then sit above a distribution
-of its values:
+them, which a chart whose layout marks (a pie) have panels to themselves
+refuses; in a chart with panels, a mark without one is an error rather
+than drawn everywhere by accident. A panel is placed with its settings
+(`panel({ id, title, x, y, yRight, style, camera })`), whose `id` may be
+left out (it is then `"panel-1"`, `"panel-2"`, ... by its place among the
+panels declared; give ids where something names the panel: marks, scopes,
+legends, events), or by its id among a list: `panels([{ id: "a" }, { id:
+"b" }], columns(2, [panel("a"), panel("b")]))`. Without a layout, the
+panels go in one column, in order.
 
-```ts
-createChart(element, {
-  marks: [
-    line(metrics, { x: "time", y: "latency", panel: "series" }),
-    bar(buckets, { x: "ms", y: "count", panel: "spread" }),
-  ],
-  panels: panels([
-    { id: "series", x: { title: "Time" }, y: { title: "ms" } },
-    { id: "spread", x: { title: "Latency (ms)" } },
-  ]),
-  x: { scope: "panel" }, // in a spec: "x": { "scope": "panel" }
-});
+The layout helpers:
+
+- `columns(widths, children)` and `rows(heights, children)`: one row or
+  column of cells, a panel or another layout each; `widths` is a count of
+  equal tracks or a size per track.
+- `grid({ rows, columns, gap, id }, cells)` with `cell({ row, column,
+  rowSpan, columnSpan }, content)`: cells that span tracks and may leave
+  some empty; without cells, the panels fill the grid row by row.
+- `mosaic([["latency", "share"], ["errors", "share"]], { rows: [2, 1] })`:
+  a grid drawn as rows of ids, an id repeated over a rectangle spanning it
+  and `null` an empty cell.
+- `inset(ref, { place, width, height, indicator })`, in `panel(ref,
+  [insets])`: a panel drawn over another's plot (see Insets).
+
+A track is a weight relative to the others' (`2`), a weight with a least
+size (`{ weight: 1, min: 200 }`), or pixels (`{ px: 220 }`); fixed tracks
+keep their size and flexible ones share the rest. Tracks size the panels'
+plots, as matplotlib's ratios and Plotly's row heights do: rows of weights 2
+and 1 give plots 2 to 1 tall, and titles, axes, and legends take room
+beside them. Plots line up across a track (the room before the plots of the
+cells starting on it is the most any of them needs), a spanning cell spans
+the gaps between its tracks, and `gap` (12 px by default) goes between
+tracks. A layout that does not fit is refused with the room it needs: "layout:
+needs at least 280 px of width for its panels' plots, titles, and axes, and
+has 200 px; make the chart wider, or use fewer fixed tracks, minimum sizes,
+or guides".
+
+Each panel has x and y scales of its own unless a scale's `scope` shares
+them: `"chart"` (every panel in a cell, beside which insets keep theirs),
+`"row"` or `"column"` (the panels of a row or column of the grid holding
+them), `{ layout: id, by: "row" }` (of a named grid's tracks, whose cells
+may hold grids of their own), or `{ panels: ["latency", "errors"] }`. Panels
+sharing a scale must agree on its type, domain, `zero`, and `nice`, and
+take its first panel's settings. A shared scale's labels go at the outer
+edge of the panels lined up along it, under the lowest of a column sharing
+x; `x: { repeat: "all" }` labels every panel, and an axis the guides list
+takes a `repeat` of its own (`axis({ scale: "x", place: { side: "top" },
+repeat: "all" })` draws above every panel). A panel's `x`, `y`, and
+`yRight` take the place of the chart's settings for its own axes, so one
+panel can be logarithmic or show times while another is linear, and each
+panel titles its own axes. In a spec, the layout is the chart's `layout`:
+
+```json
+{
+  "panels": [{ "id": "latency" }, { "id": "errors" }],
+  "layout": {
+    "type": "grid",
+    "rows": [2, 1],
+    "cells": [
+      { "row": 0, "column": 0, "content": { "type": "panel", "panel": "latency" } },
+      { "row": 1, "column": 0, "content": { "type": "panel", "panel": "errors" } }
+    ]
+  },
+  "x": { "scope": "chart" }
+}
 ```
 
 Marks keep their place in the chart's list as their identity, so colors,
-the legend, and hidden series do not depend on the panel a mark draws in. Inspections report the `panel`
-id. A panel's `yRight` sets its right axis (see [A second y
-axis](#a-second-y-axis)), and zooming and brushing act on x only. A range
-navigator goes under all the panels and moves the x range they share (see
-[Range navigator](#range-navigator)).
+the legend, and hidden series do not depend on the panel a mark draws in.
+Inspections report the `panel` id. A panel's `yRight` sets its right axis
+(see [A second y axis](#a-second-y-axis)), and zooming and brushing act on
+x only, each panel's x scale apart, or the panels sharing one together. A
+range navigator goes under all the panels and moves the x range they share
+(see [Range navigator](#range-navigator)); with one, x is the chart's by
+default.
+
+### Insets
+
+An inset is a panel drawn over another panel's plot, as a zoomed view or
+a small overview: at the parent's top right, 8 px in and 35% of its plot
+by default, with scales of its own (the chart's `"chart"` scope leaves
+insets out; `{ panels: [...] }` shares a scale with one).
+
+```ts
+import { inset, panel, panels } from "herceg/layout";
+
+createChart(element, {
+  panels: panels(
+    panel({ id: "latency", title: "p99" }, [
+      inset(
+        { id: "detail", x: { domain: [start, end] } },
+        { width: { fraction: 0.38 }, height: { fraction: 0.42 }, indicator: true },
+      ),
+    ]),
+  ),
+  marks: [
+    line(data, { panel: "latency", x: "time", y: "p99", color: "region" }),
+    line(data, { panel: "detail", x: "time", y: "p99", color: "region" }),
+  ],
+});
+```
+
+`place` is `{ inside: "top-left" }` (a corner or the middle of an edge,
+`inset` pixels in), or `{ at: { x, y }, anchor }` with positions as
+fractions of the parent's plot or of the chart, or pixels, and the inset's
+corner or middle (`anchor`) there; `width` and `height` are `{ fraction }`
+of the parent's plot or `{ px }`. The box stays inside the parent's plot
+(one reaching outside it is refused), over the parent's data only: what
+the parent draws there (its annotations too), its grid and background,
+and what the pointer draws in it are cut around the box, while legends
+placed inside the plot are drawn over it; insets side by side may not
+overlap. An inset draws its titles and axes, their tick labels whole, in
+its box, over the chart's background and a border of its own; a box too
+small for them is refused ("inset "detail" needs 58 px down for its plot,
+title, and axes, and has 53 px; make it larger or hide its axes"), while a
+title longer than the box runs past it, as long titles do in cells. It
+takes no room from the layout and does not widen its parent's domains. `indicator:
+true` (or `{ connectors, style }`) boxes the inset's x and y ranges on the
+parent, with lines from the box's side to the inset's; it needs number or
+time x and y axes of the same kind in both panels and is refused
+otherwise. Insets can hold insets. The pointer, the wheel, and brushes act
+in the topmost panel under them, a parent's crosshair and data stop at the
+insets over it, and the keyboard reads a panel, then its insets, then the
+next panel; screen readers hear an inset named as "Detail, inset of p99",
+and `getPanels()` gives an inset's `parent`. Every renderer and export
+(SVG, Canvas, PNG, PDF, server snapshots) draws them.
+
+### Panels' legends
+
+`legend({ panel })` lists what one panel draws, above it by default (or
+where `place` says: `{ inside: "top-left" }` in its plot, `{ side, scope:
+"panel" }` beside it, `{ side, scope: "chart" }` with the chart's legends),
+and its entries hide and show what they name in that panel only:
+
+```ts
+import { legend } from "herceg";
+
+createChart(element, {
+  panels,
+  marks,
+  guides: [legend({ panel: "latency", place: { inside: "top-left" } })],
+});
+```
+
+The chart's automatic legend lists what panels' legends leave out: an entry
+stays while a panel without a legend draws it, or a legend there does not
+list it (a legend of `entries` of its own lists what they toggle all of
+there; their `targets` are marks of its panel). Marks drawn in every
+panel (`panel: "*"`) follow the chart's legend only, so their stacks stay
+whole. `legend: true` keeps every entry in the chart's legend too, and
+`legend: false` drops it. An entry of
+the chart's hidden in some panels and shown in others is drawn half faded
+and pressed in part (`aria-pressed="mixed"`); its button shows it
+everywhere, letting go of the panels' own settings. In code,
+`setVisibility(keys, visible, { panel })` and `getHiddenKeys({ panel })`
+act in one panel, and a `visibility` event reports what each panel hides
+and shows unlike the chart in `panels`.
 
 ### Layout marks in panels
 
@@ -3012,11 +3140,10 @@ createChart(element, {
     pie(sales, { category: "product", value: "revenue", innerRadius: 0.6, panel: "share" }),
   ],
   panels: panels(
-    [
-      { id: "trend", title: "Revenue" },
-      { id: "share", title: "By product" },
-    ],
-    { columns: 2, columnWidths: [2, 1] },
+    columns([2, 1], [
+      panel({ id: "trend", title: "Revenue" }),
+      panel({ id: "share", title: "By product" }),
+    ]),
   ),
   interaction: { zoom: "x" }, // the line's panel zooms; the pie's has no axes
 });
@@ -3067,7 +3194,7 @@ const chart = createChart(element, {
     treemap(budget, { path: ["unit", "team"], value: "cost", panel: "cost" }),
     treemap(budget, { path: ["unit", "team"], value: "staff", panel: "staff" }),
   ],
-  panels: panels([{ id: "cost" }, { id: "staff" }], { columns: 2 }),
+  panels: panels([{ id: "cost" }, { id: "staff" }], grid({ columns: 2 })),
   interaction: { zoom: true },
 });
 chart.on("drill", ({ key, panels }) => console.log(panels, key)); // ["staff"], '[1,"R&D"]'
@@ -3169,10 +3296,10 @@ is internal, and charts take only marks the mark functions make.
 | `title`, `description` | Accessible name and description; the title is drawn: a string, or `{ text, place?: { side: "top" \| "bottom" }, style? }` (see Titles, legends, and padding). |
 | `padding` | Pixels of whitespace around what the chart draws, one number or `{ top?, right?, bottom?, left? }`; `0` lets a chart without axes fill its size. Left out, spacing is automatic. |
 | `width`, `height` | Fixed size; omitted dimensions follow the container (a block one in Firefox, where a chart in a `<span>` keeps its first width). |
-| `x`, `y` | The scales named "x" and "y" and their axes (the short forms of `scales` and `guides`; see Scales and guides): `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `scope` (`"chart"`, `"panel"`, `"row"`, or `"column"`: which facet panels or subplots share one instance of the scale; x the chart's by default, y each subplot's own and the chart's in facets), `title`, `grid`, `ticks` (a count, `{ every }`, `{ values }`, or a function), `format` (Intl options, `{ number }` or `{ time }` patterns, or a function, for tick labels and tooltips), `tooltipFormat` (as `format`, for tooltips, the keyboard, and crosshair labels only; see Tooltips), `show`, `style` (the axis' `tickLabel`, `axisTitle`, `axisLine`, `tick`, and `grid` styles; see Styles); on a time x axis, `breaks: timeBreaks([...])` and `seams: true` or `{ minSpacing?: number }` (see Financial charts). |
+| `x`, `y` | The scales named "x" and "y" and their axes (the short forms of `scales` and `guides`; see Scales and guides): `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `scope` (`"chart"`, `"panel"`, `"row"`, `"column"`, `{ layout, by }`, or `{ panels }`: which facet panels or subplots share one instance of the scale; each subplot's own by default (x the chart's with a navigator), the chart's in facets, insets their own unless `{ panels }` names them), `repeat` (`"outer"`, the default, or `"all"`: where panels sharing the scale label it), `title`, `grid`, `ticks` (a count, `{ every }`, `{ values }`, or a function), `format` (Intl options, `{ number }` or `{ time }` patterns, or a function, for tick labels and tooltips), `tooltipFormat` (as `format`, for tooltips, the keyboard, and crosshair labels only; see Tooltips), `show`, `style` (the axis' `tickLabel`, `axisTitle`, `axisLine`, `tick`, and `grid` styles; see Styles); on a time x axis, `breaks: timeBreaks([...])` and `seams: true` or `{ minSpacing?: number }` (see Financial charts). |
 | `yRight` | The scale "yRight" and its axis on the right, for marks with `axis: "right"`, with the same options as `y` (its `scope` as `y`'s unless given). |
 | `facet` | `facet(field, { columns? })`: a panel per value of a category field, wrapped; or `facet({ row?, column? })`: a grid by two fields (see Small multiples). |
-| `panels` | `panels([{ id, title?, x?, y?, style? }, ...], { columns?, rowHeights?, columnWidths? })`: subplots whose marks name them in `panel` (see Subplots); a subplot's `title` is a string or `{ text, style? }`, and its `style` sets its own roles (`plot`, `panelTitle`, and the axes' roles). |
+| `panels` | `panels([{ id, title?, x?, y?, style? }, ...], layout?)` or `panels(layout)`, with the layout helpers of `herceg/layout`: subplots whose marks name them in `panel` (see Subplots and Insets); a subplot's `title` is a string or `{ text, style? }`, and its `style` sets its own roles (`plot`, `panelTitle`, and the axes' roles). |
 | `navigator` | `rangeNavigator({ height?, marks? })`: a strip under the plot (under every panel, with facets or subplots) over the whole x axis, whose window shows and moves the x range in view (see Range navigator). |
 | `legend` | Shown by default for two or more series; `true` or an object shows it for one, `false` hides it. Entries toggle series. `place` puts it on a side or inside a plot (see Titles, legends, and padding); `columns`, `rows`, `order`, `title`, `entries`, and `swatches` lay it out (see Legends); `style` sets its `legendLabel`, `legendTitle`, and `tickLabel` styles. |
 | `scales` | `{ x?, y?, yRight? }`: the position scales' settings (`type`, `domain`, `nice`, `zero`, `scope`, `tooltipFormat`) over the short forms' (see Scales and guides). |
@@ -3211,8 +3338,9 @@ for an x range), `selection` and `selectionPanels` (see Small multiples for
 (treemaps and sunbursts), `getItemPositions({ panel? })` and
 `setItemPosition(key, position | null, { panel? })` (networks), `getPanels()`,
 `toPixel`, `fromPixel`, `formatValue`, and `inspect` (see Panels and pixels),
-`getLegend()`, `getHiddenKeys()`, `setHiddenKeys(keys)`, and
-`setVisibility(keys, visible)` (see Hiding series), `on(event, listener)`,
+`getLegend()`, `getHiddenKeys({ panel? })`, `setHiddenKeys(keys)`, and
+`setVisibility(keys, visible, { panel? })` (see Hiding series and Panels'
+legends), `on(event, listener)`,
 `render()`, `toSVG(sizing?)` and `toPNG()` (see Export), `destroy()`, `showCursor(position)` and `hideCursor()` (see Syncing charts), `ready`
 (a promise of the first frame, rejected with what keeps it from drawing; see When a chart cannot draw), and `loading`
 (a promise while the interaction controller loads after the first frame, the guide compiler loads for a chart that needs it (see Scales and guides), the chart's `fonts` load, the GPU painter for large point series, the animation
@@ -3915,7 +4043,7 @@ series, ramps, and keys out of the legends.
 
 ```ts
 createChart(element, {
-  panels: panels(sites, { columns: 3 }),
+  panels: panels(sites, grid({ columns: 3 })),
   marks: [/* a line per site in each panel, and a dashed average */],
   legend: { place: { side: "bottom", align: "center" }, columns: 3, swatches: "mark" },
 });
@@ -3985,6 +4113,7 @@ chart.on("drill", ({ key, path }) => saveDrill(key)); // a treemap or sunburst d
 chart.on("itemMove", ({ key, position }) => savePlace(key, position)); // a network's node moved
 chart.on("drill", ({ key, panels }) => saveDrill(panels?.[0], key)); // a subplot's tree
 chart.on("visibility", ({ hiddenKeys }) => saveHidden(hiddenKeys)); // legend, setVisibility
+chart.on("visibility", ({ panels }) => savePanels(panels)); // what panels' legends hid and showed there
 chart.on("render", () => placeOverlay(chart.getPanels())); // a frame of the data was drawn
 chart.on("error", ({ error }) => report(error)); // a ChartError, once per change that failed
 ```
@@ -4040,7 +4169,8 @@ and `selection`, a `DataSelection` or null.
 ## Panels and pixels
 
 `getPanels()` describes the panels of the last frame drawn, in reading order:
-each one's `key` and `label`, its `plot` (the area inside the axes), and its
+each one's `key` and `label`, its `plot` (the area inside the axes), an
+inset's `parent` (the key of the panel it is drawn over), and its
 `x`, `y`, and, with marks on the right axis, `yRight` axes. An axis has its
 `type`, its `domain` (the values shown) and `range` (where they lie), and on
 category axes its `categories` and `bandwidth`; panels whose axis has the same
@@ -4096,8 +4226,9 @@ methods do as well, with or without the built-in legend:
 ```ts
 const [first] = chart.getLegend(); // { key, label, color } for each series, or each pie slice
 chart.setVisibility(first!.key, false); // or a list of keys
+chart.setVisibility(first!.key, true, { panel: "latency" }); // shown there only (see Panels' legends)
 const hidden = chart.getHiddenKeys(); // keep them, and restore them with setHiddenKeys
-chart.setHiddenKeys([]); // show everything
+chart.setHiddenKeys([]); // show everything, in every panel
 ```
 
 Keys are opaque. The legend's name what series stand for (see Legends), so

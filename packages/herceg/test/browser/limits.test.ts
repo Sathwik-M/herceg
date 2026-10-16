@@ -674,7 +674,7 @@ describe("the cursor across panels", () => {
   }
 
   it("shows in the panels sharing the hovered one's x scale, its tooltip in that one", async () => {
-    const chart = twoPanels();
+    const chart = twoPanels({ x: { scope: "chart" } });
     hover(chart, "a", 2);
     await frame();
     expect(crosshairs(chart).sort()).toEqual(
@@ -682,12 +682,12 @@ describe("the cursor across panels", () => {
     );
     expect(tooltipOf(chart)).toHaveLength(1);
     // With tooltips asked for, each panel shows one.
-    chart.update({ interaction: { sync: { panels: { tooltip: true } } } });
+    chart.update({ interaction: { sync: { panels: { tooltip: true } } }, x: { scope: "chart" } });
     hover(chart, "a", 2);
     await frame();
     expect(tooltipOf(chart)).toHaveLength(2);
     // Off, the hovered panel alone.
-    chart.update({ interaction: { sync: { panels: false } } });
+    chart.update({ interaction: { sync: { panels: false } }, x: { scope: "chart" } });
     hover(chart, "a", 2);
     await frame();
     expect(crosshairs(chart)).toHaveLength(1);
@@ -715,7 +715,7 @@ describe("the cursor across panels", () => {
   });
 
   it("follows the keyboard's cursor through one panel", async () => {
-    const chart = twoPanels();
+    const chart = twoPanels({ x: { scope: "chart" } });
     chart.root.focus();
     for (const key of ["Home", "ArrowRight", "ArrowRight"])
       chart.root.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));

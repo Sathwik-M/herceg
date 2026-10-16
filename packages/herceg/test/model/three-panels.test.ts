@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { category } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid } from "../../src/layout.ts";
 import { line } from "../../src/marks/line.ts";
 import { line3d } from "../../src/marks/line3d.ts";
 import { point3d } from "../../src/marks/point3d.ts";
@@ -27,7 +28,7 @@ function config() {
         { id: "a", title: "Observations", camera: { azimuth: 20 } },
         { id: "b", title: "Fit", camera: { azimuth: 90 } },
       ],
-      { columns: 3 },
+      grid({ columns: 3 }),
     ),
     marks: [
       line(data, { x: "x", y: "z", panel: "trend" }),
@@ -149,7 +150,7 @@ describe("3D subplots", () => {
         { id: "a", title: "Observations", camera: { azimuth: 20 } },
         { id: "b", title: "Fit", camera: { azimuth: 90 } },
       ],
-      grid: { columns: 2 },
+      layout: { type: "grid", columns: [1, 1] },
       marks: [
         { type: "point3d", panel: "a", x: "x", y: "y", z: "z" },
         { type: "surface", panel: "b", x: "x", y: "y", z: "z" },

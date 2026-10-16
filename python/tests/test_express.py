@@ -748,11 +748,62 @@ def test_express_charts_render_and_update_wherever_charts_do():
     # Rows the chart draws stream in as in any chart; jitter keeps earlier points in place.
     widget.append({"species": ["Adelie"], "flipper": [200.0], "sex": ["f"]})
     widget.update(title="More strips")
-    with pytest.raises(ValueError, match='Chart x scope: expected "chart" in a live chart'):
-        hx.pairplot(PENGUINS, vars=["flipper", "mass"]).widget()
+    # Subplots with x scales of their own keep a view each.
+    pairs = hx.pairplot(PENGUINS, vars=["flipper", "mass"]).widget()
+    assert sorted(pairs.panel_viewports) == ["0,0", "0,1", "1,0", "1,1"]
     streamlit = pytest.importorskip("herceg.streamlit")
     spec, buffers = hx.histplot(PENGUINS, x="flipper", kde=True).to_spec()
     assert len(streamlit._payload(spec, buffers, [])) % 8 == 0
+
+
+def test_express_plots_draw_in_a_panel_of_another_chart():
+    chart = hg.Chart(PENGUINS, height=600)
+    left, right = chart.columns([2, 1])
+    flippers = left.panel("flippers", title="Flippers")
+    masses = right.panel("masses")
+    drawn = hx.histplot(PENGUINS, x="flipper", series="species", panel=flippers)
+    assert drawn is chart
+    # The data by name, as by place.
+    keyword = hg.Chart(PENGUINS)
+    [only] = keyword.columns(1)
+    assert hx.histplot(data=PENGUINS, x="flipper", panel=only.panel("bills")) is keyword
+    hx.boxplot(PENGUINS, x="species", y="mass", panel=masses, y_axis=hg.AxisOptions(title="g"))
+    spec, _ = chart.to_spec()
+    assert {mark["panel"] for mark in spec["marks"]} == {"flippers", "masses"}
+    # Each panel's statistics are its plot's.
+    assert hx.statistics(chart, panel="flippers").function == "histplot"
+    assert hx.statistics(chart, panel=masses).function == "boxplot"
+    with pytest.raises(ValueError, match="hx.statistics: the chart's express plots are in its"):
+        hx.statistics(chart)
+    with pytest.raises(ValueError, match="no express plot in panel 'nope'"):
+        hx.statistics(chart, panel="nope")
+    # The panel takes the plot's axis titles where it has none.
+    panels = {panel["id"]: panel for panel in spec["panels"]}
+    assert panels["masses"]["y"]["title"] == "g"
+    assert panels["flippers"]["title"] == "Flippers"
+    # The species keep one color in both panels: the tables computed stand for the data.
+    origins = {name: table.get("origin") for name, table in spec["data"].items()}
+    assert set(origins.values()) - {None} <= set(spec["data"])
+    # What sets the whole chart is the chart's.
+    with pytest.raises(hg.ChartError, match="histplot zoom: sets the whole chart, and panel="):
+        hx.histplot(PENGUINS, x="flipper", panel=flippers, zoom=True)
+    with pytest.raises(hg.ChartError, match="histplot palette: colors every series of the chart"):
+        hx.histplot(PENGUINS, x="flipper", panel=flippers, palette=["red"])
+    with pytest.raises(hg.ChartError, match="pairplot panel: draws several panels"):
+        hx.pairplot(PENGUINS, vars=["flipper", "mass"], panel=flippers)
+    with pytest.raises(hg.ChartError, match="histplot panel: expected a panel of a chart"):
+        hx.histplot(PENGUINS, x="flipper", panel="flippers")
+    # A panel holds one express plot, whose data a live chart keeps from changing.
+    with pytest.raises(hg.ChartError, match="panel 'flippers' has a plot of hx.histplot already"):
+        hx.kdeplot(PENGUINS, x="flipper", panel=flippers)
+    assert "<svg" in chart.to_svg()
+    # A live chart does not compute its panels' plots again from new rows,
+    # which a panel drawing the rows themselves would show.
+    right.panel("rows").point(x="flipper", y="mass")
+    pytest.importorskip("anywidget")
+    widget = chart.widget()
+    with pytest.raises(ValueError, match="the express plots in panels 'flippers', 'masses'"):
+        widget.append({key: values[:1] for key, values in PENGUINS.items()})
 
 
 # Arrangements -------------------------------------------------------------------------
@@ -766,7 +817,7 @@ def test_pairplot_pairs_every_number_column_in_subplots():
     assert [panel["id"] for panel in spec["panels"]] == [
         f"{i},{j}" for i in range(3) for j in range(3)
     ]
-    assert spec["grid"]["columns"] == 3
+    assert spec["layout"]["columns"] == [1.0, 1.0, 1.0]
     assert (spec["x"]["scope"], spec["y"]["scope"]) == ("column", "panel")
     kinds = {mark["panel"]: mark["type"] for mark in spec["marks"]}
     assert kinds == {
@@ -877,7 +928,7 @@ def test_jointplot_shares_the_scatter_plots_scales_with_its_margins():
     chart = hx.jointplot(data, x="x", y="y", series="g")
     spec, _ = chart.to_spec()
     assert [panel["id"] for panel in spec["panels"]] == ["x", "corner", "joint", "y"]
-    assert spec["grid"] == {"columns": 2, "rowHeights": [1, 5], "columnWidths": [5, 1]}
+    assert spec["layout"] == {"type": "grid", "rows": [1.0, 5.0], "columns": [5.0, 1.0]}
     assert (spec["x"]["scope"], spec["y"]["scope"]) == ("column", "row")
     point, top, right = spec["marks"]
     assert point["panel"] == "joint" and top["x"] == "x" and right["y"] == "y"

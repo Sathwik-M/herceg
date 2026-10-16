@@ -17,6 +17,7 @@ import type {
   SymbolName,
 } from "./encoding.ts";
 import type { FormatSpec, GuideSpec, LegendOptionsSpec, ScalesSpec, TicksSpec } from "./guides.ts";
+import type { LayoutSpec } from "./layout.ts";
 import type { Coordinate, Position } from "./place.ts";
 import type {
   AxisStyles,
@@ -31,6 +32,7 @@ import type {
 export type { Expression, Operator } from "../data/expression.ts";
 export type * from "./encoding.ts";
 export type * from "./guides.ts";
+export type * from "./layout.ts";
 export type * from "./place.ts";
 export type * from "./style.ts";
 
@@ -99,12 +101,17 @@ export interface ChartSpec {
   /** Small multiples: the chart drawn once per value of a category field. */
   facet?: FacetSpec;
   /**
-   * Subplots: panels in a grid, each drawing the marks that name it in their
-   * `panel`. Not with `facet`.
+   * Subplots: panels, each drawing the marks that name it in their `panel`,
+   * with scales of their own unless a scale's `scope` shares them. Not with
+   * `facet`.
    */
   panels?: readonly PanelSpec[];
-  /** How `panels` are placed: in rows of `columns` (1 by default), in order. */
-  grid?: GridSpec;
+  /**
+   * Where `panels` go: a grid of rows and columns whose cells hold panels or
+   * grids, and insets over panels. One column of the panels, in order, by
+   * default.
+   */
+  layout?: LayoutSpec;
   /**
    * The series legend: shown when the chart has several series unless
    * `false`; `true` or an object shows it also for one, with an object
@@ -197,14 +204,23 @@ export type FacetSpec = WrappedFacetSpec | GridFacetSpec;
 
 /**
  * Which panels share one instance of a scale, with one domain (each panel
- * keeps its own pixel range): every panel of the chart, each panel alone,
- * or the panels of a row or of a column. A category scale that panels do
- * not share holds only the categories of the rows they draw, and its type
- * comes from the marks of its own panels, so subplots can put categories
- * on one panel's axis and numbers on another's. Histograms choose their
- * bins from the rows of the panels sharing an x scale.
+ * keeps its own pixel range): every panel of the chart (insets aside), each
+ * panel alone, the panels of a row or of a column (of a facet grid, or of
+ * the layout grid holding them), the panels on the same rows or columns of
+ * the layout grid `layout` names (a nested grid's panels by the cell
+ * holding it), or the panels `panels` lists. A category scale that panels
+ * do not share holds only the categories of the rows they draw, and its
+ * type comes from the marks of its own panels, so subplots can put
+ * categories on one panel's axis and numbers on another's. Histograms
+ * choose their bins from the rows of the panels sharing an x scale.
  */
-export type ScaleScope = "chart" | "panel" | "row" | "column";
+export type ScaleScope =
+  | "chart"
+  | "panel"
+  | "row"
+  | "column"
+  | { layout: string; by: "row" | "column" }
+  | { panels: readonly string[] };
 
 /** One of a chart's `panels`. */
 export interface PanelSpec {
@@ -229,14 +245,6 @@ export interface PanelSpec {
   y?: AxisSpec;
   /** The panel's right y axis, for its marks with `axis: "right"`: the chart's `yRight`, with these settings. */
   yRight?: AxisSpec;
-}
-
-export interface GridSpec {
-  columns?: number;
-  /** The rows' heights relative to each other, one per row; equal by default. */
-  rowHeights?: readonly number[];
-  /** The columns' widths relative to each other, one per column; equal by default. */
-  columnWidths?: readonly number[];
 }
 
 export interface WrappedFacetSpec {
@@ -514,12 +522,18 @@ export type LegendSpec = LegendOptionsSpec;
  */
 export interface ChartAxisSpec extends AxisSpec {
   /**
-   * Which panels share one instance of the scale: for x, the whole chart
-   * by default; for y, the whole chart in facets and each panel in
-   * subplots; for yRight, as y. Only charts with facets or panels have
-   * several.
+   * Which panels share one instance of the scale: in facets, the whole
+   * chart by default for x and y; in subplots, each panel; for yRight, as
+   * y. Only charts with facets or panels have several.
    */
   scope?: ScaleScope;
+  /**
+   * Where panels sharing the scale label it: "outer" (the default) only on
+   * the outer edge of panels lined up on the same rows or columns, below
+   * the lowest and beside the first (on the right, the last); "all" on
+   * every panel.
+   */
+  repeat?: "outer" | "all";
 }
 
 /** The x axis: an axis whose time may leave out spans of time. */

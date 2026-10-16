@@ -132,16 +132,22 @@ export interface PlacedLegend {
  * hands them each panel's default axes to change.
  */
 export interface CompiledAxes {
-  /** Pixels they take above the plots, and below the default x axes' labels. */
-  across(state: AxesState): { top: number; bottom: number };
+  /**
+   * Pixels they take above the plots, and below the default x axes'
+   * labels; and which panels draw an axis above their plot.
+   */
+  across(state: AxesState): { top: number; bottom: number; over: readonly boolean[] };
   /**
    * Where panel `i`'s x labels over `plan`, below and above it, every
    * layer's as drawn, begin and end along the plan's range; undefined
    * where it draws none.
    */
   ends(plan: AxisPlan, state: AxesState, i: number): [number, number] | undefined;
-  /** Pixels they take beside the plots, beyond the default y axes', once y is planned. */
-  beside(state: AxesState): { left: number; right: number };
+  /**
+   * Pixels they take beside the plots, beyond the default y axes', once y
+   * is planned; and which panels draw an axis on the right of their plot.
+   */
+  beside(state: AxesState): { left: number; right: number; after: readonly boolean[] };
   /** Panel `index`'s axes along `plot`: the default ones, `axes`, changed and added to. */
   panel(
     axes: readonly AxisGuide[],
@@ -156,6 +162,12 @@ export interface CompiledAxes {
    * width, and the model lays the scene out again.
    */
   fits(state: AxesState, planOf: (i: number) => AxisPlan): boolean;
+}
+
+/** How a listed axis is placed among the panels: as its `repeat` says, but where panels' own settings hide it (`off`). */
+export interface ListedPlacing {
+  readonly repeat: "outer" | "all" | undefined;
+  readonly off?: readonly boolean[] | undefined;
 }
 
 /** What the guides' axes read of a scene the model lays out. */
@@ -174,6 +186,21 @@ export interface AxesState {
   readonly labeled: Readonly<Record<ScaleName, readonly boolean[]>>;
   /** Which panels draw marks along the left y axis, shown or not. */
   readonly drawsY: readonly boolean[];
+  /**
+   * In a layout of cells, in place of rows of `columns`: whether panel `i`
+   * is the highest of the panels with axes lined up with it that share its
+   * x scale (where x axes above the plots go), or the last of those drawing
+   * along y and sharing its y scale in its row (where y axes on the right
+   * go), among the panels `axis` is not hidden in (`off`) and as its
+   * `repeat` says; its plot's width at a first guess; and for an inset,
+   * the span down its box, which its labels along y stay inside.
+   */
+  readonly cells?: {
+    top(i: number, axis: ListedPlacing): boolean;
+    last(i: number, axis: ListedPlacing): boolean;
+    width(i: number): number;
+    within(i: number): readonly [number, number] | undefined;
+  };
   /**
    * The plan of panel `panel`'s axis of `scale`: for x, one over `pixels`
    * (for room, before x is planned); for y, its own.

@@ -104,6 +104,8 @@ interface Drawn {
   x: PositionScale;
   y: PositionScale;
   hidden: boolean;
+  /** The keys its panel drew hidden, as its mark's frame there had them. */
+  hiddenKeys: ReadonlySet<string>;
 }
 
 /** Where a row is placed along an axis: a field's value, or the span between two values. */
@@ -116,18 +118,31 @@ interface Reading {
   y?: Place;
 }
 
-/** The series of the marks over `table` (any table without one) that `panels` draw, in drawing order. */
+/**
+ * The series of the marks over `table` (any table without one) that
+ * `panels` draw, in drawing order, hidden as their panels drew them (a
+ * panel's legend's settings, or the chart's for a mark of every panel).
+ */
 function drawnIn(model: ChartModel, panels: readonly DrawnPanel[], table?: Table): Drawn[] {
   const out: Drawn[] = [];
-  for (const panel of panels) {
-    for (const series of model.panelSeries(panel.key)) {
-      const mark = model.markOf(series);
-      if (!mark || !SELECTS.has(mark.spec.type) || (table && mark.table !== table)) continue;
-      const y = model.onRight(series) ? panel.yRight : panel.y;
-      if (!y) continue;
-      out.push({ mark, series, panel, x: panel.x, y, hidden: model.hidden.has(series.key) });
+  for (const panel of panels)
+    for (const { mark, series: drawn, frame } of model.inspectorOf(panel.key)?.marks ?? []) {
+      if (!SELECTS.has(mark.spec.type) || (table && mark.table !== table)) continue;
+      const hiddenKeys = frame.hidden;
+      for (const series of drawn) {
+        const y = model.onRight(series) ? panel.yRight : panel.y;
+        if (!y) continue;
+        out.push({
+          mark,
+          series,
+          panel,
+          x: panel.x,
+          y,
+          hidden: hiddenKeys.has(series.key),
+          hiddenKeys,
+        });
+      }
     }
-  }
   return out;
 }
 
@@ -459,7 +474,8 @@ export function brushedRows(
       const plane = layout?.plane;
       if (!plane) continue;
       const outline = selection.lasso.map(([x, y]) => [plane.x.map(x), plane.y.map(y)] as const);
-      const found = layout.lassoed?.(outline, table);
+      // Items under an inset over the panel are not drawn there.
+      const found = layout.lassoed?.(outline, table, (px, py) => !model.coveredAt(key, px, py));
       if (found) rows.addAll(found);
       drawn ||= found !== undefined;
     }
@@ -477,7 +493,10 @@ export function brushedRows(
       (!selection.lasso && (mark.tooltip === "cell" || !selection[valueAxis(mark)])),
   );
   if (drawn.length === 0) return undefined;
-  if (selection.lasso) return selectRows(lassoed(model, drawn, selection.lasso, table));
+  if (selection.lasso)
+    return selectRows(
+      lassoed(drawn, selection.lasso, table, (panel, px, py) => model.coveredAt(panel, px, py)),
+    );
   const owners = keys ?? panels.map(({ key }) => key);
   const marks = [...new Set(drawn.map(({ mark }) => mark))];
   const conditions: Expression[] = [];
@@ -511,13 +530,13 @@ interface MarkParts {
 }
 
 /** `drawn` by mark and panel, in drawing order. */
-function byMark(model: ChartModel, drawn: readonly Drawn[]): MarkParts[] {
+function byMark(drawn: readonly Drawn[]): MarkParts[] {
   const out: MarkParts[] = [];
   for (const d of drawn) {
     let entry = out.find((e) => e.mark === d.mark && e.parts[0]!.panel === d.panel);
     if (!entry) {
       // What marks' lookups (picks, anchors) read of a frame: scales, plot, hidden series.
-      const frame = { x: d.x, y: d.y, plot: d.panel.plot, hidden: model.hidden };
+      const frame = { x: d.x, y: d.y, plot: d.panel.plot, hidden: d.hiddenKeys };
       entry = { mark: d.mark, parts: [], series: [], frame: frame as unknown as Frame };
       out.push(entry);
     }
@@ -591,13 +610,14 @@ function drawnRow(d: Drawn, row: number): boolean {
 
 /** The rows of drawn series whose point is inside a lasso, an outline in data values. */
 function lassoed(
-  model: ChartModel,
   drawn: readonly Drawn[],
   outline: NonNullable<Brushed["lasso"]>,
   table: Table,
+  /** Whether an inset covers a panel at a pixel, where it draws nothing. */
+  covered: (panel: string, px: number, py: number) => boolean,
 ): RowSet {
   const found: number[] = [];
-  for (const entry of byMark(model, drawn)) {
+  for (const entry of byMark(drawn)) {
     const { panel } = entry.parts[0]!;
     const { plot } = panel;
     const polygon = outline.map(([x, y]) => [panel.x.map(x), panel.y.map(y)] as const);
@@ -621,7 +641,7 @@ function lassoed(
         if (!point) continue;
         const [px, py] = point;
         if (px < box.left || px > box.right || py < box.top || py > box.bottom) continue;
-        if (inside(polygon, px, py)) found.push(row);
+        if (inside(polygon, px, py) && !covered(panel.key, px, py)) found.push(row);
       }
     }
   }
@@ -651,7 +671,9 @@ export interface PointRows {
  */
 function layoutAt(model: ChartModel, px: number, py: number): LayoutResult | undefined {
   if (model.layout) return model.items?.result();
-  return model.items?.panels.find(({ plot }) => contains(plot, px, py))?.result;
+  return model.items?.panels.find(
+    ({ key, plot }) => contains(plot, px, py) && !model.coveredAt(key, px, py),
+  )?.result;
 }
 
 /** The rows of one of `tables` that a layout mark's item stands for, or null for none of theirs. */
@@ -680,13 +702,16 @@ export function clickedRows(
     const inspection = model.inspect(px, py);
     return inspection?.axis === "item" ? itemRows(layout, tables, inspection.key) : undefined;
   }
-  const panel = model.panels().find(({ plot }) => contains(plot, px, py));
+  // The topmost panel there: an inset over its parent.
+  const panel = model
+    .panels()
+    .find(({ key, plot }) => contains(plot, px, py) && !model.coveredAt(key, px, py));
   if (!panel) return undefined;
   const drawn = drawnIn(model, [panel]).filter(
     (d) => !d.hidden && d.mark.table && tables.has(d.mark.table),
   );
   // Marks drawn later are on top.
-  for (const entry of byMark(model, drawn).reverse()) {
+  for (const entry of byMark(drawn).reverse()) {
     const { mark, series, frame } = entry;
     let found: { series: Series; position: number } | undefined;
     const type = mark.spec.type;

@@ -9,6 +9,7 @@ import { type DataSelection, selectionStore, selectRows } from "../../src/data/s
 import { type Table, type TableOptions, table as typed } from "../../src/data/table.ts";
 
 import { estimateText } from "../../src/layout/text.ts";
+import { columns, panel } from "../../src/layout.ts";
 import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { boxplot } from "../../src/marks/boxplot.ts";
@@ -21,6 +22,7 @@ import { rug } from "../../src/marks/rug.ts";
 import { violin } from "../../src/marks/violin.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
+import { panels } from "../../src/model/panels.ts";
 import { rowSelection } from "../../src/model/row-selection.ts";
 import {
   brushedRows,
@@ -432,6 +434,45 @@ describe("lassos and clicks as rows", () => {
     if (selection?.kind !== "rows") return;
     expect(Array.from(selection.rows.positions())).toEqual([1, 2]);
     expect(selection.rows.generation).toBe(points.generation);
+  });
+
+  it("select points as their panel draws them, hidden or shown there unlike the chart", () => {
+    const subplots = {
+      marks: [
+        point(points, { x: "x", y: "y", series: "g", panel: "left" }),
+        point(points, { x: "x", y: "y", series: "g", panel: "right" }),
+      ],
+      panels: panels(columns([1, 1], [panel("left"), panel("right")])),
+    };
+    const at = (model: ChartModel, x: number, y: number) => {
+      const left = model.panels().find(({ key }) => key === "left")!;
+      return [left.x.map(x), left.y.map(y)] as const;
+    };
+    const clicked = (model: ChartModel) =>
+      clickedRows(model, new Set([points]), ...at(model, 1, 1))?.rows;
+    const brushed = (model: ChartModel) => {
+      const owner = {
+        x: model.panels().find(({ key }) => key === "left")!.xGroup,
+        panels: ["left"],
+      };
+      return rowsOf(
+        brushedRows(model, points, { x: [0, 6], y: [0, 6], lasso: null }, owner),
+        points,
+      );
+    };
+    // Series a hidden in the left panel only: its points there are not selected.
+    const own = drawn(subplots);
+    own.hidden.panels.set("left", new Map([['[0,"a"]', true]]));
+    own.scene(estimateText);
+    expect(clicked(own)).toBeUndefined();
+    expect(brushed(own)).toEqual([1, 3]);
+    // Hidden in the chart, shown again there: they are.
+    const shown = drawn(subplots);
+    shown.hidden.add('[0,"a"]');
+    shown.hidden.panels.set("left", new Map([['[0,"a"]', false]]));
+    shown.scene(estimateText);
+    expect(Array.from(clicked(shown)!)).toEqual([0]);
+    expect(brushed(shown)).toEqual([0, 1, 2, 3, 4]);
   });
 
   it("select the point clicked, within a few pixels of it", () => {

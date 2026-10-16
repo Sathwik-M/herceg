@@ -29,7 +29,9 @@ matplotlib names in unknown-option errors suggest the options that callable take
 | `ax.axhline(value)` / `ax.axvline(value)` | `chart.rule(y=value)` / `chart.rule(x=value)` |
 | `ax.text(x, y, text)` / `ax.annotate(text, (x, y))` | `chart.text(x=x, y=y, label=text)`; `hg.DataPosition(y, offset=-6)` moves it in pixels |
 | `ax.text(0.03, 1.7, text, transform=ax.get_yaxis_transform())` | `chart.text(at=hg.Position(x=hg.Fraction(0.03), y=1.7), label=text)` |
-| `plt.subplots(...)` | `hg.Chart(data, panels=["a", "b"], panel_columns=2)`; marks name `panel="a"` or `"b"` |
+| `fig, (a, b) = plt.subplots(1, 2, width_ratios=[2, 1])` | `left, right = chart.columns([2, 1])`; `a = left.panel("a")`, then `a.line(...)` (see Layouts) |
+| `plt.subplot_mosaic([["a", "c"], ["b", "c"]])` | `cells = chart.mosaic([["a", "c"], ["b", "c"]])`; `cells["a"].line(...)` |
+| `ax.inset_axes([0.6, 0.6, 0.35, 0.35])`, `ax.indicate_inset_zoom(inset)` | `a.inset("detail", width=hg.Fraction(0.35), height=hg.Fraction(0.35), indicator=True)` |
 | `ax.twinx()` | `hg.Chart(data, y_right=hg.AxisOptions(...))`; supported marks use `axis="right"` |
 | `ax.legend()` | `legend=True` on the chart (automatic for multiple series); `label` names a single series |
 | `fig.legend(ncol=3, loc="lower center")` | `legend=hg.LegendOptions(columns=3, place=hg.Place(side="bottom", align="center"))` |
@@ -144,7 +146,7 @@ chart = (
             hg.Panel("cloud", title="Cloud", camera={"azimuth": 30}),
             hg.Panel("path", title="Path", camera={"azimuth": 90}),
         ],
-        panel_columns=3,
+        layout=hg.Grid(columns=3),
         zoom=True,
     )
     .line("time", "value", panel="trend")
@@ -224,7 +226,7 @@ network has its own.
     .geopoint("lon", "lat", size="sales")  # each year's stores
 )
 (
-    hg.Chart(budget, panels=["cost", "staff"], panel_columns=2, zoom=True)
+    hg.Chart(budget, panels=["cost", "staff"], layout=hg.Grid(columns=2), zoom=True)
     .treemap(["unit", "team"], "cost", panel="cost")
     .treemap(["unit", "team"], "staff", panel="staff")
 )
@@ -293,11 +295,10 @@ chart = (
 hg.Chart(sales, facet="region").pie("product", "revenue")
 
 # A dashboard row: a line beside a donut, a panel each.
-(
-    hg.Chart(sales, panels=["trend", "share"], panel_columns=2, zoom="x")
-    .line(x="week", y="revenue", panel="trend")
-    .pie("product", "revenue", inner_radius=0.6, panel="share")
-)
+dashboard = hg.Chart(sales, zoom="x")
+trend, share = dashboard.columns([2, 1])
+trend.panel("trend").line(x="week", y="revenue")
+share.panel("share").pie("product", "revenue", inner_radius=0.6)
 ```
 
 Chart options: `title`, `description`, `width`, `height`, `x` and `y`
@@ -309,7 +310,9 @@ or `facet_row` and `facet_column` (a grid with a row per value of one category
 column and a column per value of another; either may be left out), with the
 `scope` of the chart's `x`, `y`, and `y_right` axes (`hg.AxisOptions(scope=...)`:
 `"chart"`, `"panel"`, `"row"`, or `"column"`) choosing which panels share an
-x, a y, or a right y scale (facets share them by default, subplots x; the
+x, a y, or a right y scale (facets share them by default, and subplots have
+their own, x the chart's with a range navigator; `{"layout": id, "by":
+"row"}` and `{"panels": [...]}` share by a named grid's tracks or a list; the
 right y as y unless given; on a category axis, panels that do not share it
 show only the categories their rows hold, and a scale panels do not share
 takes its type from their own marks, so one subplot can show categories
@@ -323,10 +326,10 @@ each facet panel's rows in it, as a faceted chart's only mark, or fill a
 panel of their own with `panel=` (no `"*"`, and no other mark there), whose
 neighbors keep their axes; `panels` (ids or
 `hg.Panel("latency", title="Latency", x=hg.AxisOptions(title="Time"),
-y=hg.AxisOptions(title="ms"), y_right=hg.AxisOptions(title="requests"))`), `panel_columns`, and
-`panel_row_heights` and `panel_column_widths` (relative heights of the rows
-and widths of the columns) for subplots, whose marks
-name their panel with `panel="latency"` (or `"*"` for all),
+y=hg.AxisOptions(title="ms"), y_right=hg.AxisOptions(title="requests"))`) and
+`layout` (`hg.Grid(columns=2, rows=[2, 1])`, filled with the panels in order)
+for subplots, whose marks name their panel with `panel="latency"` (or `"*"`
+for all), or which the chart's cell methods lay out (see Layouts),
 `legend`, `tooltip` (`True`, `False`, `"nearest-x"`, `"nearest-y"`, `"nearest"`, or
 `hg.Tooltip(mode=..., axis_labels=True)`, which also labels the crosshair on
 the axes; tooltip fields, below, are marks'), `pan`, `zoom`, `brush`,
@@ -453,6 +456,72 @@ inside a plot (`hg.Place(inside=..., inset=..., scope=..., panel=...)`);
 inside, it takes no room from the plots. Without `padding`, spacing is
 automatic; with it (pixels, or a dict of sides; `0` included), it is the
 whitespace around everything the chart draws.
+
+### Layouts
+
+Define the columns you want with their relative widths, then add to each
+column the panels it stacks, with their relative heights:
+
+```python
+chart = hg.Chart(df, height=600)
+left, right = chart.columns([2, 1])
+
+latency = left.panel("latency", weight=2, title="p99")
+latency.line(x="time", y="p99", color="region")
+
+errors = left.panel("errors", title="Errors")
+errors.bar(x="time", y="errors", color="region")
+
+right.panel("share", title="By region").pie("region", "requests")
+```
+
+`chart.columns(widths)` and `chart.rows(heights)` return cells; a cell's
+`panel(id=None, weight=1, title=..., x=..., y=..., y_right=..., style=...)`
+adds a panel to it, stacked under the panels added before (`weight` is its
+share of the cell's height), whose mark methods draw in it and return it;
+for panels side by side in a cell, give it columns first. `cell.columns(...)`, `cell.rows(...)`, and
+`cell.grid(...)` nest a layout in an empty cell (a cell holding panels takes
+no other layout). `chart.grid(rows=[2, 1], columns=[2, 1])` gives
+`grid.cell(row=0, column=1, row_span=2)` cells that span tracks, and
+`chart.mosaic([["latency", "share"], ["errors", "share"]], rows=[2, 1])`
+returns its panels by id, a name repeated over a rectangle spanning it and
+`None` an empty cell. A track is a weight, `hg.Weight(1, min=200)`, or
+`hg.Pixels(220)`; tracks size the panels' plots, which line up across them,
+and `gap=` sets the pixels between them. Panels without an id are
+`"panel-1"`, `"panel-2"`, ...; give ids where something names a panel.
+
+Each panel has x and y scales of its own unless a scope shares them:
+`x=hg.AxisOptions(scope="chart")` on the chart shares x everywhere (insets
+keep their own), `"row"` and `"column"` by the grid holding the panels,
+`{"layout": "outer", "by": "row"}` by a grid's id (`grid(id="outer")`), and
+`{"panels": ["latency", "errors"]}` a list. A shared axis is labeled at the
+outer edge of the panels lined up along it; `repeat="all"` labels every
+panel, on `hg.AxisOptions` or on one axis the guides list
+(`hg.axis("x", place=hg.Place(side="top"), repeat="all")`).
+
+An inset draws a panel over another's plot, with scales of its own:
+
+```python
+detail = latency.inset(
+    "detail",
+    place=hg.Place(inside="top-right"),
+    width=hg.Fraction(0.38),
+    height=hg.Fraction(0.42),
+    x=hg.AxisOptions(domain=(start, end)),
+    indicator=True,
+)
+detail.line(x="time", y="p99", color="region")
+latency.legend(place=hg.Place(inside="top-left"))
+```
+
+The box stays inside its parent's plot (one reaching outside it is
+refused), over the parent's data only. `indicator=True` boxes the inset's
+ranges on its parent, joined to the inset (number or time axes in both). `panel.legend(...)` lists what the
+panel draws and hides and shows it there; the chart's legend keeps what
+panels' legends leave out (`legend=True` keeps everything). `layout=hg.Grid(columns=2)`
+places panels registered with `panels=[...]` row by row, and
+`herceg.express` plots draw in a panel with `panel=latency` (see Statistical
+charts).
 
 ### Panning, zooming, and syncing
 
@@ -601,7 +670,7 @@ look. A mark's `legend=False` leaves it out of the legends.
 grid = hg.Chart(
     df,
     panels=["north", "south", "east"],
-    panel_columns=3,
+    layout=hg.Grid(columns=3),
     legend=hg.LegendOptions(
         place=hg.Place(side="bottom", align="center"),
         columns=3,
@@ -929,8 +998,7 @@ of leaf and merge counts and height range, with no legend or inspection.
 With facets, `facet="repeat"` is required.
 
 Compose a clustered heatmap with panels corner, top, left, matrix,
-`panel_columns=2`, `panel_row_heights=[1, 4]`,
-`panel_column_widths=[1, 4]`, `x=hg.AxisOptions(scope="column")`, and
+`layout=hg.Grid(rows=[1, 4], columns=[1, 4])`, `x=hg.AxisOptions(scope="column")`, and
 `y=hg.AxisOptions(scope="row")`.
 Put the heatmap in matrix with categories reordered by the dendrograms,
 the column tree in top with `side="bottom"`, and the row tree in left
@@ -1321,6 +1389,23 @@ densities, fit coefficients, box statistics, linkages and leaf orders):
 chart = hx.barplot(tips, x="day", y="tip", seed=3)
 stats = hx.statistics(chart)
 stats.seed, stats.tables["estimates"]["low"]
+```
+
+The functions that draw one plot (all but `pairplot`, `jointplot`, and
+`clustermap`) draw it in a panel of another chart with `panel=`, a panel
+from its layout, and return that chart; the plot's marks and tables are
+that panel's alone, its axis titles go to the panel where it has none, and
+`hx.statistics(chart, panel="tips")` returns what it computed. A panel
+holds one express plot (the panel's own methods add marks beside it).
+Options that set the whole chart (`zoom`, `palette`, facets, ...) belong to
+the chart and are refused there.
+
+```python
+dashboard = hg.Chart(tips, height=500)
+left, right = dashboard.columns([2, 1])
+hx.barplot(tips, x="day", y="tip", seed=3, panel=left.panel("tips"))
+hx.histplot(tips, x="total_bill", panel=right.panel("bills"))
+hx.statistics(dashboard, panel="tips").seed
 ```
 
 SciPy is optional (`pip install 'herceg[stats]'`): `clustermap` uses its
@@ -1777,11 +1862,17 @@ panel="b")` hears of one panel's changes, while `drill_root` and a plain
 `on_drill` refuse such a chart, naming the mapping. `item_positions` and
 `panel_item_positions`, `on_item_move(..., panel=)`, and for maps' and
 networks' views `viewport` and `panel_viewports` with `on_viewport(...,
-panel=)`, follow the same rule: `viewport` is the chart's axes' (or its
-facet panels' shared map's) and each map or network panel's is its own
-(numbers in its plane's units, without `y_right`); a chart none of whose
-panels has axes refuses `viewport` and a plain `on_viewport`. A
-`Selection` from a lasso on a map or network panel names it in `panels`.
+panel=)`, follow the same rule: `viewport` is the view of the x scale the
+chart's panels share (or its facet panels' shared map's), and each map or
+network panel's view is its own (numbers in its plane's units, without
+`y_right`), as is the x range of each subplot with an x scale of its own
+(subplots, whose x is each panel's unless its scope shares it, and insets);
+a chart without a view of its own (panels all with x scales or planes of
+their own) refuses `viewport` and a plain `on_viewport`, naming
+`panel_viewports`. A `Selection` names the panels it is in (`panels`): a
+brush in a panel with an x scale of its own, or a lasso on a map or network
+panel; in such charts, a selection set from Python names its panel,
+`hg.Selection(x=(start, end), panels=("latency",))`.
 
 ```python
 tree = hg.treemap(sales, path=["region", "country"], value="revenue", zoom=True).widget()
@@ -2056,13 +2147,15 @@ npm run test:python    # build, then run pytest in a uv environment
   reported the point. In a chart streaming with `max_rows`, rows dropped
   before the callback runs renumber the rest, so by then the row may name
   another record.
-- Live charts report one viewport and selection, so `chart.widget()` refuses
-  charts whose panels have x scales of their own (x's `scope`); display them
-  statically. Charts whose panels have y scales of their own (y's `scope`,
-  subplots) take no y viewport, and those with right y scales of their own
-  (y_right's `scope`) no right one.
-  In Streamlit they show (each panel keeping its zoom across reruns) and
-  report clicks, but `on_select` is refused.
+- `chart.widget()` refuses facet panels with x scales of their own (x's
+  `scope`), whose panels come from the data; subplots keep a view each
+  (`panel_viewports`). Charts whose panels have y scales of their own (y's
+  `scope`, subplots) take no y viewport, and those with right y scales of
+  their own (y_right's `scope`) no right one. In Streamlit, every such chart
+  reports each panel's view and the panels of its selection.
+- Express plots drawn in a panel of another chart (`panel=`) do not compute
+  again in a live chart: appending to or replacing the data they were
+  computed from is refused, naming the panels.
 - In Streamlit, a chart that changes between script runs is sent whole: its
   data and, since the component's code travels inline with it, the engine
   (about 641 KiB, 238 KiB gzipped). Streamlit sends unchanged charts as a

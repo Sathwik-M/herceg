@@ -493,6 +493,25 @@ once, as an indexed or materialized result does. A database paging by
 offset can take much longer to reach row nine million, which no grid
 setting changes.
 
+## Layouts of panels
+
+`node --experimental-strip-types benchmarks/src/layouts/run.ts --out PATH`
+measures what a dashboard layout costs over one panel drawing the same
+marks: five tables of three series of 2,000 points each, drawn either as
+five lines in one panel, or in columns `[2, 1]` of rows `[2, 1]` and `[1,
+1]` (four titled panels) with an inset over the first, showing a part of
+its x range with an indicator. It uses a production build, a 1000 × 600 px
+Canvas chart, and headless Chrome at DPR 2, in five fresh pages per shape,
+alternating: 19 mounts per page after the first (`createChart` and a
+synchronous `render()`), 40 resizes alternating 900 and 1000 px wide
+(synchronous renders), and 120 pointer moves across the panels, each the
+event's synchronous handling plus the chart's part of the next frame (from
+the frame's timestamp to a callback requested after the chart's). Pointer
+times differ in what a tooltip lists as well: the one panel's tooltip
+lists fifteen series, a dashboard panel's three. This is a Herceg workload
+measurement; competitors' layouts have not been measured. Results are in
+`benchmarks/results/layouts.json`.
+
 ## 3D subplots
 
 `node --experimental-strip-types benchmarks/src/three-panels/run.ts --out PATH`

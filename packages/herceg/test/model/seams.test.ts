@@ -3,6 +3,7 @@ import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { seamDrawing } from "../../src/draw/seams.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid } from "../../src/layout.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { describeChart } from "../../src/model/describe.ts";
@@ -164,7 +165,7 @@ describe("time-axis seam markers", () => {
           { id: "b", x: { type: "time", domain: [8, 20] } },
           { id: "c", x: { type: "linear", domain: [0, 20] } },
         ],
-        { columns: 3, columnWidths: [1, 2, 1] },
+        grid({ columns: [1, 2, 1] }),
       ),
 
       marks: ["a", "b", "c"].map((panel) => line(data, { x: "t", y: "v", panel })),

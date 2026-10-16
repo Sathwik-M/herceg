@@ -5,6 +5,8 @@ import type {
   ChartMark,
   CustomDataOptions,
   CustomOptions,
+  GuideOptions,
+  Panels,
   RegionDataOptions,
   RegionOptions,
   RowView,
@@ -52,7 +54,7 @@ export interface Refused {
  * caught here, since Svelte reads the mark as it checks what changed, before
  * its <Chart> could catch it.
  */
-export function built(make: () => ChartMark): ChartMark | Refused {
+export function built<T extends object = ChartMark>(make: () => T): T | Refused {
   try {
     return make();
   } catch (refused) {
@@ -68,35 +70,107 @@ export interface MarkEntry {
   readonly mark: ChartMark | Refused;
 }
 
+/** A mounted guide component (<Legend>) as <Chart> sees it. */
+export interface GuideEntry {
+  readonly node: Element;
+  readonly guide: GuideOptions | Refused;
+}
+
+/**
+ * A mounted layout component as <Chart> sees it: its element holds those of
+ * the components inside it, and `place` makes the chart's panels of the
+ * layout its components make (place.ts, loaded only with layout components).
+ */
+export interface LayoutEntry {
+  readonly node: Element;
+  /** Which component it is, and its props; reading them tracks the component's props. */
+  readonly kind: "Columns" | "Rows" | "Grid" | "Cell" | "Panel" | "Inset";
+  readonly props: Readonly<Record<string, unknown>>;
+  /** The chart's panels, of the layout components `entries` in template order, and its `panels` prop. */
+  readonly place: (entries: readonly LayoutEntry[], prop: Panels | undefined) => Panels;
+}
+
+export type Entry = MarkEntry | GuideEntry | LayoutEntry;
+
 export interface MarkList {
-  add(entry: MarkEntry): void;
-  remove(entry: MarkEntry): void;
+  add(entry: Entry): void;
+  remove(entry: Entry): void;
+  /** The next panel's place among those declared, for an id when it gives none ("panel-3"). */
+  nextPanel(): number;
 }
 
 const MARKS = Symbol("herceg marks");
+const PANEL = Symbol("herceg panel");
 
 /** Lets mark components among the children of a <Chart> add themselves. */
 export function provideMarks(list: MarkList): void {
   setContext(MARKS, list);
 }
 
-/**
- * Adds the calling mark component to its <Chart> while the returned
- * attachment's element is mounted. That empty element orders the marks as
- * the template does, also when `{#if}` or `{#each}` adds one later.
- */
-export function markAnchor(name: string, mark: () => ChartMark | Refused): Attachment {
+/** The <Chart> of the calling component, which `name` must be inside. */
+export function chartOf(name: string): MarkList {
   const list = getContext<MarkList | undefined>(MARKS);
   if (!list) throw new Error(`<${name}> must be inside a <Chart>`);
+  return list;
+}
+
+/**
+ * Adds the calling component to its <Chart> while the returned attachment's
+ * element is mounted. That element orders the components as the template
+ * does, also when `{#if}` or `{#each}` adds one later.
+ */
+export function partAnchor(name: string, part: (node: Element) => Entry): Attachment {
+  const list = chartOf(name);
   return (node) => {
-    const entry: MarkEntry = {
-      node,
-      get mark() {
-        return mark();
-      },
-    };
+    const entry = part(node);
     list.add(entry);
     return () => list.remove(entry);
+  };
+}
+
+/** Adds the calling mark component to its <Chart> while its anchor is mounted (see `partAnchor`). */
+export function markAnchor(name: string, mark: () => ChartMark | Refused): Attachment {
+  return partAnchor(name, (node) => ({
+    node,
+    get mark() {
+      return mark();
+    },
+  }));
+}
+
+/**
+ * The panel components inside a <Panel> or an <Inset> draw in (reading `id`
+ * tracks its props); inside another layout component, none, as `where` says.
+ */
+export interface PanelScope {
+  readonly id: string | undefined;
+  readonly where: string;
+}
+
+/** Makes the calling layout component the scope of the components inside it. */
+export function providePanel(scope: PanelScope): void {
+  setContext(PANEL, scope);
+}
+
+/**
+ * For the calling mark or guide component: its options in the panel of
+ * the <Panel> or <Inset> it is inside, whose id a `panel` of its own may
+ * only repeat; outside one, its options as they are.
+ */
+export function panelled(name: string): <O>(options: O) => O {
+  const scope = getContext<PanelScope | undefined>(PANEL);
+  return (options) => {
+    if (!scope) return options;
+    const { id } = scope;
+    if (id === undefined)
+      throw new Error(`<${name}> goes in a <Panel>, not directly in ${scope.where}`);
+    const own = (options as { panel?: unknown }).panel;
+    if (own === undefined) return { ...(options as object), panel: id } as typeof options;
+    if (own !== id)
+      throw new Error(
+        `<${name}> panel: "${own}" is not the panel it is in, "${id}"; drop panel, or move <${name}> into that panel`,
+      );
+    return options;
   };
 }
 

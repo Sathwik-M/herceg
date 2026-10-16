@@ -136,6 +136,7 @@ from ._interaction import (
     WheelGesture,
     ZoomAction,
 )
+from ._layout import Cell, Grid, GridCells, Weight
 from ._pdf import save, to_pdf
 from ._rows import RowSelection, SelectionBinding
 from ._style import (
@@ -197,6 +198,10 @@ __all__ = [
     "LineStyle",
     "Navigator",
     "Panel",
+    "Cell",
+    "Grid",
+    "GridCells",
+    "Weight",
     "Place",
     "PlotStyle",
     "Projection",

@@ -158,15 +158,24 @@ export function markBuilder(type: unknown): ((props: object | null) => ChartMark
   const build = component?.buildMark;
   if (typeof build !== "function") return undefined;
   const flags = component!.flags ?? [];
-  return (props) => {
-    const options: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(props ?? {})) {
-      if (RESERVED.has(key) || key.startsWith("onVnode")) continue;
-      const name = camelize(key);
-      options[name] = value === "" && flags.includes(name) ? true : plain(value);
-    }
-    return build(options);
-  };
+  return (props) => build(optionsOf(props, flags));
+}
+
+/**
+ * A vnode's props as options: kebab-case names camelized, bare `flags`
+ * (`<Area stack />`) true, and values without Vue's proxies.
+ */
+export function optionsOf(
+  props: object | null,
+  flags: readonly string[] = [],
+): Record<string, unknown> {
+  const options: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(props ?? {})) {
+    if (RESERVED.has(key) || key.startsWith("onVnode")) continue;
+    const name = camelize(key);
+    options[name] = value === "" && flags.includes(name) ? true : plain(value);
+  }
+  return options;
 }
 
 // Builders receive props already checked by the component's generic type;

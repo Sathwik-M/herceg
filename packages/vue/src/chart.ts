@@ -5,9 +5,11 @@ import {
   type ChartOptions,
   chartError,
   createChart,
+  type GuideOptions,
   type Chart as HercegChart,
   type Hydration,
   type Inspection,
+  type Panels,
   type RenderTooltip,
   showFailure,
   tablesOf,
@@ -117,21 +119,62 @@ const emits = {
   error: (_: ChartError) => true,
 };
 
-function collectMarks(children: unknown, out: ChartMark[]): ChartMark[] {
+/** What a chart's slot adds to its options: marks, guides, and (from layout components) its panels. */
+export interface Parts {
+  marks: ChartMark[];
+  guides: GuideOptions[];
+  panels?: Panels | undefined;
+}
+
+/**
+ * A component that adds to its chart's options as its vnode says (layout
+ * and guide components); mark components add their mark.
+ */
+export interface PartComponent {
+  displayName: string;
+  /** Adds what the vnode describes, as `placing` says inside a panel. */
+  addTo: (vnode: VNode, parts: Parts, placing: Placing | undefined) => void;
+}
+
+/**
+ * What a <Panel> or an <Inset> gives the components inside it (see
+ * layout.ts): its panel's id, and their options in it, refused where a
+ * `panel` of their own names another.
+ */
+export interface Placing {
+  readonly panel: string;
+  props(type: unknown, props: object): object;
+}
+
+/** The vnodes among `children`, those of fragments (v-for, v-if) included, without text and comments. */
+export function vnodesOf(children: unknown, out: VNode[] = []): VNode[] {
   if (Array.isArray(children)) {
-    for (const child of children) collectMarks(child, out);
+    for (const child of children) vnodesOf(child, out);
     return out;
   }
   // Text and comments (such as a false v-if) are not marks.
   if (!isVNode(children) || children.type === Comment || children.type === Text) return out;
-  if (children.type === Fragment) return collectMarks(children.children, out);
-  const build = markBuilder(children.type);
-  if (!build)
-    throw new Error(
-      "<Chart> children must be mark components such as <Line> or <Rule>, not components wrapping them: pass marks built with herceg's functions as :marks",
-    );
-  out.push(build(children.props));
+  if (children.type === Fragment) return vnodesOf(children.children, out);
+  out.push(children);
   return out;
+}
+
+/** Adds what `children` describe to `parts`, marks and guides as `placing` says inside a panel. */
+export function collect(children: unknown, parts: Parts, placing?: Placing): Parts {
+  for (const vnode of vnodesOf(children)) {
+    const component = vnode.type as Partial<PartComponent>;
+    if (typeof component.addTo === "function") {
+      component.addTo(vnode, parts, placing);
+      continue;
+    }
+    const build = markBuilder(vnode.type);
+    if (!build)
+      throw new Error(
+        "<Chart> children must be mark components such as <Line> or <Rule>, not components wrapping them: pass marks built with herceg's functions as :marks",
+      );
+    parts.marks.push(build(placing ? placing.props(vnode.type, { ...vnode.props }) : vnode.props));
+  }
+  return parts;
 }
 
 /**
@@ -301,8 +344,21 @@ export const Chart = defineComponent({
       }
       const marks = (props.marks ?? []).map((mark) => toRaw(mark));
       const rendered = slots.renderTooltip !== undefined;
+      const parts = collect(slots.default?.(), { marks, guides: [] });
+      if (parts.panels) {
+        if (options.panels)
+          throw new Error(
+            "<Chart> panels: layout components in its slot place its panels; drop :panels, or the layout components",
+          );
+        options.panels = parts.panels;
+      }
+      if (parts.guides.length > 0)
+        options.guides = [
+          ...((options.guides as GuideOptions[] | undefined) ?? []),
+          ...parts.guides,
+        ];
       return {
-        marks: collectMarks(slots.default?.(), marks),
+        marks: parts.marks,
         options: { ...(options as Options), ...(rendered && { renderTooltip }) },
         // The tooltip's renderer is the chart's own, calling the slot: the key
         // says whether there is one.

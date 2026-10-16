@@ -202,10 +202,15 @@ export interface LayoutResult {
    */
   rowsOf?(key: string, table: Table): ArrayLike<number> | undefined;
   /**
-   * The rows of `table` whose items lie inside `polygon` (pixels), as a
-   * lasso selects them; undefined when the mark draws none of its rows.
+   * The rows of `table` whose items lie inside `polygon` (pixels), where
+   * `shows` (pixels not under an inset) says the panel draws, as a lasso
+   * selects them; undefined when the mark draws none of its rows.
    */
-  lassoed?(polygon: readonly (readonly [number, number])[], table: Table): number[] | undefined;
+  lassoed?(
+    polygon: readonly (readonly [number, number])[],
+    table: Table,
+    shows: (px: number, py: number) => boolean,
+  ): number[] | undefined;
   /**
    * A map's or network's plane as drawn: scales from its units to pixels across the
    * room, the zoom (the scale drawn over the fitted layout's), and what a

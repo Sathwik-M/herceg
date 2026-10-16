@@ -6,9 +6,13 @@
 import { describe, expect, it } from "vitest";
 import { category, time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
-import { axis, colorbar } from "../../src/guides/options.ts";
+import { axis, colorbar, legend } from "../../src/guides/options.ts";
+import { columns, inset, grid as layoutGrid, panel, rows } from "../../src/layout.ts";
+import { area } from "../../src/marks/area.ts";
+import { bar } from "../../src/marks/bar.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
+import { pie } from "../../src/marks/pie.ts";
 import { panels } from "../../src/model/panels.ts";
 import { renderToPDF } from "../../src/pdf.ts";
 import { renderToSVG, type StaticOptions } from "../../src/render/static.ts";
@@ -90,7 +94,7 @@ const grid: StaticOptions = {
   title: { text: "Efficiency by site", style: { align: "center" } },
   panels: panels(
     ids.map((id, k) => ({ id, title: `Line ${k + 1}` })),
-    { columns: 3 },
+    layoutGrid({ columns: 3 }),
   ),
   // Each panel shows some of the sites, and the average, from tables of their
   // own: a scale of their names gives each one legend entry.
@@ -153,12 +157,67 @@ const colored: StaticOptions = {
   guides: [colorbar({ title: "Gain (%)", ticks: 6, format: { number: "+.0f" } })],
 };
 
+// The dashboard of stream E's acceptance case: nested columns of four
+// panels, regions in one color everywhere, a legend in the latency panel, and
+// a zoom inset over it with its indicator.
+const regions = ["eu", "us"];
+const service = table({
+  time: time([...hours.slice(0, 48), ...hours.slice(0, 48)]),
+  region: category(regions.flatMap((r) => Array.from({ length: 48 }, () => r))),
+  p99: Array.from({ length: 96 }, (_, i) =>
+    Math.round(110 + 40 * Math.sin(i / 5) + (i >= 48 ? 30 : 0)),
+  ),
+  errors: Array.from({ length: 96 }, (_, i) => (i * 7) % 5),
+  requests: Array.from({ length: 96 }, (_, i) => 900 + ((i * 37) % 200)),
+});
+const dashboard: StaticOptions = {
+  width: 900,
+  height: 560,
+  locale: "en-US",
+  timeZone: "UTC",
+  panels: panels(
+    columns(
+      [2, 1],
+      [
+        rows(
+          [2, 1],
+          [
+            panel({ id: "latency", title: "p99 latency", y: { title: "ms" } }, [
+              inset(
+                { id: "detail", x: { domain: [hours[10]!, hours[20]!] } },
+                { indicator: true, width: { fraction: 0.36 }, height: { fraction: 0.4 } },
+              ),
+            ]),
+            panel({ id: "errors", title: "Errors" }),
+          ],
+        ),
+        rows(
+          [1, 1],
+          [
+            panel({ id: "traffic", title: "Requests" }),
+            panel({ id: "share", title: "Requests by region" }),
+          ],
+        ),
+      ],
+    ),
+  ),
+  marks: [
+    line(service, { x: "time", y: "p99", color: "region", panel: "latency" }),
+    line(service, { x: "time", y: "p99", color: "region", panel: "detail" }),
+    bar(service, { x: "time", y: "errors", color: "region", panel: "errors" }),
+    area(service, { x: "time", y: "requests", color: "region", panel: "traffic" }),
+    pie(service, { category: "region", value: "requests", panel: "share" }),
+  ],
+  guides: [legend({ panel: "latency", place: { inside: "top-left" } })],
+};
+
 const figures: Record<string, StaticOptions> = {
   "hourly-utc": hourly("UTC"),
   "hourly-belgrade": hourly("Europe/Belgrade"),
   "twin-axes": twins,
   "grid-legend": grid,
   "heatmap-colorbar": colored,
+  dashboard,
 };
 
 describe("reference figures", () => {

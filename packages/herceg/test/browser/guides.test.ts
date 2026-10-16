@@ -6,6 +6,7 @@ import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { createChart } from "../../src/dom/chart.ts";
 import { axis, legend } from "../../src/guides/options.ts";
+import { grid } from "../../src/layout.ts";
 import { line } from "../../src/marks/line.ts";
 import { panels } from "../../src/model/panels.ts";
 
@@ -93,7 +94,7 @@ describe("legends with settings in the browser", () => {
     const first = table({ t: [0, 1], site: ["North", "South"], v: [1, 2] }, { name: "sites" });
     const second = table({ t: [0, 1], site: ["North", "South"], v: [3, 4] }, { origin: first });
     const chart = createChart(host, {
-      panels: panels([{ id: "a" }, { id: "b" }], { columns: 2 }),
+      panels: panels([{ id: "a" }, { id: "b" }], grid({ columns: 2 })),
       marks: [
         line(first, { x: "t", y: "v", series: "site", panel: "a" }),
         line(second, { x: "t", y: "v", series: "site", panel: "b" }),

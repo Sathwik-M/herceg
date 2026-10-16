@@ -5,6 +5,7 @@ import { col } from "../../src/data/expr.ts";
 import { rowView } from "../../src/data/row-view.ts";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid } from "../../src/layout.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { point } from "../../src/marks/point.ts";
 import { describeChart } from "../../src/model/describe.ts";
@@ -342,7 +343,7 @@ describe("points on categories of panels' own", () => {
         point(fruit, { x: "v", y: "name", panel: "fruit" }),
         point(cars, { x: "v", y: "name", panel: "cars" }),
       ],
-      panels: panels([{ id: "fruit" }, { id: "cars" }], { columns: 2 }),
+      panels: panels([{ id: "fruit" }, { id: "cars" }], grid({ columns: 2 })),
     });
     expect(categories(model, "y")).toEqual([
       ["apple", "pear"],

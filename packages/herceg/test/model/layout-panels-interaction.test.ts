@@ -12,6 +12,7 @@ import { type SelectionStore, selectionStore, selectRows } from "../../src/data/
 import { type Schema, type Table, table } from "../../src/data/table.ts";
 import { fieldReader } from "../../src/dom/tooltip-content.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid } from "../../src/layout.ts";
 import { geopoint } from "../../src/marks/geopoint.ts";
 import { geoshape } from "../../src/marks/geoshape.ts";
 import { graph, MAX_NODES } from "../../src/marks/graph.ts";
@@ -334,7 +335,7 @@ describe("maps in subplots", () => {
         geoshape(regions, { labelField: "name", panel: "b", id: "second" }),
         geopoint(table({ lon: [5], lat: [0] }), { longitude: "lon", latitude: "lat", panel: "b" }),
       ],
-      panels: panels([{ id: "line" }, { id: "a" }, { id: "b" }], { columns: 3 }),
+      panels: panels([{ id: "line" }, { id: "a" }, { id: "b" }], grid({ columns: 3 })),
       projection,
       ...zoom,
     }).model;

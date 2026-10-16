@@ -4,6 +4,7 @@
 
 import type { AxisOptions, ChartAxisOptions } from "../guides/options.ts";
 import type { Align } from "../layout/place.ts";
+import { fitText, type MeasureText, textItem } from "../layout/text.ts";
 import type { Breaks } from "../lod/m4.ts";
 import {
   copyTrace,
@@ -22,11 +23,17 @@ import {
   usesY,
 } from "../marks/mark.ts";
 import { type BandPlaces, rowOf, type Series } from "../marks/series.ts";
-import type { Rect } from "../scene/scene.ts";
+import type { PositionScale } from "../scale/scale.ts";
+import type { HeaderGuide, Panel, Rect } from "../scene/scene.ts";
 import { ChartError } from "../spec/errors.ts";
+import type { Side } from "../spec/place.ts";
 import type { ChartSpec, InteractionSpec, ScaleScope, XAxisSpec } from "../spec/spec.ts";
+import type { TextPaint } from "../style/style.ts";
+import type { Theme } from "../theme.ts";
 import type { AxisType } from "./axis.ts";
+import type { AxesState } from "./guides.ts";
 import type { MarkSeries } from "./inspect.ts";
+import type { Navigator } from "./navigator.ts";
 import {
   instanceType,
   mixedPanels,
@@ -46,6 +53,32 @@ export interface HeaderPlace {
   y: number;
   anchor: "start" | "middle" | "end";
   angle: 0 | 90;
+}
+
+/**
+ * Header guides for panel `key`, at `places` in `paint` on `surface`; `fit`
+ * shortens a header to a room, inside its box when it has one.
+ */
+export function headerGuides(
+  key: string,
+  paint: TextPaint,
+  surface: string,
+  measure: MeasureText,
+  places: (fit: (text: string, room: number) => string) => HeaderPlace[],
+): HeaderGuide[] {
+  const [, right, , left] = paint.background ? paint.padding : [0, 0, 0, 0];
+  const fit = (text: string, room: number) =>
+    fitText(text, room - left - right, measure, paint.css);
+  return places(fit).map(({ text, x, y, anchor, angle }, k) => ({
+    kind: "header",
+    key: `header|${key}|${k}`,
+    text,
+    x,
+    y,
+    anchor,
+    angle,
+    items: [textItem(text, { x, y, anchor, baseline: "middle", angle }, paint, surface, measure)],
+  }));
 }
 
 /** Where a chart's panels go: a grid of `columns` by `rows`, and the room headers take. */
@@ -271,7 +304,250 @@ export interface PanelSplitter {
   ): PanelSplit;
 }
 
+/** The margins a uniform grid keeps from one scene to the next, so that plots do not move as labels change. */
+export interface Margins {
+  left: number;
+  right: number;
+  columnGap: number;
+}
+
+/**
+ * Whether what panels needed in the last scene of a layout stays the least
+ * they get ("grow", as data streams), they are placed as then ("frozen",
+ * while a change of view plays), or afresh ("reset", after a resize or a
+ * change of configuration).
+ */
+export type Keep = "reset" | "grow" | "frozen";
+
+/** What the scene measured that placing panels from top to bottom reads. */
+export interface VerticalPlacing {
+  readonly height: number;
+  /** Where the panels' room starts, under the chart's title and legends. */
+  readonly top: number;
+  /** In a uniform grid: the room under the lowest row, and what goes between rows. */
+  readonly below: number;
+  readonly space: RowSpace;
+  /**
+   * The chart's furniture: what it keeps under everything (legends below
+   * it), whether its spacing is automatic, and the legends beside one
+   * subplot each (the panel's key, the side, and the legend's size).
+   */
+  readonly head: {
+    readonly lift: number;
+    readonly auto: boolean;
+    readonly beside: readonly PanelLegend[];
+  };
+  /**
+   * How much further than their text boxed y labels reach past their end
+   * ticks, and how far in all (0 unboxed); per panel, how far the y labels
+   * it shows reach, boxed or not.
+   */
+  readonly yOver: number;
+  readonly yReach: number;
+  readonly yReachIn: readonly number[];
+  /**
+   * Per panel: whether it has axes, the room its x labels and title take
+   * under its plot, and the room the guides' axes take above it.
+   */
+  readonly axes: readonly boolean[];
+  readonly under: readonly number[];
+  readonly over: readonly number[];
+  readonly navigator: Navigator | undefined;
+  readonly keep: Keep;
+  /** The chart's size, for errors. */
+  readonly room: PanelRoom;
+}
+
+/** A legend beside one subplot: its key, where it goes beside it, and how large the legend is. */
+export interface PanelLegend {
+  readonly panel: string;
+  readonly place: {
+    readonly side: Side;
+    readonly align?: "start" | "center" | "end" | undefined;
+    readonly offset?: number | undefined;
+  };
+  readonly measured: { readonly width: number; readonly height: number };
+}
+
+/** Where panels' plots are from top to bottom, the first plot's top, and the room a navigator's strip takes. */
+export interface VerticalPlacement {
+  ys: number[];
+  hs: number[];
+  top: number;
+  strip: number;
+}
+
+/** What y labels on one side of the plots take. */
+export interface YLabelRoom {
+  readonly labeled: readonly boolean[];
+  /** Each panel's room for its labels (0 for those without), and the most of them. */
+  readonly reach: readonly number[];
+  readonly room: number;
+  /** The room a title takes, and the panels with one. */
+  readonly title: number;
+  readonly titled: readonly number[];
+  /** Whether panels have scales of their own on this side, so that each labels its own. */
+  readonly own: boolean;
+}
+
+/** What the scene measured that placing panels from left to right reads. */
+export interface HorizontalPlacing {
+  readonly width: number;
+  readonly head: { readonly left: number; readonly right: number; readonly auto: boolean };
+  /** The left and right y labels and titles. */
+  readonly sides: readonly [YLabelRoom, YLabelRoom];
+  /** What the guides' axes take beside the plots, and which panels draw a y axis on the right. */
+  readonly beside:
+    | { readonly left: number; readonly right: number; readonly after: readonly boolean[] }
+    | undefined;
+  readonly kept: Margins;
+  readonly keep: Keep;
+  /** Whether x labels may reach past plots: there is data to label, and labels or listed axes. */
+  readonly widens: boolean;
+  /**
+   * Where panel `i`'s x labels start and end over a plot `width` wide
+   * starting at the `left` last planned; undefined for a panel whose labels
+   * need no room.
+   */
+  ends(i: number, width: number): readonly [number, number] | undefined;
+  /** Plans the x scales for plots `widths` wide (by panel), starting at `left`. */
+  plan(left: number, widths: readonly number[]): void;
+  /** The chart's size, for errors. */
+  readonly room: PanelRoom;
+}
+
+/** Where panels' plots are from left to right, where x plans start, and the margins to keep. */
+export interface HorizontalPlacement {
+  xs: number[];
+  ws: number[];
+  left: number;
+  kept?: Margins | undefined;
+}
+
+/** How an x title is written and placed, as the scene measured it. */
+export interface XTitling {
+  /** The title of panel `i`'s scale, and of its own x settings. */
+  readonly text: string | undefined;
+  readonly own: string | undefined;
+  /** The scope of the scale: panels have x scales of their own unless it is "chart". */
+  readonly scope: ScaleScope;
+  readonly align: Align | undefined;
+  /** The title's height, and the room x labels take under the plot. */
+  readonly size: number;
+  readonly labels: number;
+}
+
+/** A panel with axes as `PanelPlacement.finish` reads it and sets what insets make of it. */
+export interface InsetView {
+  readonly key: string;
+  readonly inspector: { readonly frame: { readonly x: PositionScale; readonly y: PositionScale } };
+  cover?: Rect | undefined;
+  visible?: readonly Rect[] | undefined;
+}
+
+/**
+ * Where the panels of one scene go, as their layout places them: which
+ * label their axes, their plots from top to bottom and from left to right,
+ * and their titles.
+ */
+export interface PanelPlacement {
+  /**
+   * Which `eligible` panels label their axis along `along`, before their
+   * plots (left, or above) or `after` them (right, or below): every panel
+   * with `own` (scales by panel) or `repeat` "all", else those on the outer
+   * edge of the panels lined up with them that draw with the same instance
+   * of the scale (`groupOf`).
+   */
+  labels(
+    along: "x" | "y",
+    after: boolean,
+    groupOf: readonly number[],
+    eligible: readonly boolean[],
+    repeat: "outer" | "all" | undefined,
+    own: boolean,
+  ): boolean[];
+  vertical(v: VerticalPlacing): VerticalPlacement;
+  horizontal(h: HorizontalPlacing): HorizontalPlacement;
+  /** Whether panel `i` is at the start (with `end`, the end) of the panels along x. */
+  edge(i: number, end: boolean): boolean;
+  /**
+   * What legends above and below panel `panel`'s plot (the first panel's
+   * without one) wrap at, in a chart whose panels go from `start` to `end`:
+   * the width the last scene's wrapped at, or for a layout placed anew
+   * (`fresh`, at another size or configuration) a guess no narrower than
+   * the plot will be.
+   */
+  span?(panel: string | undefined, start: number, end: number, fresh: boolean): number;
+  /**
+   * Once placed across, whether a width `span` gave this scene is wider
+   * than the plot took, so that the scene is laid out again with the
+   * plots' widths.
+   */
+  again?(): boolean;
+  /** Where the `k`th legend `VerticalPlacing.beside` listed goes: its top left corner, beside its panel's `plot`. */
+  beside?(k: number, plot: Rect): { x: number; y: number };
+  /**
+   * Where panel `i`'s y title, `size` tall, goes across (its middle) and
+   * the span it is aligned along, beside `plot` (on the right with `right`).
+   */
+  yTitle(
+    i: number,
+    plot: Rect,
+    right: boolean,
+    size: number,
+    chart: {
+      readonly width: number;
+      readonly left: number;
+      readonly right: number;
+      readonly auto: boolean;
+    },
+  ): { x: number; span: [number, number] };
+  /** Panel `i`'s x title under `plot`, if it has one there. */
+  xTitle(i: number, plot: Rect, titling: XTitling): AxisTitlePlace | undefined;
+  /**
+   * In a layout with insets, a scene's panels (with the navigator's strip
+   * after them) and the views of those with axes as insets make them: an
+   * inset's box over the panels drawn before it (`cover`) and its border, a
+   * panel's plot left visible by the insets over it (`visible`) and its grid
+   * lines' spans there, at `ratio` device pixels to a CSS pixel, and their
+   * indicators among its marks, with `theme`; returns the scene's layers
+   * (see `Scene.layers`).
+   */
+  finish?(
+    panels: Panel[],
+    views: readonly InsetView[],
+    theme: Theme,
+    ratio: number,
+  ): Panel[][] | undefined;
+  /** In a layout of cells, where the guides' axes go (see `AxesState.cells`). */
+  cells?(
+    xGroupOf: readonly number[],
+    withAxes: readonly boolean[],
+    yGroupOf: () => readonly number[],
+    drawsY: readonly boolean[],
+    start: number,
+    end: number,
+  ): NonNullable<AxesState["cells"]>;
+}
+
+/** An axis title at its place: its text, the middle of its line, and how it is anchored there. */
+export interface AxisTitlePlace {
+  text: string;
+  x: number;
+  y: number;
+  anchor: "start" | "middle" | "end";
+}
+
 export interface PanelLayout {
+  /** Where the panels of a scene go (a facet's uniform grid, or subplots' layout of cells). */
+  placement(split: PanelSplit, grid: PanelGrid): PanelPlacement;
+  /** The layout as one chart draws it, keeping what that chart's scenes placed apart from others'. */
+  forChart?(): PanelLayout;
+  /**
+   * Whether panel `key` of the last scene is under an inset at a point of
+   * the chart: the box of an inset drawn after it holds the point.
+   */
+  coveredAt?(key: string, x: number, y: number): boolean;
   /**
    * Rejects marks along axes, layout marks, and options the panels cannot
    * draw; returns the layout marks that draw in panels (a map's layers joined).
@@ -294,9 +570,9 @@ export interface PanelLayout {
   splitter(): PanelSplitter;
   grid(split: PanelSplit, lineHeight: number): PanelGrid;
   /**
-   * The headers panel `index`, named by `values`, at `plot`, carries;
-   * `aside` is the room right of it its right axis' labels take, and
-   * `align` where in its span each header goes (unset: its natural place).
+   * The headers panel `index`, named by `values`, at `plot`, carries, in
+   * `paint` on `surface` (see `headerGuides`); `aside` is the room right of
+   * it its right axis' labels take.
    */
   headers(
     index: number,
@@ -305,31 +581,14 @@ export interface PanelLayout {
     column: number,
     plot: Rect,
     grid: PanelGrid,
-    fit: (text: string, room: number) => string,
+    paint: TextPaint,
     aside: number,
-    align: Align | undefined,
-  ): HeaderPlace[];
+    surface: string,
+    measure: MeasureText,
+    key: string,
+  ): HeaderGuide[];
   /** What to do when the panels do not fit, for the error saying so. */
   readonly remedy: string;
-  /** Room between columns for y labels and titles inside the grid. */
-  columnGap(
-    labeled: readonly boolean[],
-    right: boolean,
-    columns: number,
-    room: number,
-    title: number,
-  ): number;
-  /** See `rowGap`. */
-  rowGap(grid: PanelGrid, panels: number, space: RowSpace): number;
-  /** See `trackSizes`: the sizes of a grid's rows or columns, refusing panels too small. */
-  tracks(
-    free: number,
-    count: number,
-    weights: readonly number[] | undefined,
-    panels: number,
-    columns: number,
-    room: PanelRoom,
-  ): number[];
   /** Panel `index`'s `axis` settings: the chart's, with the panel's own. */
   panelAxis(
     axis: PanelAxis,
@@ -458,19 +717,12 @@ export interface PanelGroups {
 }
 
 /**
- * The groups of a split's panels that share a scale along `axis` under
- * `scope` (each panel alone, or the panels of a row or of a column, in
- * rows of `columns`): each panel's group, and what each group's panels draw
- * on that axis' side. A right axis' group takes its settings from its first
+ * The groups of a split's panels that share a scale along `axis`, each
+ * panel's being `groupOf` (see `groupsOf`): what each group's panels draw on
+ * that axis' side. A right axis' group takes its settings from its first
  * panel drawing a mark on it.
  */
-export function groups(
-  scope: ScaleScope,
-  split: PanelSplit,
-  columns: number,
-  axis: PanelAxis,
-): PanelGroups {
-  const groupOf = groupsOf(scope, split.panels.length, columns);
+export function groups(groupOf: number[], split: PanelSplit, axis: PanelAxis): PanelGroups {
   const drawn = drawnBy(split, groupOf, axis) as MarkSeries[][];
   const members: (string | number)[][] = drawn.map(() => []);
   const first = drawn.map(() => -1);
@@ -532,7 +784,11 @@ export function typedGroups(
   return { ...found, axes };
 }
 
-/** The instance of a scale each of `count` panels in rows of `columns` draws with under `scope`. */
+/**
+ * The instance of a scale each of `count` panels in rows of `columns` draws
+ * with under `scope`; a facet's grid takes no scope naming layout grids or
+ * panels.
+ */
 export function groupsOf(scope: ScaleScope, count: number, columns: number): number[] {
   return Array.from({ length: count }, (_, i) =>
     scope === "panel"
@@ -745,21 +1001,23 @@ export class PanelBands {
   #seen = new Uint8Array(0);
 
   /**
-   * Gives `split`'s panels, in rows of `columns`, their groups' bands along
-   * the axes whose categories they resolve apart (by `scopes`), if any, from
-   * the chart's `bands`.
+   * Gives `split`'s panels their groups' bands along the axes whose
+   * categories they resolve apart (by `scopes`, grouped by `groupsOf`), if
+   * any, from the chart's `bands`.
    */
   place(
     split: PanelSplit,
-    columns: number,
+    groupsOf: (scope: ScaleScope, axis: "x" | "y") => number[],
     bands: Bands,
     scopes: Scopes,
     context: BandContext,
   ): void {
     const axes = (["x", "y"] as const).flatMap((axis) => {
       const chart = bands[axis];
-      if (chart && scopes[axis] !== "chart")
-        return [{ axis, ...this.#placeAxis(split, columns, chart, scopes[axis], axis, context) }];
+      // The chart's scale is one group but where insets have their own.
+      const groupOf = chart && groupsOf(scopes[axis], axis);
+      if (chart && groupOf && (scopes[axis] !== "chart" || groupOf.some((g) => g !== 0)))
+        return [{ axis, ...this.#placeAxis(split, groupOf, chart, axis, context) }];
       this.#groups[axis].clear();
       return [];
     });
@@ -804,21 +1062,19 @@ export class PanelBands {
   }
 
   /**
-   * The groups of `split`'s panels along `axis` under `scope`, and each
-   * group's bands from the chart's `chart`; sets the panels' band lists.
+   * The groups of `split`'s panels along `axis`, each panel's `groupOf`, and
+   * each group's bands from the chart's `chart`; sets the panels' band lists.
    */
   #placeAxis(
     split: PanelSplit,
-    columns: number,
+    groupOf: number[],
     chart: BandList,
-    scope: ScaleScope,
     axis: "x" | "y",
     context: BandContext,
   ): { groupOf: number[]; groups: GroupBands[] } {
     const count = chart.keys.length;
     let index: Map<string, number> | undefined;
     if (this.#seen.length < count) this.#seen = new Uint8Array(count);
-    const groupOf = groupsOf(scope, split.panels.length, columns);
     const panelsOf: number[][] = [];
     groupOf.forEach((g, p) => {
       panelsOf[g] ??= [];

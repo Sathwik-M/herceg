@@ -12,8 +12,18 @@ import numbers
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from os import PathLike
-from typing import TYPE_CHECKING, Any, Literal, ParamSpec, Protocol, TypedDict, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Concatenate,
+    Literal,
+    ParamSpec,
+    Protocol,
+    TypedDict,
+    TypeVar,
+)
 
 import numpy as np
 
@@ -27,8 +37,10 @@ from ._encoding import (
     Continuity,
     Coordinate,
     Encodings,
+    Fraction,
     Label,
     MarkStyle,
+    Pixels,
     Position,
     Stack,
     condition_spec,
@@ -51,8 +63,10 @@ from ._guides import (
     guides_spec,
     legend_spec,
     scales_spec,
+    scope_spec,
     ticks_spec,
 )
+from ._guides import _instant as _domain_end
 from ._interaction import (
     Binding,
     Sync,
@@ -61,6 +75,16 @@ from ._interaction import (
     limits_spec,
     sync_spec,
 )
+from ._layout import (
+    Cell,
+    Grid,
+    GridCells,
+    InsetAnchor,
+    Tracks,
+    _Inset,
+    inset_spec,
+    mosaic_cells,
+)
 from ._rows import RowSelection, SelectionBinding
 from ._rows import bindings as bindings_of
 from ._series import series_of
@@ -68,6 +92,7 @@ from ._style import (
     AXIS_ROLES,
     PANEL_ROLES,
     HaloOption,
+    Place,
     Style,
     Theme,
     ThemeName,
@@ -290,9 +315,9 @@ def _check_format(format: dict[str, Any] | None, role: str, known: frozenset[str
         raise ValueError(f"{role}: {shown(unknown[0])} is not an Intl format option")
 
 
-#: Which panels share one instance of a scale (``AxisOptions.scope``).
-Scope = Literal["chart", "panel", "row", "column"]
-SCOPES = ("chart", "panel", "row", "column")
+#: Which panels share one instance of a scale (``AxisOptions.scope``): a
+#: name, or ``{"layout": id, "by": "row" or "column"}``, or ``{"panels": [ids]}``.
+Scope = Literal["chart", "panel", "row", "column"] | Mapping[str, Any]
 
 
 @dataclass
@@ -316,15 +341,21 @@ class AxisOptions:
 
     ``scope``, on the chart's ``x``, ``y``, and ``y_right`` only, says which
     facet panels or subplots share one instance of the axis' scale:
-    ``"chart"`` (every panel), ``"panel"`` (each its own), ``"row"``, or
-    ``"column"``. By default x is the chart's, y is each subplot's own and the
-    chart's in facets, and y_right is as y. A scale panels do not share takes
-    its type from the marks of its own panels, so one subplot can show
-    categories along y while another shows numbers.
+    ``"chart"`` (every panel but insets), ``"panel"`` (each its own),
+    ``"row"`` or ``"column"`` (of a facet grid, or of the layout grid holding
+    the subplots), ``{"layout": id, "by": "column"}`` (the subplots on the
+    same columns, or rows, of the layout grid named ``id``), or
+    ``{"panels": ["latency", "errors"]}``. By default subplots have scales of
+    their own (x is the chart's with a ``navigator``), facets share them, and
+    y_right is as y. A scale panels do not share takes its type from the
+    marks of its own panels, so one subplot can show categories along y
+    while another shows numbers. ``repeat`` says where panels sharing a
+    scale label it: ``"outer"`` (the default) on the outer edge of panels
+    lined up with each other, ``"all"`` on every panel.
     """
 
     type: Literal["linear", "log", "time"] | None = None
-    domain: tuple[float, float] | None = None
+    domain: tuple[float | _dt.datetime, float | _dt.datetime] | None = None
     title: str | None = None
     nice: bool | None = None
     zero: bool | None = None
@@ -336,6 +367,7 @@ class AxisOptions:
     breaks: Sequence[Break | dict[str, Any]] | None = None
     seams: bool | dict[str, float] | None = None
     scope: Scope | None = None
+    repeat: Literal["outer", "all"] | None = None
     style: Style | dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -344,9 +376,10 @@ class AxisOptions:
             # Intl options as a dict of their names; patterns are hg.Format.
             if isinstance(value, dict) and not set(value) & {"number", "time"}:
                 _check_format(value, f"AxisOptions {name}", _NUMBER_FORMAT | _TIME_FORMAT)
-        if self.scope is not None and self.scope not in SCOPES:
+        scope_spec(self.scope, "AxisOptions scope")
+        if self.repeat is not None and self.repeat not in ("outer", "all"):
             raise ValueError(
-                f"AxisOptions scope: expected {listed(SCOPES)}; received {shown(self.scope)}"
+                f'AxisOptions repeat: expected "outer" or "all"; received {shown(self.repeat)}'
             )
 
     def _spec(self) -> dict[str, Any]:
@@ -376,7 +409,11 @@ class AxisOptions:
             )
         spec = {
             "type": self.type,
-            "domain": list(self.domain) if self.domain is not None else None,
+            "domain": (
+                [_domain_end(v, "AxisOptions domain") for v in self.domain]
+                if self.domain is not None
+                else None
+            ),
             "title": self.title,
             "nice": self.nice,
             "zero": self.zero,
@@ -387,7 +424,8 @@ class AxisOptions:
             "show": self.show,
             "breaks": [_break(rule) for rule in self.breaks] if self.breaks is not None else None,
             "seams": seams,
-            "scope": self.scope,
+            "scope": scope_spec(self.scope, "AxisOptions scope"),
+            "repeat": self.repeat,
             "style": style_spec(self.style, "AxisOptions style", AXIS_ROLES),
         }
         return {key: value for key, value in spec.items() if value is not None}
@@ -697,36 +735,6 @@ class Camera:
         return spec
 
 
-@dataclass
-class Panel:
-    """One of a chart's ``panels``: marks with ``panel=id`` draw in it.
-
-    ``x``, ``y``, and ``y_right`` set the panel's own axes over the chart's
-    ``x``, ``y``, and ``y_right`` (the right axis of its marks with
-    ``axis="right"``); panels sharing an x scale take the first one's.
-    """
-
-    id: str
-    title: str | Title | dict[str, Any] | None = None
-    y: AxisOptions | dict[str, Any] | None = None
-    x: AxisOptions | dict[str, Any] | None = None
-    y_right: AxisOptions | dict[str, Any] | None = None
-    camera: Camera | dict[str, Any] | None = None
-    style: Style | dict[str, Any] | None = None
-
-    def _spec(self) -> dict[str, Any]:
-        spec = {
-            "id": self.id,
-            "title": title_spec(self.title, "Panel title", placed=False),
-            "style": style_spec(self.style, "Panel style", PANEL_ROLES),
-            "x": _axis(self.x, "Panel x"),
-            "y": _axis(self.y, "Panel y"),
-            "yRight": _axis(self.y_right, "Panel y_right"),
-            "camera": _camera(self.camera, "Panel camera", partial=True),
-        }
-        return {key: value for key, value in spec.items() if value is not None}
-
-
 class _SharedOptions(TypedDict, total=False):
     title: str | Title | dict[str, Any] | None
     description: str | None
@@ -763,9 +771,6 @@ class _LayoutOptions(TypedDict, total=False):
     facet_row: str | None
     facet_column: str | None
     panels: Sequence[Panel | str] | None
-    panel_columns: int | None
-    panel_row_heights: Sequence[float] | None
-    panel_column_widths: Sequence[float] | None
 
 
 class _BindingOptions(TypedDict, total=False):
@@ -783,6 +788,8 @@ class ChartUpdate(_SharedOptions, total=False):
 
 class ChartOptions(ChartUpdate, _LayoutOptions, _BindingOptions, total=False):
     """``Chart``'s keyword arguments. ``None`` takes an option's default."""
+
+    layout: Grid | Mapping[str, Any] | None
 
 
 class HelperOptions(_SharedOptions, _LayoutOptions, _BindingOptions, total=False):
@@ -914,9 +921,7 @@ class Chart:
         facet_row: str | None = None,
         facet_column: str | None = None,
         panels: Sequence[Panel | str] | None = None,
-        panel_columns: int | None = None,
-        panel_row_heights: Sequence[float] | None = None,
-        panel_column_widths: Sequence[float] | None = None,
+        layout: Grid | Mapping[str, Any] | None = None,
         legend: bool | LegendOptions | dict[str, Any] | None = None,
         scales: dict[str, Scale | dict[str, Any]] | None = None,
         guides: Sequence[Guide] | None = None,
@@ -963,33 +968,12 @@ class Chart:
             raise ValueError(
                 f"Chart panels: {shown(repeated)} names two panels; give each panel its own id"
             )
-        if panel_columns is not None and not panel_list:
-            raise ValueError("Chart panel_columns: lays out panels, and the chart has none")
-        if panel_columns is not None and not (
-            isinstance(panel_columns, int)
-            and not isinstance(panel_columns, bool)
-            and panel_columns >= 1
-        ):
+        if layout is not None and not panel_list:
             raise ValueError(
-                "Chart panel_columns: expected a whole number of at least 1; "
-                f"received {shown(panel_columns)}"
+                "Chart layout: places the chart's panels, and it has none; give panels, or "
+                "lay panels out with chart.columns, rows, grid, or mosaic"
             )
-        # A grid has no more columns than panels.
-        columns = min(panel_columns or 1, len(panel_list)) if panel_list else 0
-        row_heights = _panel_weights(
-            panel_row_heights,
-            "panel_row_heights",
-            panel_list,
-            -(-len(panel_list) // columns) if columns else 0,
-            "heights, one per row",
-        )
-        column_widths = _panel_weights(
-            panel_column_widths,
-            "panel_column_widths",
-            panel_list,
-            columns,
-            "widths, one per column",
-        )
+        layout_spec = _layout_option(layout)
         if panel_list and (facet is not None or facet_row is not None or facet_column is not None):
             raise ValueError("Chart panels: facets or panels, not both; drop one")
         if panel_list:
@@ -1026,9 +1010,11 @@ class Chart:
         # The fields that split rows into panels.
         self._facets = [f for f in (facet, facet_row, facet_column) if f is not None]
         self._panels = panel_list
-        self._panel_columns = panel_columns
-        self._panel_row_heights = row_heights
-        self._panel_column_widths = column_widths
+        # The layout given (`layout=`), or the one the chart's methods build cell by cell.
+        self._layout = layout_spec
+        self._root: Cell | None = None
+        # Legends of panels (`panel.legend`), after the chart's `guides`.
+        self._panel_guides: list[Guide] = []
         self._tables: list[tuple[Any, _Columns]] = []
         # Derived tables by index, with the index of the table they derive from.
         self._derived: dict[int, int] = {}
@@ -1085,6 +1071,191 @@ class Chart:
             "Chart bindings",
             brushes_rows=any("brush" in binding.events for binding in self._row_selection),
         )
+
+    # Layout ----------------------------------------------------------------
+
+    def columns(
+        self, widths: Tracks, *, gap: float | None = None, id: str | None = None
+    ) -> list[Cell]:
+        """Lays the chart's panels out in columns of ``widths`` (a count, or
+        each column's size: weights, ``hg.Weight(2, min=200)``, or
+        ``hg.Pixels(220)``), left to right; each cell returned holds the
+        panels its ``panel()`` makes, from the top, or columns and rows of
+        its own::
+
+            left, right = chart.columns([2, 1])
+            left.panel("latency", weight=2, title="p99").line(x="time", y="p99")
+            left.panel("errors", title="Errors").bar(x="time", y="errors")
+            right.panel("share", title="By region").pie("region", "requests")
+
+        Sizes are of the panels' plots, as matplotlib's ratios are: titles,
+        axes, and legends take room beside them. Panels have scales of their
+        own unless a scale's ``scope`` shares them."""
+        return self._lay_out("Chart.columns", lambda cell: cell.columns(widths, gap=gap, id=id))
+
+    def rows(
+        self, heights: Tracks, *, gap: float | None = None, id: str | None = None
+    ) -> list[Cell]:
+        """Lays the chart's panels out in rows of ``heights``, from the top
+        (see ``columns``)."""
+        return self._lay_out("Chart.rows", lambda cell: cell.rows(heights, gap=gap, id=id))
+
+    def grid(
+        self,
+        *,
+        rows: Tracks,
+        columns: Tracks,
+        gap: float | tuple[float, float] | None = None,
+        id: str | None = None,
+    ) -> GridCells:
+        """Lays the chart's panels out in a grid of ``rows`` and
+        ``columns`` (see ``columns`` for their sizes), whose cells span
+        tracks::
+
+            grid = chart.grid(rows=[2, 1], columns=[2, 1])
+            grid.cell(0, 0).panel("latency")
+            grid.cell(1, 0).panel("errors")
+            grid.cell(0, 1, row_span=2).panel("share")
+        """
+        return self._lay_out(
+            "Chart.grid", lambda cell: cell.grid(rows=rows, columns=columns, gap=gap, id=id)
+        )
+
+    def mosaic(
+        self,
+        layout: Sequence[Sequence[str | None]],
+        *,
+        rows: Tracks | None = None,
+        columns: Tracks | None = None,
+        gap: float | tuple[float, float] | None = None,
+        id: str | None = None,
+        panels: Mapping[str, Panel] | None = None,
+    ) -> dict[str, Panel]:
+        """Lays the chart's panels out as rows of panel ids, as matplotlib's
+        ``subplot_mosaic`` does: an id repeated over a rectangle spans it,
+        and ``None`` leaves a cell empty. Returns the panels by id; ``panels``
+        gives some of them their settings (``hg.Panel`` objects, whose ids
+        are the keys)::
+
+            panels = chart.mosaic([["latency", "share"], ["errors", "share"]],
+                                  rows=[2, 1], columns=[2, 1])
+            panels["latency"].line(x="time", y="p99")
+        """
+        role = "Chart.mosaic"
+        cells = mosaic_cells(layout, role)
+        given = dict(panels or {})
+        for key, panel in given.items():
+            if not isinstance(panel, Panel):
+                raise TypeError(
+                    f"{role} panels[{key!r}]: expected an hg.Panel; received {shown(panel)}"
+                )
+            if panel.id != key:
+                raise ValueError(
+                    f"{role} panels[{key!r}]: the panel's id is {shown(panel.id)}; give it the "
+                    "id of its key"
+                )
+        unknown = [key for key in given if key not in {cell[0] for cell in cells}]
+        if unknown:
+            raise ValueError(
+                f"{role} panels: {shown(unknown[0])} is in no cell of the mosaic; place it or "
+                "drop its settings"
+            )
+
+        def lay(root: Cell) -> dict[str, Panel]:
+            grid = root.grid(
+                rows=rows if rows is not None else len(layout),
+                columns=columns if columns is not None else len(layout[0]),
+                gap=gap,
+                id=id,
+            )
+            out: dict[str, Panel] = {}
+            for name, row, column, row_span, column_span in cells:
+                cell = grid.cell(row, column, row_span=row_span, column_span=column_span)
+                settings = given.get(name) or Panel(name)
+                out[name] = cell.panel(
+                    name,
+                    title=settings.title,
+                    x=settings.x,
+                    y=settings.y,
+                    y_right=settings.y_right,
+                    camera=settings.camera,
+                    style=settings.style,
+                )
+            return out
+
+        return self._lay_out(role, lay)
+
+    def _lay_out(self, role: str, lay: Callable[[Cell], _R]) -> _R:
+        """What ``lay`` makes of the chart's layout, as cells to lay out:
+        refused where the chart has facets, panels of its own, or a layout
+        already. A layout refused leaves the chart as it was."""
+        if self._facets:
+            raise ValueError(
+                f"{role}: lays out panels, and the chart has facets; facets or panels, not both"
+            )
+        if self._layout is not None or (self._panels and self._root is None):
+            raise ValueError(
+                f"{role}: the chart's panels and layout are given (panels=, layout=); lay them "
+                "out there, or make every panel with the chart's columns, rows, grid, or mosaic"
+            )
+        if self._root is not None:
+            raise ValueError(
+                f"{role}: the chart is laid out already; lay out one of the cells it was "
+                "divided into"
+            )
+        unplaced = next(
+            (i for i, (mark, _) in enumerate(self._marks) if mark.get("panel") is None), None
+        )
+        if unplaced is not None:
+            raise ValueError(
+                f"{role}: the chart's {_method(self._marks[unplaced][0]['type'])} names no panel; "
+                "lay out the panels first, then add marks through them (panel.line(...))"
+            )
+        root = Cell(self._new_panel, "Chart")
+        try:
+            out = lay(root)
+        except BaseException:
+            self._panels.clear()  # It had none: the panels it made are dropped.
+            raise
+        self._root = root
+        return out
+
+    def _new_panel(
+        self,
+        id: str | None,
+        *,
+        title: Any = None,
+        x: Any = None,
+        y: Any = None,
+        y_right: Any = None,
+        camera: Any = None,
+        style: Any = None,
+    ) -> Panel:
+        """A panel of the chart's layout, bound to it so that it takes marks;
+        its id given, or its place among the chart's panels."""
+        taken = {panel.id for panel in self._panels}
+        if id is None:
+            n = len(self._panels) + 1
+            id = f"panel-{n}"
+            k = 2
+            while id in taken:
+                id, k = f"panel-{n}-{k}", k + 1
+        elif not isinstance(id, str) or id in ("", "*"):
+            raise ValueError(
+                f'Panel id: expected a name other than "" and "*"; received {shown(id)}'
+            )
+        elif id in taken:
+            raise ValueError(f"Panel id: {shown(id)} names two panels; give each panel its own id")
+        made = Panel(id, title=title, x=x, y=y, y_right=y_right, camera=camera, style=style)
+        made._spec()  # Refuses settings the spec cannot take, here rather than at output.
+        if not self._panels:
+            settings = self._settings
+            _check_subplot_ranges(
+                {"zoom": settings["zoom"], "pan": settings["pan"], "brush": settings["brush"]}
+            )
+        made._chart = self
+        self._panels.append(made)
+        return made
 
     # Marks -----------------------------------------------------------------
 
@@ -4120,6 +4291,20 @@ class Chart:
         """What the browser checks of the whole chart once every mark is added,
         before a spec of it is made or a live chart shows it."""
         self._check_scale_references()
+        if self._panels:
+            loose = next((m for m, _ in self._marks if m.get("panel") is None), None)
+            if loose is not None:
+                raise ValueError(
+                    f'{_method(loose["type"])} panel: expected the id of a panel, or "*" for every '
+                    "panel; received None"
+                )
+            settings = self._settings
+            axes = {key: settings.get(key) for key in ("x", "y", "y_right", "scales")}
+            check_y_zoom(
+                {"zoom": settings.get("zoom"), "pan": settings.get("pan"), **axes},
+                right=False,
+                subplots=True,
+            )
         layouts = self._layouts()
         check_layout_options(self._settings, layouts, len(self._panels))
         maps = [mark for mark in layouts if mark["type"] in _MAP_MARKS]
@@ -4175,8 +4360,11 @@ class Chart:
 
     def widget(self) -> ChartWidget:
         """A live notebook widget of this chart: Python can update it after display,
-        and it reports zooming, brushing, hovering, and clicks back. It reports
-        one x range, so its panels share x (x's scope is ``"chart"``).
+        and it reports zooming, brushing, hovering, and clicks back. Its view
+        (``viewport``) is of the x scale its panels share; subplots with x
+        scales of their own have a view each (``panel_viewports``), and facet
+        panels must share x (x's scope ``"chart"``), as theirs come from the
+        data.
 
         Needs the ``notebook`` extra (``pip install 'herceg[notebook]'``).
         """
@@ -4381,8 +4569,12 @@ class Chart:
     def _spec_options(self) -> dict[str, Any]:
         """The spec's chart options, with its row selection, whose tables are named
         once the marks are known."""
+        options = self._options
+        if self._panel_guides:
+            panel_guides = guides_spec(self._panel_guides)
+            options = {**options, "guides": [*(options.get("guides") or []), *panel_guides]}
         if not self._row_selection:
-            return self._options
+            return options
         names = [self._bound_table(binding) for binding in self._row_selection]
         if len(set(names)) < len(names):
             raise ValueError(
@@ -4397,7 +4589,7 @@ class Chart:
             )
             for binding, name in zip(self._row_selection, names, strict=True)
         ]
-        return {**self._options, "rowSelection": specs[0] if len(specs) == 1 else specs}
+        return {**options, "rowSelection": specs[0] if len(specs) == 1 else specs}
 
     def _bound_length(self, binding: SelectionBinding) -> int | None:
         """How many rows the table a binding selects has; unknown (None) for a
@@ -4485,22 +4677,18 @@ class Chart:
         return found
 
     def _layout_spec(self) -> dict[str, Any]:
-        """The spec's facet, or its panels and grid; nothing for one panel."""
+        """The spec's facet, or its panels and layout; nothing for one panel."""
         if self._facet is not None:
             return {"facet": {"field": self._facet, "columns": self._facet_columns}}
         if self._facets:
             return {"facet": {"row": self._facet_row, "column": self._facet_column}}
-        if self._panels:
-            layout: dict[str, Any] = {"panels": [p._spec() for p in self._panels]}
-            grid = {
-                "columns": self._panel_columns,
-                "rowHeights": self._panel_row_heights,
-                "columnWidths": self._panel_column_widths,
-            }
-            if any(value is not None for value in grid.values()):
-                layout["grid"] = grid
-            return layout
-        return {}
+        if not self._panels:
+            return {}
+        spec: dict[str, Any] = {"panels": [p._spec() for p in self._panels]}
+        layout = self._root._content_spec() if self._root is not None else self._layout
+        if layout is not None:
+            spec["layout"] = layout
+        return spec
 
     def _used_fields(self) -> dict[int, set[str]]:
         """The columns each table must send: those marks read, and those derived
@@ -5166,6 +5354,201 @@ class Chart:
                     "Chart brush: panels with y categories of their own brush along x only; "
                     f"received {shown(self._settings['brush'])}"
                 )
+
+
+_C = ParamSpec("_C")
+
+
+def _in_panel(
+    method: Callable[Concatenate[Chart, _C], Chart],
+) -> Callable[Concatenate[Panel, _C], Panel]:
+    """`method` of the chart, drawing in the panel it is called on."""
+    name = method.__name__
+
+    @functools.wraps(method)
+    def call(self: Panel, *args: _C.args, **kwargs: _C.kwargs) -> Panel:
+        chart = self._bound(name)
+        given = kwargs.get("panel")
+        if given is not None and given != self.id:
+            raise ValueError(
+                f"Panel.{name} panel: the mark draws in panel {shown(self.id)}, whose method it "
+                f"is; drop panel={shown(given)}"
+            )
+        kwargs["panel"] = self.id
+        method(chart, *args, **kwargs)
+        return self
+
+    return call
+
+
+@dataclass
+class Panel:
+    """One of a chart's panels: marks with ``panel=id`` draw in it, and a
+    panel the chart's ``columns``, ``rows``, ``grid``, or ``mosaic`` made
+    takes marks through its methods, which return the panel::
+
+        left, right = chart.columns([2, 1])
+        latency = left.panel("latency", title="p99").line(x="time", y="p99")
+        latency.legend(place=hg.Place(inside="top-left"))
+
+    ``x``, ``y``, and ``y_right`` set the panel's own axes over the chart's
+    ``x``, ``y``, and ``y_right`` (the right axis of its marks with
+    ``axis="right"``); panels sharing a scale take the first one's.
+    """
+
+    id: str
+    title: str | Title | dict[str, Any] | None = None
+    y: AxisOptions | dict[str, Any] | None = None
+    x: AxisOptions | dict[str, Any] | None = None
+    y_right: AxisOptions | dict[str, Any] | None = None
+    camera: Camera | dict[str, Any] | None = None
+    style: Style | dict[str, Any] | None = None
+    # The chart whose layout made the panel, and the insets drawn over it.
+    _chart: Chart | None = dataclass_field(default=None, init=False, repr=False, compare=False)
+    _insets: list[_Inset] = dataclass_field(
+        default_factory=list, init=False, repr=False, compare=False
+    )
+
+    def _spec(self) -> dict[str, Any]:
+        spec = {
+            "id": self.id,
+            "title": title_spec(self.title, "Panel title", placed=False),
+            "style": style_spec(self.style, "Panel style", PANEL_ROLES),
+            "x": _axis(self.x, "Panel x"),
+            "y": _axis(self.y, "Panel y"),
+            "yRight": _axis(self.y_right, "Panel y_right"),
+            "camera": _camera(self.camera, "Panel camera", partial=True),
+        }
+        return {key: value for key, value in spec.items() if value is not None}
+
+    def _layout_spec(self) -> dict[str, Any]:
+        spec: dict[str, Any] = {"type": "panel", "panel": self.id}
+        if self._insets:
+            spec["insets"] = [inset._spec() for inset in self._insets]
+        return spec
+
+    def _bound(self, method: str) -> Chart:
+        if self._chart is None:
+            raise ValueError(
+                f"Panel.{method}: the panel belongs to no chart's layout; add marks with "
+                f"chart.{method}(..., panel={self.id!r}), or make the panel with "
+                "chart.columns(...)[0].panel(...)"
+            )
+        return self._chart
+
+    def inset(
+        self,
+        id: str | None = None,
+        *,
+        place: Place | Position | None = None,
+        anchor: InsetAnchor | None = None,
+        width: Fraction | Pixels | None = None,
+        height: Fraction | Pixels | None = None,
+        indicator: bool | Mapping[str, Any] | None = None,
+        title: str | Title | dict[str, Any] | None = None,
+        x: AxisOptions | dict[str, Any] | None = None,
+        y: AxisOptions | dict[str, Any] | None = None,
+        y_right: AxisOptions | dict[str, Any] | None = None,
+        style: Style | dict[str, Any] | None = None,
+    ) -> Panel:
+        """A panel drawn over this one's plot, with scales of its own unless
+        a scope names it: at ``place`` (``hg.Place(inside="top-right")``,
+        the default, or an ``hg.Position`` of fractions or pixels with its
+        ``anchor`` there, its top-left corner by default), ``width`` and
+        ``height`` (``hg.Fraction`` of this panel's plot, 0.35 by default, or
+        ``hg.Pixels``). ``indicator=True`` draws a box on this panel around
+        the inset's x and y ranges, with lines to the inset's corners; a dict
+        of ``connectors`` and ``style`` (an ``hg.StrokeStyle``) changes how.
+        It takes marks through its methods, as a panel does::
+
+            detail = latency.inset("detail", x=hg.AxisOptions(domain=(start, end)),
+                                   indicator=True)
+            detail.line(x="time", y="p99", color="region")
+        """
+        chart = self._bound("inset")
+        role = "Panel.inset"
+        spec = inset_spec(place, anchor, width, height, indicator, role)
+        made = chart._new_panel(id, title=title, x=x, y=y, y_right=y_right, style=style)
+        self._insets.append(_Inset(made, spec))
+        return made
+
+    def legend(
+        self,
+        *,
+        place: Place | dict[str, Any] | None = None,
+        columns: int | None = None,
+        rows: int | None = None,
+        order: Literal["row", "column"] | None = None,
+        title: str | dict[str, Any] | None = None,
+        swatches: Literal["mark"] | None = None,
+        style: Style | dict[str, Any] | None = None,
+    ) -> Panel:
+        """A legend of what this panel draws, above it by default, or where
+        ``place`` says (``hg.Place(inside="top-left")``); its entries hide and
+        show what they name in this panel (the chart's legend, in every
+        panel). The chart keeps its legend for what panels' legends leave
+        out; ``legend=False`` on the chart leaves it out."""
+        chart = self._bound("legend")
+        from ._guides import legend as legend_guide
+
+        chart._panel_guides.append(
+            legend_guide(
+                panel=self.id,
+                place=place,
+                columns=columns,
+                rows=rows,
+                order=order,
+                title=title,
+                swatches=swatches,
+                style=style,
+            )
+        )
+        return self
+
+    line = _in_panel(Chart.line)
+    area = _in_panel(Chart.area)
+    bar = _in_panel(Chart.bar)
+    rug = _in_panel(Chart.rug)
+    error_bar = _in_panel(Chart.error_bar)
+    point = _in_panel(Chart.point)
+    histogram = _in_panel(Chart.histogram)
+    candlestick = _in_panel(Chart.candlestick)
+    pie = _in_panel(Chart.pie)
+    gauge = _in_panel(Chart.gauge)
+    funnel = _in_panel(Chart.funnel)
+    boxplot = _in_panel(Chart.boxplot)
+    boxen = _in_panel(Chart.boxen)
+    violin = _in_panel(Chart.violin)
+    treemap = _in_panel(Chart.treemap)
+    sunburst = _in_panel(Chart.sunburst)
+    radar = _in_panel(Chart.radar)
+    sankey = _in_panel(Chart.sankey)
+    graph = _in_panel(Chart.graph)
+    geoshape = _in_panel(Chart.geoshape)
+    geopoint = _in_panel(Chart.geopoint)
+    point_3d = _in_panel(Chart.point_3d)
+    line_3d = _in_panel(Chart.line_3d)
+    surface = _in_panel(Chart.surface)
+    heatmap = _in_panel(Chart.heatmap)
+    contour = _in_panel(Chart.contour)
+    dendrogram = _in_panel(Chart.dendrogram)
+    rule = _in_panel(Chart.rule)
+    region = _in_panel(Chart.region)
+    text = _in_panel(Chart.text)
+
+
+def _layout_option(layout: Any) -> dict[str, Any] | None:
+    """A chart's ``layout`` as the spec takes it: an ``hg.Grid``, or a dict of the spec's layout."""
+    if layout is None:
+        return None
+    if isinstance(layout, Grid):
+        return layout._spec()
+    if isinstance(layout, Mapping):
+        return dict(layout)
+    raise TypeError(
+        "Chart layout: expected an hg.Grid or a dict of a layout; lay panels out cell by cell "
+        f"with chart.columns, rows, grid, or mosaic; received {shown(layout)}"
+    )
 
 
 #: Marks that lay out their own chart, with no axes.
@@ -5852,14 +6235,15 @@ def _axis(
         raise ValueError(f"{role} seams: only the chart's x axis takes seams; drop them")
     if role == "Chart z" and axis.style is not None:
         raise ValueError("Chart z style: a 3D chart's axes take the theme's styles; drop style")
-    if role not in ("Chart x", "Chart y", "Chart y_right") and axis.scope is not None:
-        raise ValueError(
-            f"{role} scope: only the chart's x, y, and y_right take a scope; move it there"
-        )
+    for name in ("scope", "repeat"):
+        if role not in ("Chart x", "Chart y", "Chart y_right") and getattr(axis, name) is not None:
+            raise ValueError(
+                f"{role} {name}: only the chart's x, y, and y_right take {name}; move it there"
+            )
     return axis._spec() or None
 
 
-def axis_scope(settings: Mapping[str, Any], axis: str) -> str | None:
+def axis_scope(settings: Mapping[str, Any], axis: str) -> Any:
     """The scope the chart sets for its ``x``, ``y``, or ``y_right`` scale
     (``axis``), if any: in ``scales``, or else in the axis' options."""
     scales = settings.get("scales")
@@ -5867,18 +6251,20 @@ def axis_scope(settings: Mapping[str, Any], axis: str) -> str | None:
         if given is None:
             continue
         scope = given.get("scope") if isinstance(given, Mapping) else getattr(given, "scope", None)
-        if isinstance(scope, str):
+        if scope is not None:
             return scope
     return None
 
 
-def scope_of(settings: Mapping[str, Any], axis: str, *, subplots: bool) -> str:
+def scope_of(settings: Mapping[str, Any], axis: str, *, subplots: bool) -> Any:
     """Which panels share the chart's ``x``, ``y``, or ``y_right`` scale: its
-    own scope, or by default the whole chart for x, each subplot's own or the
-    whole chart in facets for y, and y's for y_right."""
+    own scope, or by default each subplot's own (x is the whole chart's with
+    a navigator) or the whole chart in facets, and y's for y_right."""
+    own = "panel" if subplots else "chart"
     if axis == "x":
-        return axis_scope(settings, "x") or "chart"
-    y = axis_scope(settings, "y") or ("panel" if subplots else "chart")
+        navigated = settings.get("navigator") not in (None, False)
+        return axis_scope(settings, "x") or ("chart" if navigated else own)
+    y = axis_scope(settings, "y") or own
     return y if axis == "y" else axis_scope(settings, "y_right") or y
 
 
@@ -6154,25 +6540,6 @@ def _range(
             f"{role}: expected two finite numbers, ascending{bound}; received {values!r}"
         )
     return [low, high]
-
-
-def _panel_weights(
-    weights: Sequence[float] | None, option: str, panels: list[Panel], count: int, noun: str
-) -> list[float] | None:
-    """Relative row heights or column widths of a grid of panels, checked."""
-    if weights is None:
-        return None
-    if not panels:
-        raise ValueError(f"Chart {option}: lays out panels, and the chart has none")
-    if len(weights) != count:
-        raise ValueError(f"Chart {option}: expected {count} {noun}; received {len(weights)}")
-    if not all(isinstance(w, numbers.Real) and not isinstance(w, bool) for w in weights):
-        raise ValueError(f"Chart {option}: expected positive numbers; received {weights!r}")
-    # NumPy numbers and fractions become floats, which JSON can carry.
-    values = [float(w) for w in weights]
-    if not all(0 < w < math.inf for w in values):
-        raise ValueError(f"Chart {option}: expected positive numbers; received {weights!r}")
-    return values
 
 
 def _mark_legend(legend: Any, mark: str) -> Literal[False] | None:

@@ -295,6 +295,46 @@ class ChartWidget(anywidget.AnyWidget):
             self._state_changes.pop(key, None)
         return changed
 
+    def _reconcile_views(self, groups: dict[str, list[str]], shared: bool) -> list[StateKey]:
+        """Follows an option update changing which panels have x scales of
+        their own, or which share one (x's scope): the views of scales that
+        changed start over, as the browser's do (the chart's where panels
+        start or stop sharing it, a panel's where the panels sharing its
+        scale changed), departed panels' views go, and new ones start; the
+        states that changed. Called with the lock held."""
+        own = self._live.own_views
+        now = self._live.view_groups
+        previous = list(groups)
+        if groups == now and shared == self._live.shares_x:
+            return []
+        starting = [("viewport", "")] if shared != self._live.shares_x else []
+        starting += [
+            ("viewport", panel)
+            for panel in previous
+            if sorted(groups[panel]) != sorted(now.get(panel, []))
+        ]
+        changed = []
+        # Browsers hear of every view that starts over, those that go too.
+        for key in starting:
+            if key not in self._states:
+                continue
+            if self._states[key] is not None and self._change(key, None, None):
+                changed.append(key)
+            # Reports made before the change are of the scales it replaced,
+            # even where the view was already the whole.
+            self._state_changes[key] = (None, self._revision)
+        for panel in set(previous) - set(own):
+            self._states.pop(("viewport", panel), None)
+            self._state_changes.pop(("viewport", panel), None)
+        for panel in own:
+            key = ("viewport", panel)
+            if key not in self._states:
+                self._states[key] = None
+                self._state_changes[key] = (None, self._revision)
+            if key not in self._callbacks:
+                self._callbacks[key] = ipywidgets.CallbackDispatcher()
+        return [key for key in changed if key in self._states]
+
     def _follow_positions(self, message: Message | None) -> list[StateKey]:
         """Follows a data change in the moves of the networks reading the
         table it changed (see `_release_moves`); the states that changed.
@@ -353,8 +393,10 @@ class ChartWidget(anywidget.AnyWidget):
         ``None`` restores an option's default."""
         with self._lock:
             cameras = self._live.configured_cameras()
+            views = (self._live.view_groups, self._live.shares_x)
             self._push(self._live.update(options))
             changed_cameras = self._reconcile_cameras(cameras)
+            changed_views = self._reconcile_views(*views)
             # Panels given y scales of their own on a side let go of its
             # viewport, as the browser's chart does.
             viewport = self._states[("viewport", "")]
@@ -371,6 +413,8 @@ class ChartWidget(anywidget.AnyWidget):
             self._callbacks[("viewport", "")](_decoded("viewport", kept))
         for key in changed_cameras:
             self._callbacks[key](_decoded("camera", self._states[key]))
+        for key in changed_views:
+            self._callbacks[key](_decoded("viewport", None))
 
     @property
     def selection(self) -> Selection | None:
@@ -383,7 +427,20 @@ class ChartWidget(anywidget.AnyWidget):
 
     @selection.setter
     def selection(self, value: Selection | Range | None) -> None:
-        self._set(("select", ""), encode_selection(value))
+        payload = encode_selection(value)
+        if payload is not None and not payload.get("panels") and not self._live.has_view:
+            raise ValueError(
+                "widget.selection: the chart's panels have x scales or planes of their own, "
+                "and no selection is the whole chart's; name the panel brushed, as "
+                'hg.Selection(x=(start, end), panels=("latency",))'
+            )
+        for panel in payload.get("panels", []) if payload else []:
+            if panel not in self._live.panel_ids:
+                listed = ", ".join(repr(p) for p in self._live.panel_ids) or "none"
+                raise ValueError(
+                    f"widget.selection panels: no panel {panel!r}; the panels are {listed}"
+                )
+        self._set(("select", ""), payload)
 
     @property
     def viewport(self) -> Viewport:
@@ -391,8 +448,8 @@ class ChartWidget(anywidget.AnyWidget):
         of the chart's axes, or of its map or network (also of every facet
         panel's, which share one view). Setting a ``Viewport`` zooms the chart
         to it; an x range as a ``(start, end)`` pair zooms x and resets y; None
-        resets every axis. Map and network subplots' views are
-        ``panel_viewports``."""
+        resets every axis. The views of map and network subplots, of insets,
+        and of subplots with x scales of their own are ``panel_viewports``."""
         return decode_viewport(self._states[("viewport", "")])
 
     @viewport.setter
@@ -412,10 +469,14 @@ class ChartWidget(anywidget.AnyWidget):
 
     @property
     def panel_viewports(self) -> dict[str, Viewport]:
-        """Each map or network subplot's view, by panel id, in its plane's units
-        (``viewport`` is the chart's). Assigning a mapping sets the views it
-        names; a panel left out keeps its view, and None shows its whole plane.
-        The returned mapping is a copy."""
+        """The views subplots have of their own, by panel id: of a map's or
+        network's plane, in its units; and of an x scale of their own (the x
+        range only), as subplots whose x's scope is not "chart" have, and
+        insets. Panels sharing an x scale show one view. ``viewport`` is the
+        chart's. Assigning a mapping sets the views it names; a panel left out
+        keeps its view, and None resets it; a view set for one panel is set
+        for the panels sharing its x scale (x's scope) too. The returned
+        mapping is a copy."""
         return {
             panel: decode_viewport(self._states[("viewport", panel)])
             for panel in self._panels("viewport", "widget.panel_viewports")
@@ -423,21 +484,50 @@ class ChartWidget(anywidget.AnyWidget):
 
     @panel_viewports.setter
     def panel_viewports(self, value: Mapping[str, Viewport | Range | None]) -> None:
-        self._set_panels(
-            "viewport",
-            "widget.panel_viewports",
-            value,
-            lambda view: _plane_view(view, "widget.panel_viewports"),
-        )
+        groups = self._live.view_groups
+        own = set(groups)
+        if isinstance(value, Mapping):
+            # One x scale, one view: the panels sharing it take the one given.
+            spread: dict[str, Any] = {}
+            for panel, view in value.items():
+                for other in groups.get(panel, [panel]):
+                    if other in spread and other in value and other != panel:
+                        if encode_viewport(view) != encode_viewport(value[other]):
+                            raise ValueError(
+                                f"widget.panel_viewports: {other!r} and {panel!r} share an x "
+                                "scale (x's scope), which has one view; give the same view, "
+                                "or one of them"
+                            )
+                    spread.setdefault(other, view)
+            value = {**spread, **value}
+
+        def encode_one(panel: str, view: Viewport | Range | None) -> dict[str, Any] | None:
+            if panel not in own:
+                return _plane_view(view, "widget.panel_viewports")
+            payload = encode_viewport(view)
+            if payload["y"] or payload["yRight"]:
+                raise ValueError(
+                    f"widget.panel_viewports[{panel!r}]: subplots zoom along x only; set x"
+                )
+            return payload
+
+        self._set_panels("viewport", "widget.panel_viewports", value, encode_one)
 
     def _own_view(self, name: str) -> None:
         """Raises, naming `name`, for a chart with no view of its own: subplots
-        none of which has axes, whose maps and networks have views of their own."""
-        if not self._live.has_view:
+        with x scales of their own, or none of which has axes, whose maps and
+        networks have views of their own."""
+        if self._live.has_view:
+            return
+        if self._live.own_views:
             raise ValueError(
-                f"{name}: no panel of the chart has axes; set the views of its map and "
-                "network subplots with widget.panel_viewports"
+                f"{name}: the chart's panels with axes have x scales of their own (x's "
+                "scope, or insets); read and set each panel's view with widget.panel_viewports"
             )
+        raise ValueError(
+            f"{name}: no panel of the chart has axes; set the views of its map and "
+            "network subplots with widget.panel_viewports"
+        )
 
     @property
     def drill_root(self) -> DrillRoot | None:
@@ -467,7 +557,7 @@ class ChartWidget(anywidget.AnyWidget):
             "drill",
             "widget.panel_drill_roots",
             value,
-            lambda root: encode_drill_root(root, "widget.panel_drill_roots"),
+            lambda _panel, root: encode_drill_root(root, "widget.panel_drill_roots"),
         )
 
     @property
@@ -502,7 +592,9 @@ class ChartWidget(anywidget.AnyWidget):
             "itemMove",
             "widget.panel_item_positions",
             value,
-            lambda positions: encode_item_positions(positions, "widget.panel_item_positions"),
+            lambda _panel, positions: encode_item_positions(
+                positions, "widget.panel_item_positions"
+            ),
         )
 
     def _own(self, event: str, name: str, reading: bool = False) -> StateKey:
@@ -534,7 +626,7 @@ class ChartWidget(anywidget.AnyWidget):
         event: str,
         name: str,
         value: Mapping[str, Any],
-        encode_one: Callable[[Any], dict[str, Any] | None],
+        encode_one: Callable[[str, Any], dict[str, Any] | None],
     ) -> None:
         """Sets the subplot states `value` names, all or none: a panel without
         such a state, or a value of another shape, changes nothing."""
@@ -546,7 +638,7 @@ class ChartWidget(anywidget.AnyWidget):
             if panel not in panels:
                 listed = ", ".join(repr(p) for p in panels) or "none"
                 raise ValueError(f"{name}: no panel {panel!r} of its kind; the panels are {listed}")
-            encoded[panel] = encode_one(one)
+            encoded[panel] = encode_one(panel, one)
         for panel, payload in encoded.items():
             self._set((event, panel), payload)
 
@@ -610,7 +702,7 @@ class ChartWidget(anywidget.AnyWidget):
         self, callback: Callable[[Viewport], Any], remove: bool = False, *, panel: str | None = None
     ) -> None:
         """Calls ``callback(viewport)`` when the chart zooms, pans, or resets; with
-        ``panel``, when that map or network subplot does (see ``panel_viewports``)."""
+        ``panel``, when that subplot's own view changes (see ``panel_viewports``)."""
         self._listen(self._key("viewport", panel, "widget.on_viewport"), callback, remove)
 
     def on_drill(
@@ -737,7 +829,7 @@ class ChartWidget(anywidget.AnyWidget):
             "camera",
             "widget.panel_cameras",
             value,
-            lambda camera: _encode_camera(camera, "widget.panel_cameras"),
+            lambda _panel, camera: _encode_camera(camera, "widget.panel_cameras"),
         )
 
     def on_camera(

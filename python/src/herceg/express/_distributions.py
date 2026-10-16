@@ -16,6 +16,7 @@ from .._chart import AxisOptions, Chart, HelperOptions
 from .._data import Column
 from . import _numerics as numerics
 from ._common import (
+    ExpressOptions,
     Levels,
     Source,
     Statistics,
@@ -98,7 +99,7 @@ def histplot(
     kde_options: KdeOptions | None = None,
     colors: str | Sequence[str] | None = None,
     palette: Sequence[str] | None = None,
-    **options: Unpack[HelperOptions],
+    **options: Unpack[ExpressOptions],
 ) -> Chart:
     """A histogram of ``x`` (or, horizontal, of ``y``), per ``series``; with
     both, a 2D histogram's cells.
@@ -367,7 +368,7 @@ def kdeplot(
     thresh: float | None = None,
     colors: str | Sequence[str] | None = None,
     palette: Sequence[str] | None = None,
-    **options: Unpack[HelperOptions],
+    **options: Unpack[ExpressOptions],
 ) -> Chart:
     """Gaussian kernel density estimates of ``x`` per ``series`` (of ``y``
     alone, along y, read by y in tooltips and the keyboard); with both
@@ -512,7 +513,7 @@ def ecdfplot(
     normalize: Literal["probability", "percent", "count"] = "probability",
     complementary: bool = False,
     palette: Sequence[str] | None = None,
-    **options: Unpack[HelperOptions],
+    **options: Unpack[ExpressOptions],
 ) -> Chart:
     """The empirical distribution of ``x`` per ``series``: steps up to the
     share of values at or below each value (``normalize``: ``"probability"``
@@ -629,7 +630,7 @@ def rugplot(
     series_order: Sequence[Any] | None = None,
     length: float = 8,
     palette: Sequence[str] | None = None,
-    **options: Unpack[HelperOptions],
+    **options: Unpack[ExpressOptions],
 ) -> Chart:
     """A tick per value of ``x`` along the bottom of the plot (or of ``y``
     along its left), ``length`` pixels long, per ``series``."""

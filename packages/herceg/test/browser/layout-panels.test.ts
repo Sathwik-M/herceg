@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
+import { grid } from "../../src/layout.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { facet } from "../../src/model/facet.ts";
@@ -176,7 +177,7 @@ describe("a pie beside a line in subplots", () => {
           { id: "trend", title: "Trend" },
           { id: "share", title: "Share" },
         ],
-        { columns: 2 },
+        grid({ columns: 2 }),
       ),
       ...options,
     });

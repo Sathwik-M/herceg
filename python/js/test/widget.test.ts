@@ -5,94 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { MountedChart } from "../../../packages/herceg/src/dom/chart.ts";
 import { MOUSE } from "../../../scripts/browser/mouse.ts";
 import type { SelectionPayload, ViewportPayload } from "../events.ts";
-import widgetModule, { type Model, type Snapshot, type Update } from "../widget.ts";
+import widgetModule, { type Snapshot } from "../widget.ts";
 import { controlTime, pointPath } from "./animation.ts";
 import { itemChart, key } from "./items.ts";
 import { focusMap, mapSpec } from "./maps.ts";
 import { threeSpec } from "./three.ts";
-
-type Handler = (...args: never[]) => void;
-
-/** anywidget's model as the widget sees it: state, custom messages, and events. */
-class MockModel implements Model {
-  readonly sent: Record<string, unknown>[] = [];
-  readonly #state: Record<string, unknown>;
-  readonly #handlers = new Map<string, Handler[]>();
-
-  constructor(state: Record<string, unknown>) {
-    this.#state = state;
-  }
-
-  get(name: string): unknown {
-    return this.#state[name];
-  }
-
-  set(name: string, value: unknown) {
-    this.#state[name] = value;
-    this.#emit(`change:${name}`);
-  }
-
-  send(content: object, _callbacks?: unknown, buffers?: ArrayBuffer[] | ArrayBufferView[]) {
-    this.sent.push({ ...(content as Record<string, unknown>), ...(buffers && { buffers }) });
-  }
-
-  on(event: string, callback: Handler) {
-    this.#handlers.set(event, [...(this.#handlers.get(event) ?? []), callback]);
-  }
-
-  /** A custom message from Python, with its buffers as the comm delivers them. */
-  receive(message: Update, buffers: ArrayBufferView[] = []) {
-    this.#emit(
-      "msg:custom",
-      message,
-      buffers.map((b) => new DataView(b.buffer)),
-    );
-  }
-
-  #emit(event: string, ...args: unknown[]) {
-    for (const handler of this.#handlers.get(event) ?? [])
-      (handler as (...a: unknown[]) => void)(...args);
-  }
-
-  /** Messages of one type sent to Python. */
-  messages(type: string) {
-    return this.sent.filter((message) => message.type === type);
-  }
-}
-
-const number = (buffer: number) => ({ type: "number" as const, dtype: "float64" as const, buffer });
-
-function snapshot(options: Record<string, unknown> = {}): Snapshot {
-  return {
-    revision: 0,
-    spec: {
-      title: "Live",
-      width: 400,
-      height: 200,
-      renderer: "svg",
-      ...options,
-      data: {
-        data: {
-          columns: {
-            t: number(0),
-            v: number(1),
-            host: { type: "category", codes: 2, dictionary: ["a"] },
-          },
-        },
-      },
-      marks: [{ type: "line", x: "t", y: "v", data: "data" }],
-    },
-    buffers: [
-      new DataView(new Float64Array([0, 1, 2]).buffer),
-      new DataView(new Float64Array([1, 3, 2]).buffer),
-      new DataView(new Int32Array([0, 0, 0]).buffer),
-    ],
-    selection: null,
-    viewport: null,
-    drill_root: null,
-    item_positions: {},
-  };
-}
+import { MockModel, number, snapshot } from "./widget-model.ts";
 
 /** Rows as Python sends them: columns indexing the message's buffers. */
 function rows(t: number[], v: number[], host: string[]) {
@@ -1252,6 +1170,57 @@ describe("notebook widget", () => {
     expect(model.messages("viewport")).toHaveLength(1);
   });
 
+  it("reads a panel's view of categories off the data Python replaced just before", () => {
+    const listener = vi.spyOn(MountedChart.prototype, "on");
+    const bar = (panel: string) => ({ type: "bar", x: "c", y: "v", data: "data", panel });
+    const model = new MockModel({
+      _chart: {
+        ...snapshot(),
+        spec: {
+          width: 400,
+          height: 200,
+          renderer: "svg",
+          interaction: { zoom: "x" },
+          panels: [{ id: "a" }, { id: "b" }],
+          layout: { type: "grid", columns: [1, 1] },
+          data: {
+            data: {
+              columns: {
+                c: { type: "category", codes: 0, dictionary: ["a", "b", "z"] },
+                v: number(1),
+              },
+            },
+          },
+          marks: [bar("a"), bar("b")],
+        },
+        buffers: [
+          new DataView(new Int32Array([0, 1, 2]).buffer),
+          new DataView(new Float64Array([1, 2, 3]).buffer),
+        ],
+      } as Snapshot,
+      _listening: [],
+    });
+    mount(model);
+    const chart = listener.mock.instances[0] as MountedChart;
+    model.receive(
+      {
+        type: "replace",
+        revision: 1,
+        table: "data",
+        columns: { c: { type: "category", codes: 0, dictionary: ["c", "d", "e"] }, v: number(1) },
+      },
+      [new Int32Array([0, 1, 2]), new Float64Array([1, 2, 3])],
+    );
+    // No frame between: the panel's view is of the categories just sent.
+    model.receive({
+      type: "viewport",
+      revision: 2,
+      viewport: { x: ["d", "e"], y: null, yRight: null },
+      panel: "a",
+    });
+    expect(chart.getViewport({ panel: "a" }).x).toEqual([1, 2]);
+  });
+
   it("keeps a category selection on its labels when the data changes", async () => {
     const bars = (dictionary: string[]): Snapshot => ({
       ...snapshot(),
@@ -1433,7 +1402,7 @@ describe("widget item interaction", () => {
       ...fixture.spec,
       width: 400,
       panels: [{ id: "a" }, { id: "b" }],
-      grid: { columns: 2 },
+      layout: { type: "grid", columns: [1, 1] },
       marks: [
         { ...mark!, panel: "a" },
         { ...mark!, panel: "b", id: "second" },
@@ -1466,6 +1435,168 @@ describe("widget item interaction", () => {
     expect(model.messages("drill").at(-1)).toMatchObject({ drill_root: null, panel: "b" });
   });
 
+  it("keeps each panel's own x view and the selection of the panel brushed", async () => {
+    const listener = vi.spyOn(MountedChart.prototype, "on");
+    const base = snapshot({ interaction: { zoom: "x", brush: "x" } });
+    const [marked] = base.spec.marks;
+    const subplots: Snapshot = {
+      ...base,
+      spec: {
+        ...base.spec,
+        panels: [{ id: "latency" }, { id: "errors" }],
+        layout: { type: "grid", columns: [2, 1] },
+        marks: [
+          { ...marked!, panel: "latency" },
+          { ...marked!, panel: "errors" },
+        ],
+      } as Snapshot["spec"],
+      // Python's states: each panel's view, its own as the x scale is.
+      panel_states: {
+        viewport: {
+          latency: null,
+          errors: { x: [1, 2], y: null, yRight: null, time: [] },
+        },
+      },
+    };
+    const model = new MockModel({ _chart: subplots, _listening: [] });
+    mount(model);
+    const chart = listener.mock.instances[0] as MountedChart;
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    expect(chart.getViewport({ panel: "errors" }).x).toEqual([1, 2]);
+    expect(chart.getViewport({ panel: "latency" }).x).toBeNull();
+    // Zooming each panel reports its own view.
+    chart.setViewport({ x: [0, 1] }, { panel: "latency" });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("viewport").at(-1)).toMatchObject({
+      viewport: { x: [0, 1] },
+      panel: "latency",
+    });
+    chart.setViewport({ x: [0.5, 1.5] }, { panel: "errors" });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("viewport").at(-1)).toMatchObject({
+      viewport: { x: [0.5, 1.5] },
+      panel: "errors",
+    });
+    // Python sets one panel's view: the other keeps its own.
+    model.receive({
+      type: "viewport",
+      revision: 1,
+      viewport: { x: [0.25, 0.75], y: null, yRight: null },
+      panel: "latency",
+    });
+    expect(chart.getViewport({ panel: "latency" }).x).toEqual([0.25, 0.75]);
+    expect(chart.getViewport({ panel: "errors" }).x).toEqual([0.5, 1.5]);
+    // A brush is the selection of the panel brushed, and Python's goes in the panel it names.
+    chart.select({ x: [0.5, 1], y: null, lasso: null }, { panel: "errors" });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("select").at(-1)!.selection).toMatchObject({
+      panels: ["errors"],
+      x: [0.5, 1],
+    });
+    model.receive({
+      type: "select",
+      revision: 2,
+      selection: { x: [0, 0.5], y: null, lasso: null, panels: ["latency"] },
+    });
+    expect(chart.selectionPanels).toEqual(["latency"]);
+    expect(chart.selection?.x).toEqual([0, 0.5]);
+  });
+
+  it("reads the chart's view on the panels sharing x, past an inset of its own", () => {
+    const listener = vi.spyOn(MountedChart.prototype, "on");
+    const model = new MockModel({
+      _chart: {
+        ...snapshot(),
+        spec: {
+          width: 600,
+          height: 300,
+          renderer: "svg",
+          interaction: { zoom: "x" },
+          x: { scope: "chart" },
+          panels: [{ id: "share" }, { id: "detail" }, { id: "bars" }],
+          layout: {
+            type: "grid",
+            columns: [1, 1],
+            cells: [
+              {
+                row: 0,
+                column: 0,
+                content: { type: "panel", panel: "share", insets: [{ panel: "detail" }] },
+              },
+              { row: 0, column: 1, content: { type: "panel", panel: "bars" } },
+            ],
+          },
+          data: {
+            data: {
+              columns: {
+                c: { type: "category", codes: 0, dictionary: ["a", "b", "z"] },
+                v: number(1),
+              },
+            },
+          },
+          marks: [
+            { type: "pie", category: "c", value: "v", data: "data", panel: "share" },
+            { type: "line", x: "v", y: "v", data: "data", panel: "detail" },
+            { type: "bar", x: "c", y: "v", data: "data", panel: "bars" },
+          ],
+        },
+        buffers: [
+          new DataView(new Int32Array([0, 1, 2]).buffer),
+          new DataView(new Float64Array([1, 2, 3]).buffer),
+        ],
+        // The chart's view, by category labels.
+        viewport: { x: ["a", "b"], y: null, yRight: null, time: [] },
+      } as Snapshot,
+      _listening: [],
+    });
+    mount(model);
+    const chart = listener.mock.instances[0] as MountedChart;
+    expect(chart.getPanels().filter(({ x }) => x)[0]!.key).toBe("detail");
+    expect(chart.getViewport().x).toEqual([0, 1]);
+  });
+
+  it("lets a panel's view go once its x is the chart's, in outputs shown later", () => {
+    const listener = vi.spyOn(MountedChart.prototype, "on");
+    const base = snapshot({ interaction: { zoom: "x" } });
+    const [marked] = base.spec.marks;
+    const model = new MockModel({
+      _chart: {
+        ...base,
+        spec: {
+          ...base.spec,
+          panels: [{ id: "a" }, { id: "b" }],
+          layout: { type: "grid", columns: [1, 1] },
+          marks: [
+            { ...marked!, panel: "a" },
+            { ...marked!, panel: "b" },
+          ],
+        } as Snapshot["spec"],
+        panel_states: { viewport: { a: { x: [1, 2], y: null, yRight: null, time: [] } } },
+      } as Snapshot,
+      _listening: [],
+    });
+    const widget = widgetModule();
+    cleanups.push(widget.initialize({ model }));
+    const show = () => {
+      const host = document.createElement("div");
+      host.style.width = "400px";
+      document.body.append(host);
+      hosts.push(host);
+      cleanups.push(widget.render({ model, el: host }));
+      return listener.mock.instances.at(-1) as MountedChart;
+    };
+    show();
+    // x becomes the chart's; Python lets a's view go and sets the chart's.
+    model.receive({ type: "options", revision: 1, options: { x: { scope: "chart" } } });
+    model.receive({ type: "viewport", revision: 2, viewport: null, panel: "a" });
+    model.receive({
+      type: "viewport",
+      revision: 3,
+      viewport: { x: [0.25, 1.25], y: null, yRight: null },
+    });
+    expect(show().getViewport().x).toEqual([0.25, 1.25]);
+  });
+
   it("keeps each map subplot's view, letting go of one whose projection new data changes", async () => {
     const listener = vi.spyOn(MountedChart.prototype, "on");
     const { rowSelection: _rows, ...spec } = mapSpec();
@@ -1475,7 +1606,7 @@ describe("widget item interaction", () => {
       spec: {
         ...spec,
         panels: [{ id: "a" }, { id: "b" }],
-        grid: { columns: 2 },
+        layout: { type: "grid", columns: [1, 1] },
         data: {
           ...spec.data,
           other: { columns: { lon: number(2), lat: number(3) } },
@@ -1532,7 +1663,7 @@ describe("widget item interaction", () => {
       spec: {
         ...spec,
         panels: [{ id: "bars" }, { id: "map" }],
-        grid: { columns: 2 },
+        layout: { type: "grid", columns: [1, 1] },
         data: { data: { columns: { lon: number(0), lat: number(1), region } } },
         marks: [
           { type: "bar", data: "data", x: "region", y: "lat", panel: "bars" },
@@ -1571,7 +1702,7 @@ describe("widget item interaction", () => {
       ...fixture.spec,
       width: 400,
       panels: [{ id: "a" }, { id: "b" }],
-      grid: { columns: 2 },
+      layout: { type: "grid", columns: [1, 1] },
       data: {
         ...fixture.spec.data,
         other: fixture.spec.data!.data!,
