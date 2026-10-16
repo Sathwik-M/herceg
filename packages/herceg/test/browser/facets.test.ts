@@ -4,6 +4,7 @@ import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
 import type { ChartEvents } from "../../src/dom/events.ts";
+import { grid } from "../../src/layout.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { boxplot } from "../../src/marks/boxplot.ts";
 import { custom } from "../../src/marks/custom.ts";
@@ -726,7 +727,7 @@ describe("subplots with x scales of their own", () => {
         line(series, { x: "t", y: "v", panel: "series" }),
         line(spread, { x: "ms", y: "n", panel: "spread" }),
       ],
-      panels: panels([{ id: "series" }, { id: "spread" }], { rowHeights: [2, 1] }),
+      panels: panels([{ id: "series" }, { id: "spread" }], grid({ rows: [2, 1] })),
       x: { scope: "panel" },
     });
     const events: ChartEvents["viewport"][] = [];

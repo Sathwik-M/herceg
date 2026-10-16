@@ -10,6 +10,7 @@ import {
   fontsFingerprint,
   SNAPSHOT_VERSION,
   type SnapshotGeometry,
+  type SnapshotState,
 } from "../render/snapshot-format.ts";
 import type { Entry } from "./legend.ts";
 import type { LayerParts, PanelNodes, Retained } from "./svg-layer.ts";
@@ -68,15 +69,24 @@ export function adopt(host: Element, snapshot: ChartSnapshot, fonts?: Fonts): Ad
   const [svg, legend, description, live, ...rest] = root.children;
   if (!(svg instanceof SVGSVGElement) || rest.length) throw unlike();
   const count = state.panels.length;
+  // The layer draws the panels in cells, their data then their annotations,
+  // then each inset: its box, data, and annotations.
+  const bases = state.panels.filter(([, , , cover]) => cover === undefined);
+  const insets = state.panels.filter(([, , , cover]) => cover !== undefined);
   const [defs, under, ...groups] = svg.children;
   const overlay = groups.pop();
   const guides = groups.pop();
-  // Defs hold the chart's clip, when it has one, then each panel's.
-  const clips = [...(defs?.children ?? [])];
-  const chartClip = state.chartClip ? clips.shift() : undefined;
+  // Defs hold the chart's clip, when it has one, then each panel's, and
+  // after a panel's with insets over it, what its annotations keep to.
+  const all = [...(defs?.children ?? [])];
+  const chartClip = state.chartClip ? all.shift() : undefined;
+  const keeps = new Map(
+    all.filter(({ id }) => id.endsWith("-keep")).map((clip) => [clip.id, clip]),
+  );
+  const clips = all.filter(({ id }) => !keeps.has(id));
   if (
     defs?.tagName !== "defs" ||
-    groups.length !== 2 * count ||
+    groups.length !== 2 * bases.length + 3 * insets.length ||
     clips.length !== count ||
     !overlay ||
     !guides ||
@@ -86,29 +96,49 @@ export function adopt(host: Element, snapshot: ChartSnapshot, fonts?: Fonts): Ad
   )
     throw unlike();
   const panels = new Map<string, PanelNodes>();
-  state.panels.forEach(([key, data, above], i) => {
-    const clip = clips[i] as SVGClipPathElement;
-    const clipRect = clip.firstElementChild as SVGRectElement | null;
-    if (clip.tagName !== "clipPath" || !clipRect) throw unlike();
+  const take = (
+    [key, data, above, cover]: SnapshotState["panels"][number],
+    clip: Element | undefined,
+    marks: Element | undefined,
+    annotations: Element | undefined,
+    box?: Element,
+  ) => {
+    if (clip?.tagName !== "clipPath" || !marks || !annotations) throw unlike();
+    const keep = keeps.get(`${clip.id}-keep`);
     panels.set(key, {
-      clip,
-      clipRect,
-      marks: groups[i] as SVGGElement,
-      annotations: groups[count + i] as SVGGElement,
-      markNodes: retained(groups[i]!, data, unlike),
-      annotationNodes: retained(groups[count + i]!, above, unlike),
+      clip: clip as SVGClipPathElement,
+      cut: clip.innerHTML,
+      marks: marks as SVGGElement,
+      annotations: annotations as SVGGElement,
+      markNodes: retained(marks, data, unlike),
+      annotationNodes: retained(annotations, above, unlike),
+      ...(box && { cover: { under: box as SVGGElement, hash: cover! } }),
+      ...(keep && {
+        keep: {
+          clip: keep as SVGClipPathElement,
+          path: keep.firstElementChild?.getAttribute("d") ?? "",
+        },
+      }),
     });
+  };
+  // Clips are in the order the layer draws the panels, those in cells first.
+  bases.forEach((entry, i) => {
+    take(entry, clips[i], groups[i], groups[bases.length + i]);
+  });
+  insets.forEach((entry, k) => {
+    const at = 2 * bases.length + 3 * k;
+    take(entry, clips[bases.length + k], groups[at + 1], groups[at + 2], groups[at]);
   });
   const buttons = [...legend.children];
   if (buttons.length !== state.legend.length) throw unlike();
   const entries = new Map<string, Entry>();
-  state.legend.forEach(([key, targets], i) => {
+  state.legend.forEach(([key, targets, panel], i) => {
     const button = buttons[i] as HTMLButtonElement;
     const [swatch, label] = button.children as unknown as [HTMLSpanElement, HTMLSpanElement];
     if (button.tagName !== "BUTTON" || !swatch || !label) throw unlike();
     // A label in a box holds its text in an element of its own.
     const text = (label.firstElementChild as HTMLSpanElement | null) ?? label;
-    entries.set(key, { button, swatch, label, text, shown: "", targets });
+    entries.set(key, { button, swatch, label, text, shown: "", targets, panel });
   });
   return {
     id,

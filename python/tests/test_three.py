@@ -31,7 +31,7 @@ def test_subplot_export_pixels_follow_each_configured_camera(tmp_path, format):
                     hg.Panel("a", camera={"azimuth": azimuth}),
                     hg.Panel("b", camera={"azimuth": 90}),
                 ],
-                panel_columns=2,
+                layout=hg.Grid(columns=2),
             )
             .point_3d("x", "y", "z", fill="#ff0000", radius=8, panel="a")
             .point_3d("x", "y", "z", fill="#ff0000", radius=8, panel="b")
@@ -257,7 +257,7 @@ def test_3d_subplots_compose_layers_and_export_each_camera():
                 hg.Panel("a", title="Cloud", camera={"azimuth": 20}),
                 hg.Panel("b", title="Fit", camera=hg.Camera(azimuth=90)),
             ],
-            panel_columns=3,
+            layout=hg.Grid(columns=3),
             camera=hg.Camera(elevation=35),
             zoom=True,
         )

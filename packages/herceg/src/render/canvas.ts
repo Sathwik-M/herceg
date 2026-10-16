@@ -36,52 +36,75 @@ export function paintCanvas(
   context.textRendering = kerning ? "auto" : "optimizeSpeed";
 
   const { theme } = scene;
-  if (theme.background !== "transparent") {
-    context.fillStyle = theme.background;
-    context.fillRect(0, 0, scene.width, scene.height);
-  }
-  for (const { plot, frame } of scene.panels) {
-    if (!frame?.fill) continue;
-    context.fillStyle = frame.fill;
-    context.fillRect(plot.x, plot.y, plot.width, plot.height);
-  }
-  for (const { coords, paint } of gridStrokes(scene.panels, theme, ratio)) {
-    context.beginPath();
-    for (let i = 0; i < coords.length; i += 4) {
-      context.moveTo(coords[i]!, coords[i + 1]!);
-      context.lineTo(coords[i + 2]!, coords[i + 3]!);
-    }
-    context.strokeStyle = paint.stroke;
-    // One-pixel grid lines are a device pixel wide, crisp at any ratio.
-    context.lineWidth = paint.strokeWidth === 1 ? 1 / ratio : paint.strokeWidth;
-    context.globalAlpha = paint.opacity;
-    context.setLineDash([...paint.dash]);
-    context.stroke();
-  }
-  context.setLineDash([]);
-  context.globalAlpha = 1;
-
-  // Guides are drawn by the SVG layer above the canvas.
-  for (const { plot, marks } of scene.panels) {
-    context.save();
-    context.beginPath();
-    context.rect(plot.x, plot.y, plot.width, plot.height);
-    context.clip();
-    const options = { plot, pixelRatio: ratio, clouds };
-    for (const mark of marks) {
-      const draw = mark.draw;
-      if (!draw.guide && clipOf(mark) === "plot") draw.canvas(context, mark, options);
-    }
-    context.restore();
-  }
-  // Data its marks do not cut to the plot, which the canvas' own edges cut.
-  // GPU clouds are drawn over their plot only, so these are placed on the CPU.
   const cpu: CloudOptions = {};
-  for (const { plot, marks } of scene.panels) {
-    for (const mark of marks) {
-      const draw = mark.draw;
-      if (!draw.guide && clipOf(mark) !== "plot")
-        draw.canvas(context, mark, { plot, pixelRatio: ratio, clouds: cpu });
+  // Layer by layer: the panels in cells, then each inset over its box.
+  for (const panels of scene.layers ?? [scene.panels]) {
+    if (theme.background !== "transparent") {
+      const { x, y, width, height } = panels[0]?.cover ?? {
+        x: 0,
+        y: 0,
+        width: scene.width,
+        height: scene.height,
+      };
+      context.fillStyle = theme.background;
+      context.fillRect(x, y, width, height);
+    }
+    for (const { plot, frame, visible } of panels) {
+      if (!frame?.fill) continue;
+      context.fillStyle = frame.fill;
+      for (const { x, y, width, height } of visible ?? [plot])
+        context.fillRect(x, y, width, height);
+    }
+    // Grid lines end where they do, as SVG and PDF draw them: insets cut them.
+    context.lineCap = "butt";
+    for (const { coords, paint } of gridStrokes(panels, theme, ratio)) {
+      context.beginPath();
+      for (let i = 0; i < coords.length; i += 4) {
+        context.moveTo(coords[i]!, coords[i + 1]!);
+        context.lineTo(coords[i + 2]!, coords[i + 3]!);
+      }
+      context.strokeStyle = paint.stroke;
+      // One-pixel grid lines are a device pixel wide, crisp at any ratio.
+      context.lineWidth = paint.strokeWidth === 1 ? 1 / ratio : paint.strokeWidth;
+      context.globalAlpha = paint.opacity;
+      context.setLineDash([...paint.dash]);
+      context.stroke();
+    }
+    context.lineCap = "round";
+    context.setLineDash([]);
+    context.globalAlpha = 1;
+
+    // Guides are drawn by the SVG layer above the canvas. A panel with
+    // insets over it draws only where they leave its plot visible.
+    for (const { plot, marks, visible } of panels) {
+      context.save();
+      context.beginPath();
+      for (const { x, y, width, height } of visible ?? [plot]) context.rect(x, y, width, height);
+      context.clip();
+      const options = { plot, pixelRatio: ratio, clouds };
+      for (const mark of marks) {
+        const draw = mark.draw;
+        if (!draw.guide && clipOf(mark) === "plot") draw.canvas(context, mark, options);
+      }
+      context.restore();
+    }
+    // Data its marks do not cut to the plot, which the canvas' own edges cut,
+    // and insets' boxes, as SVG's `keepPath` does. GPU clouds are drawn over
+    // their plot only, so these are placed on the CPU.
+    for (const { plot, marks, visible } of panels) {
+      context.save();
+      if (visible) {
+        context.beginPath();
+        context.rect(0, 0, scene.width, scene.height);
+        for (const { x, y, width, height } of [plot, ...visible]) context.rect(x, y, width, height);
+        context.clip("evenodd");
+      }
+      for (const mark of marks) {
+        const draw = mark.draw;
+        if (!draw.guide && clipOf(mark) !== "plot")
+          draw.canvas(context, mark, { plot, pixelRatio: ratio, clouds: cpu });
+      }
+      context.restore();
     }
   }
 }

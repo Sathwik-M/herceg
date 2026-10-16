@@ -18,6 +18,16 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./layout": {
+      "types": "./dist/layout.d.ts",
+      "import": "./dist/layout.js",
+      "default": "./dist/layout.js"
+    },
+    "./guides": {
+      "types": "./dist/guides.d.ts",
+      "import": "./dist/guides.js",
+      "default": "./dist/guides.js"
+    },
     "./grid": {
       "types": "./dist/grid.d.ts",
       "import": "./dist/grid.js",

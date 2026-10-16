@@ -16,6 +16,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "svelte": "./dist/index.js"
+    },
+    "./layout": {
+      "types": "./dist/layout.d.ts",
+      "svelte": "./dist/layout.js"
+    },
+    "./guides": {
+      "types": "./dist/guides.d.ts",
+      "svelte": "./dist/guides.js"
     }
   },
   "files": [

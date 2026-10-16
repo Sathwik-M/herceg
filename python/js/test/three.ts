@@ -9,7 +9,7 @@ export function threeSpec(): ChartSpec {
       { id: "a", title: "Cloud", camera: { azimuth: 20 } },
       { id: "b", title: "Path", camera: { azimuth: 90 } },
     ],
-    grid: { columns: 2 },
+    layout: { type: "grid", columns: [1, 1] },
     data: { data: { columns: { x: [0, 1], y: [1, 0], z: [0, 1] } } },
     marks: [
       { type: "point3d", x: "x", y: "y", z: "z", panel: "a" },

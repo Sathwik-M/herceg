@@ -589,12 +589,12 @@ export class GeoPointMark implements GeoLayer {
         return row === undefined ? undefined : [row];
       },
       // A point is in a lasso when its center is; points not drawn are not selected.
-      lassoed(polygon, of) {
+      lassoed(polygon, of, shows) {
         if (of !== table) return undefined;
         const found: number[] = [];
         drawn.rows.forEach((row, i) => {
-          if (insidePolygon(polygon, drawn.coords[i * 2]!, drawn.coords[i * 2 + 1]!))
-            found.push(row);
+          const [px, py] = [drawn.coords[i * 2]!, drawn.coords[i * 2 + 1]!];
+          if (insidePolygon(polygon, px, py) && shows(px, py)) found.push(row);
         });
         return found;
       },

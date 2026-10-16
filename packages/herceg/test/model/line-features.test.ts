@@ -6,6 +6,7 @@ import { derive } from "../../src/data/derive.ts";
 import { col } from "../../src/data/expr.ts";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid } from "../../src/layout.ts";
 import { area } from "../../src/marks/area.ts";
 import { line } from "../../src/marks/line.ts";
 import { needsFeatures } from "../../src/model/features.ts";
@@ -106,7 +107,7 @@ describe("colors by category", () => {
     const north = derive(all).filter(col("zone").ne("s")).table();
     const south = derive(all).filter(col("zone").ne("n")).table();
     const scene = build({
-      panels: panels([{ id: "n" }, { id: "s" }], { columns: 2 }),
+      panels: panels([{ id: "n" }, { id: "s" }], grid({ columns: 2 })),
       marks: [
         line(north, { x: "t", y: "v", series: "site", color: "site", panel: "n" }),
         line(south, { x: "t", y: "v", series: "site", color: "site", panel: "s" }),

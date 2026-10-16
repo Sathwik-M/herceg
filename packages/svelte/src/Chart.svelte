@@ -13,6 +13,7 @@
     type ChartUpdate,
     chartError,
     createChart,
+    type GuideOptions,
     type Chart as HercegChart,
     type Inspection,
     type RenderTooltip,
@@ -20,7 +21,7 @@
   } from "herceg";
   import { untrack } from "svelte";
   import { type ChartProps, canonical, sameMark } from "./chart.js";
-  import { type MarkEntry, plain, provideMarks } from "./marks.js";
+  import { type Entry, type LayoutEntry, plain, provideMarks } from "./marks.js";
 
   let {
     marks = [],
@@ -94,8 +95,10 @@
   let current = $state.raw<HercegChart | null>(null);
   let applied: View | undefined;
 
-  /** Mounted mark components, in the order they were added. */
-  let entries = $state.raw<MarkEntry[]>([]);
+  /** Mounted mark, guide, and layout components, in the order they were added. */
+  let entries = $state.raw<Entry[]>([]);
+  /** Panel and inset components made so far, which name those without ids by their place. */
+  let declared = 0;
   provideMarks({
     add: (entry) => {
       entries = [...untrack(() => entries), entry];
@@ -103,9 +106,10 @@
     remove: (entry) => {
       entries = untrack(() => entries).filter((other) => other !== entry);
     },
+    nextPanel: () => ++declared,
   });
 
-  const byPosition = (a: MarkEntry, b: MarkEntry) =>
+  const byPosition = (a: Entry, b: Entry) =>
     a.node.compareDocumentPosition(b.node) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
 
   /** Holds the mark components' anchors. */
@@ -122,14 +126,30 @@
   const described: View = $derived.by(() => {
     void moves;
     const view = { ...(plain(options) as Options), onError: report };
-    // Mark components refused (an unknown field) leave the chart as it was, saying why.
+    // Components refused (an unknown field) leave the chart as it was, saying why.
     const next: ChartMark[] = [...marks];
+    const guides: GuideOptions[] = [];
+    const layouts: LayoutEntry[] = [];
     let refused: ChartError | undefined;
-    for (const { mark } of entries.toSorted(byPosition)) {
-      if (!("refused" in mark)) next.push(mark);
-      else if (view.errorMode === "throw") throw mark.refused;
-      else refused ??= chartError(mark.refused, "validate");
+    const refuse = (error: unknown) => {
+      if (view.errorMode === "throw") throw error;
+      refused ??= chartError(error, "validate");
+    };
+    for (const entry of entries.toSorted(byPosition)) {
+      if ("kind" in entry) layouts.push(entry);
+      else if ("mark" in entry) {
+        if ("refused" in entry.mark) refuse(entry.mark.refused);
+        else next.push(entry.mark);
+      } else if ("refused" in entry.guide) refuse(entry.guide.refused);
+      else guides.push(entry.guide);
     }
+    // Layout components make the chart's panels.
+    try {
+      if (layouts[0]) view.panels = layouts[0].place(layouts, view.panels);
+    } catch (error) {
+      refuse(error);
+    }
+    if (guides.length > 0) view.guides = [...(view.guides ?? []), ...guides];
     // The tooltip's renderer is the chart's own, calling the prop: the key
     // says whether there is one.
     const rendered = renderTooltip !== undefined;

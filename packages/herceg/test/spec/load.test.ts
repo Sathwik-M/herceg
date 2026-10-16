@@ -757,7 +757,7 @@ describe("layout marks in panels in specs", () => {
     const subplots = {
       data,
       panels: [{ id: "trend" }, { id: "share", title: "Share" }],
-      grid: { columns: 2 },
+      layout: { type: "grid", columns: [1, 1] },
       marks: [
         { type: "line", x: "week", y: "revenue", panel: "trend" },
         { type: "pie", category: "product", panel: "share" },

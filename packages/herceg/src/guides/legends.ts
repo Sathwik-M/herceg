@@ -23,6 +23,7 @@ import type { Place } from "../spec/place.ts";
 import type {
   Dash,
   LegendEntrySpec,
+  LegendGuideSpec,
   LegendOptionsSpec,
   LegendStyles,
   ScaleRef,
@@ -52,8 +53,12 @@ interface Plan {
   automatic: boolean;
   /** For the automatic legend: whether the chart sets `legend`, so that it shows even one entry. */
   explicit: boolean;
+  /** For the automatic legend: whether `legend` is true, so that it lists what panels' legends do too. */
+  forced?: boolean;
   /** Where its settings are, for messages. */
   path: string;
+  /** A panel's legend: the key of the subplot whose marks it lists. */
+  panel?: string | undefined;
 }
 
 /**
@@ -70,15 +75,17 @@ export function plannedLegends(
   const options = typeof legend === "object" ? legend : {};
   const layout = Object.keys(options).some((key) => key !== "place" && key !== "style");
   const colorbars = plannedColorbars(config.guides);
-  if (listed.length === 0 && !layout && colorbars.length === 0) return undefined;
+  // Subplots' legends follow each panel's own visibility.
+  if (listed.length === 0 && !layout && colorbars.length === 0 && !config.panels) return undefined;
   const plans: Plan[] = listed.map(({ guide, i }) => ({
     key: guide.id !== undefined ? `legend|id|${guide.id}` : `legend|${i}`,
-    place: guide.place ?? { side: "top" },
+    place: placeOf(guide),
     options: guide,
     sources: guide.scales,
     automatic: false,
     explicit: true,
     path: `chart guides[${i}]`,
+    panel: guide.panel,
   }));
   if (legend !== false)
     plans.unshift({
@@ -88,6 +95,7 @@ export function plannedLegends(
       sources: undefined,
       automatic: true,
       explicit: legend !== undefined,
+      forced: legend === true,
       path: "chart legend",
     });
   // Layout marks (maps, pies), which legends and colorbars do not name yet.
@@ -99,6 +107,20 @@ export function plannedLegends(
     ),
   );
   return { legends: plans, colorbars, layouts };
+}
+
+/**
+ * Where a legend guide goes: as its place says, or a panel's above its
+ * panel; a place inside a plot or beside a panel names the legend's panel
+ * unless it names another.
+ */
+function placeOf(guide: LegendGuideSpec): Place {
+  const { place, panel } = guide;
+  if (panel === undefined) return place ?? { side: "top" };
+  if (!place) return { side: "top", scope: "panel", panel };
+  return place.scope === "chart" || place.panel !== undefined
+    ? place
+    : { ...place, scope: "panel", panel };
 }
 
 /** The legends of `plans`, measured as the model asks (see `CompiledGuides.legends`). */
@@ -120,6 +142,22 @@ export function compiledLegends(
   ): PlacedLegend[] => {
     const owners = ownersOf(marks);
     const partsOf = partOwners(kit, marks, theme, text.locale);
+    // Panels' legends list what their panels draw, and the chart's what they
+    // do not; where panels show or hide series of their own, the chart's
+    // entries say so (see model/panel-legends.ts, loaded with subplots).
+    const ofPanels = plans.find((plan) => plan.panel !== undefined);
+    const Legends = content.panelLegends;
+    if (ofPanels && !Legends)
+      throw new kit.ChartError({
+        code: "unknown-reference",
+        path: `${ofPanels.path}.panel`,
+        message: `${ofPanels.path}.panel: lists a subplot's marks, and the chart has no subplots; drop panel`,
+      });
+    const inPanels =
+      Legends && (ofPanels || content.hidden.panels?.size)
+        ? new Legends(content, owners, partsOf, theme, text.locale)
+        : undefined;
+    for (const plan of plans) if (plan.panel !== undefined) inPanels!.check(plan.panel, plan.path);
     const named = (ref: ScaleRef, path: string) => {
       if (layouts.has(ref.mark))
         throw new Error(
@@ -140,48 +178,85 @@ export function compiledLegends(
         measured: measureColorbar(kit, plan, part.colorbar!, text, theme, chart),
       };
     });
-    // What the listed legends show, which the automatic one leaves to them.
+    // What the chart's listed legends show, which the automatic one leaves
+    // to them; a panel's legend covers what it lists in its panel only (see
+    // the automatic legend's below).
     const claimed = new Set<string>();
-    const all = plans.some((plan) => !plan.automatic && !plan.sources);
+    const all = plans.some((plan) => !plan.automatic && !plan.sources && plan.panel === undefined);
     for (const plan of plans)
       plan.sources?.forEach((ref, k) => {
         named(ref, `${plan.path}.scales[${k}]`);
-        claimed.add(`${ref.mark}|${ref.channel}`);
+        if (plan.panel === undefined) claimed.add(`${ref.mark}|${ref.channel}`);
       });
-    return plans
-      .map((plan): PlacedLegend => {
-        // What a listed legend shows, of what marks own (an entry, a part
-        // marks share): the automatic legend shows what none of them claims.
-        const shows = (owned: readonly { mark: string | number; channel: string }[]) =>
-          plan.automatic
-            ? !all && !owned.some(({ mark, channel }) => claimed.has(`${mark}|${channel}`))
-            : !plan.sources ||
-              owned.some(({ mark, channel }) =>
-                plan.sources!.some((ref) => ref.mark === mark && ref.channel === channel),
-              );
-        let entries = content.entries.filter((entry) =>
-          shows((owners.get(entry.key) ?? [""]).map((mark) => ({ mark, channel: "series" }))),
+    // What each legend lists: entries (of what its panel draws, for a
+    // panel's) and parts that the marks it shows own.
+    const listed = plans.map((plan) => {
+      // What a listed legend shows, of what marks own (an entry, a part
+      // marks share): the automatic legend shows what none of them claims.
+      const shows = (owned: readonly { mark: string | number; channel: string }[]) =>
+        plan.automatic
+          ? !all && !owned.some(({ mark, channel }) => claimed.has(`${mark}|${channel}`))
+          : !plan.sources ||
+            owned.some(({ mark, channel }) =>
+              plan.sources!.some((ref) => ref.mark === mark && ref.channel === channel),
+            );
+      const parts = content.parts.filter((part) => {
+        const shared = partsOf.get(part.key);
+        return !barred.has(part.key) && (!shared || shows(shared.owners));
+      });
+      if (plan.panel !== undefined) {
+        // A legend of its own entries leaves to the chart's what they do
+        // not toggle all of in its panel.
+        const targeted = plan.options.entries?.flatMap(({ targets }) =>
+          (targets ?? []).flatMap(
+            ({ mark }) => marks.find((m) => m.mark.spec.id === mark)?.series ?? [],
+          ),
         );
+        return {
+          plan,
+          ...inPanels!.listed(
+            plan.panel,
+            content.entries,
+            parts,
+            shows,
+            targeted && new Set(targeted.map(({ key }) => key)),
+          ),
+        };
+      }
+      const entries = content.entries.filter(({ key }) =>
+        shows((owners.get(key) ?? [""]).map((mark) => ({ mark, channel: "series" }))),
+      );
+      return { plan, entries, parts };
+    });
+    return listed
+      .map(({ plan, entries, parts }): PlacedLegend => {
+        // The chart's legend leaves to panels' legends what they list
+        // wherever it is drawn, unless the chart asks for it.
+        if (plan.automatic && inPanels && !plan.forced)
+          ({ entries, parts } = inPanels.uncovered(entries, parts));
         // Without an explicit setting, a chart of one series needs no automatic legend.
         if (!plan.explicit && content.entries.length < 2) entries = [];
-        const parts = content.parts.filter((part) => {
-          const shared = partsOf.get(part.key);
-          return !barred.has(part.key) && (!shared || shows(shared.owners));
-        });
+        // Entries as panels' own visibility leaves them.
+        const shown = inPanels?.shown(plan.panel, entries, !!plan.options.entries);
+        if (shown) entries = shown.entries;
         const { options } = plan;
         // An automatic legend without layout settings is the default legend's.
         const plain =
-          plan.automatic && !Object.keys(options).some((k) => k !== "place" && k !== "style");
+          plan.automatic &&
+          !shown &&
+          !Object.keys(options).some((k) => k !== "place" && k !== "style");
+        const hidden = shown?.hidden ?? content.hidden;
         const measured = plain
-          ? kit.measureLegends({ ...content, entries, parts }, text, flow(plan.place))
+          ? kit.measureLegends({ ...content, entries, parts, hidden }, text, flow(plan.place))
           : measureLegend(
               kit,
               plan,
-              { entries, parts, hidden: content.hidden, also: content.also },
+              { entries, parts, hidden, also: shown?.also ?? content.also, hides: shown?.hides },
               text,
               flow(plan.place),
               marks,
               theme,
+              shown,
             );
         return { key: plan.key, place: plan.place, measured, notes: notesOf(plan, measured) };
       })
@@ -303,9 +378,14 @@ interface Row {
   /** The series keys it toggles; none for an entry that explains rather than toggles. */
   targets: readonly string[];
   hidden: boolean;
+  mixed?: boolean | undefined;
 }
 
-/** A legend with settings: its title, entries in a grid or rows, then its parts. */
+/**
+ * A legend with settings: its title, entries in a grid or rows, then its
+ * parts; a panel's toggles each entry's series in it (`targets`) and draws
+ * swatches as the marks drawn there (`drawn`) do.
+ */
 function measureLegend(
   kit: GuideKit,
   plan: Plan,
@@ -314,13 +394,32 @@ function measureLegend(
   flow: LegendFlow,
   marks: readonly MarkSeries[],
   theme: Theme,
+  {
+    targets,
+    drawn,
+  }: {
+    targets?: ReadonlyMap<string, readonly string[]> | undefined;
+    drawn?: ReadonlySet<string | number> | undefined;
+  } = {},
 ): (MeasuredLegend & { explained: string[] }) | undefined {
   const { options, path } = plan;
   const text: LegendText = { ...shared, ...paints(kit, shared, options.style, `${path}.style`) };
   const { measure } = text;
-  const rows = options.entries
-    ? custom(kit, options.entries, marks, content, theme, path, text.read ?? ((given) => given))
-    : derived(kit, options, content, marks, theme);
+  const looks = drawn ? marks.filter(({ mark }, m) => drawn.has(mark.spec.id ?? m)) : marks;
+  let rows = options.entries
+    ? custom(
+        kit,
+        options.entries,
+        marks,
+        content,
+        theme,
+        path,
+        text.read ?? ((given) => given),
+        plan.panel,
+      )
+    : derived(kit, options, content, looks, theme);
+  if (targets && !options.entries)
+    rows = rows.map((row) => ({ ...row, targets: targets.get(row.key) ?? row.targets }));
   // Every entry's swatch takes the widest one's room, and its row the tallest's.
   const swatch = Math.max(SWATCH, ...rows.map((row) => row.sample?.width ?? 0));
   const entryHeight = Math.max(
@@ -416,6 +515,7 @@ function measureLegend(
           ...(row.glyph && { glyph: row.glyph }),
           ...(row.stroke && { stroke: row.stroke }),
           ...(row.sample && { sample: { ...row.sample, width: swatch } }),
+          ...(row.mixed && { mixed: true }),
         };
         if (row.targets.length > 0) {
           if (row.targets.length !== 1 || row.targets[0] !== row.key) item.targets = row.targets;
@@ -434,6 +534,7 @@ function measureLegend(
           kind: "legend",
           key: plan.key,
           entries,
+          ...(plan.panel !== undefined && { panel: plan.panel }),
           label: text.label,
           halo: kit.textHalo(text.label, text.surface),
           get items() {
@@ -557,6 +658,7 @@ function derived(
       sample,
       targets: [entry.key],
       hidden: content.hidden.has(entry.key),
+      mixed: entry.mixed,
     };
   });
 }
@@ -570,6 +672,8 @@ function custom(
   theme: Theme,
   path: string,
   read: Read,
+  /** A panel's legend's: it toggles marks of that panel only. */
+  panel: string | undefined,
 ): Row[] {
   const find = (id: string, where: string) => {
     const found = marks.find(({ mark }) => mark.spec.id === id);
@@ -581,6 +685,13 @@ function custom(
     const targets = (spec.targets ?? []).flatMap(({ mark }, t) => {
       const where = `${at}.targets[${t}].mark`;
       const found = find(mark, where);
+      const drawnIn = found.mark.spec.panel;
+      if (panel !== undefined && drawnIn !== panel)
+        throw new Error(
+          drawnIn === "*"
+            ? `${where}: mark "${mark}" is drawn in every panel, which follows the chart's legend only; target it from the chart's legend`
+            : `${where}: mark "${mark}" is drawn in ${drawnIn === undefined ? "no panel" : `panel "${drawnIn}"`}, and this legend toggles panel "${panel}"'s; target it from the legend of its panel or the chart's`,
+        );
       if (ANNOTATIONS.includes(found.mark.spec.type))
         throw new Error(
           `${where}: mark "${mark}" is an annotation, which has no series to hide and show; target marks with series, or drop the target`,
@@ -615,7 +726,9 @@ function custom(
       color,
       sample: sample ?? swatchItems(kit, { type: "rect", fill: color }),
       targets,
-      hidden: targets.length > 0 && targets.every((key) => content.hidden.has(key)),
+      hidden:
+        targets.length > 0 &&
+        targets.every((key) => (content.hides ? content.hides(key) : content.hidden.has(key))),
     };
   });
 }
@@ -821,7 +934,8 @@ function entryItems(
   swatch: number,
   text: LegendText,
 ): GuideItem[] {
-  const opacity = entry.hidden ? HIDDEN : undefined;
+  // Faded as the live legend fades it: hidden, or hidden in some panels only.
+  const opacity = entry.hidden ? HIDDEN : entry.mixed ? (1 + HIDDEN) / 2 : undefined;
   const items: GuideItem[] = [];
   const { sample, glyph } = entry;
   if (sample) for (const item of sample.items) items.push(moved(item, entry.x, entry.y, opacity));

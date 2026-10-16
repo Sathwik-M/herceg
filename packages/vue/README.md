@@ -113,6 +113,45 @@ as pixel arrays. String patterns scale with `strokeWidth` (the theme's
 line width when omitted on `Line`); arrays stay in CSS pixels. `Custom`
 shape styles accept the same values. See the engine's [dash patterns](../herceg/README.md#marks).
 
+## Layouts
+
+`@herceg/vue/layout` writes a chart's subplots as the tree they make:
+`<Columns>` and `<Rows>` of relative widths and heights (`:weights`),
+`<Grid>` of `:rows` and `:columns` holding `<Cell>` components that span
+tracks (or panels that fill it row by row), and `<Panel>`, whose settings
+are its props (`id`, which may be left out, `title`, `:x`, `:y`, ...) and
+whose mark components take its id as their `panel`. `<Inset>` inside a
+panel draws one over its plot, and `<Legend>` from `@herceg/vue/guides`
+inside a panel is that panel's own legend (see the engine's
+[Subplots](../herceg/README.md#subplots), [Insets](../herceg/README.md#insets),
+and [Panels' legends](../herceg/README.md#panels-legends)).
+
+```vue
+<Chart :height="600">
+  <Columns :weights="[2, 1]">
+    <Rows :weights="[2, 1]">
+      <Panel id="latency" title="p99">
+        <Line :data="data" x="time" y="p99" color="region" />
+        <Legend :place="{ inside: 'top-left' }" />
+        <Inset id="detail" :x="{ domain: [start, end] }" indicator>
+          <Line :data="data" x="time" y="p99" color="region" />
+        </Inset>
+      </Panel>
+      <Panel id="errors" title="Errors">
+        <Bar :data="data" x="time" y="errors" color="region" />
+      </Panel>
+    </Rows>
+    <Panel id="share" title="By region">
+      <Pie :data="data" category="region" value="requests" />
+    </Panel>
+  </Columns>
+</Chart>
+```
+
+A mark inside a panel that names another panel is refused, as are a second
+layout component beside the first, `<Cell>` outside a `<Grid>`, `<Inset>`
+outside a panel, and layout components given with `:panels`.
+
 ## When a chart cannot draw
 
 A mark component or prop the engine refuses (a field its table lacks, a

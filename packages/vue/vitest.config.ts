@@ -6,7 +6,15 @@ export default defineConfig({
   optimizeDeps: { include: ["vue", "vue/server-renderer"] },
   resolve: {
     alias: [
-      { find: "herceg", replacement: new URL("../herceg/src/index.ts", import.meta.url).pathname },
+      // Exact matches, so "herceg" does not also rewrite "herceg/layout".
+      {
+        find: /^herceg$/,
+        replacement: new URL("../herceg/src/index.ts", import.meta.url).pathname,
+      },
+      {
+        find: /^herceg\/layout$/,
+        replacement: new URL("../herceg/src/layout.ts", import.meta.url).pathname,
+      },
       // Vue's full build compiles the tests' inline templates at runtime, as
       // an SFC compiler would at build time.
       { find: /^vue$/, replacement: "vue/dist/vue.esm-browser.js" },

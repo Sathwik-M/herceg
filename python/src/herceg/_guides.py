@@ -32,7 +32,7 @@ from ._style import (
     style_spec,
 )
 
-Scope = Literal["chart", "panel", "row", "column"]
+Scope = Literal["chart", "panel", "row", "column"] | Mapping[str, Any]
 Collision = Literal["show", "hide", "stagger", "wrap"]
 Channel = Literal["series", "color", "size", "symbol"]
 
@@ -339,6 +339,45 @@ class TickLayer:
         return {key: value for key, value in spec.items() if value is not None}
 
 
+def scope_spec(scope: Any, role: str) -> Any:
+    """A scale's scope as the spec takes it: a name, or a dict naming a
+    layout grid and how (``{"layout": "main", "by": "column"}``) or panels
+    (``{"panels": ["latency", "errors"]}``)."""
+    if scope is None or isinstance(scope, str):
+        if scope is not None and scope not in ("chart", "panel", "row", "column"):
+            raise ValueError(
+                f'{role}: expected "chart", "panel", "row", "column", {{"layout": id, "by": '
+                f'"row" or "column"}}, or {{"panels": [ids]}}; received {shown(scope)}'
+            )
+        return scope
+    if isinstance(scope, Mapping):
+        if set(scope) == {"panels"}:
+            panels = scope["panels"]
+            if (
+                isinstance(panels, str)
+                or not isinstance(panels, Sequence)
+                or not all(isinstance(p, str) for p in panels)
+            ):
+                raise TypeError(
+                    f"{role} panels: expected a list of panel ids; received {shown(panels)}"
+                )
+            return {"panels": list(panels)}
+        if set(scope) == {"layout", "by"}:
+            if not isinstance(scope["layout"], str):
+                raise TypeError(
+                    f"{role} layout: expected a grid's id; received {shown(scope['layout'])}"
+                )
+            if scope["by"] not in ("row", "column"):
+                raise ValueError(
+                    f'{role} by: expected "row" or "column"; received {shown(scope["by"])}'
+                )
+            return {"layout": scope["layout"], "by": scope["by"]}
+    raise ValueError(
+        f'{role}: expected "chart", "panel", "row", "column", {{"layout": id, "by": "row" or '
+        f'"column"}}, or {{"panels": [ids]}}; received {shown(scope)}'
+    )
+
+
 @dataclass
 class Scale:
     """A position scale's settings in the chart's ``scales``: ``"x"``,
@@ -355,8 +394,7 @@ class Scale:
     def __post_init__(self) -> None:
         if self.type is not None:
             _choice(self.type, ("linear", "log", "time"), "Scale type")
-        if self.scope is not None:
-            _choice(self.scope, ("chart", "panel", "row", "column"), "Scale scope")
+        scope_spec(self.scope, "Scale scope")
         if self.domain is not None and len(self.domain) != 2:
             raise ValueError(
                 f"Scale domain: a position scale's domain is (low, high); received "
@@ -370,7 +408,7 @@ class Scale:
             "domain": [_instant(v, "Scale domain") for v in domain] if domain is not None else None,
             "nice": self.nice,
             "zero": self.zero,
-            "scope": self.scope,
+            "scope": scope_spec(self.scope, "Scale scope"),
             "tooltipFormat": format_spec(self.tooltip_format, "Scale tooltip_format"),
         }
         return {key: value for key, value in spec.items() if value is not None}
@@ -621,10 +659,13 @@ class AxisGuide:
     grid: bool | None = None
     layers: Sequence[TickLayer | Mapping[str, Any]] | None = None
     show: bool | None = None
+    repeat: Literal["outer", "all"] | None = None
     style: Style | Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         _choice(self.scale, ("x", "y", "y_right"), "axis scale")
+        if self.repeat is not None:
+            _choice(self.repeat, ("outer", "all"), "axis repeat")
         self.place = _built(self.place, Place, "axis place")
         if isinstance(self.place, Place):
             sides = {"x": ("bottom", "top"), "y": ("left", "right"), "y_right": ("right",)}
@@ -659,6 +700,7 @@ class AxisGuide:
             if self.layers is not None
             else None,
             "show": self.show,
+            "repeat": self.repeat,
             "style": style_spec(self.style, "axis style", AXIS_ROLES),
         }
         return {key: value for key, value in spec.items() if value is not None}
@@ -670,7 +712,9 @@ def axis(scale: Literal["x", "y", "y_right"], **options: Any) -> AxisGuide:
     automatic axis, its unset settings taken from ``x=``, ``y=``, or
     ``y_right=``; elsewhere (``place=hg.Place(side="top")``) it is drawn too.
     ``ticks``, ``format``, ``tick``, and ``labels`` are its own ticks';
-    ``layers`` adds layers of ticks; ``line`` draws its line::
+    ``layers`` adds layers of ticks; ``line`` draws its line; ``repeat``
+    says where panels sharing its scale draw it (``"outer"`` or ``"all"``, as
+    ``hg.AxisOptions``)::
 
         hg.axis("x", layers=[hg.TickLayer(id="day", ticks=hg.Ticks(every="day"),
                                           labels=hg.TickLabels(row=1))])
@@ -725,11 +769,18 @@ class LegendGuide:
     swatches: Literal["mark"] | None = None
     show: bool | None = None
     style: Style | Mapping[str, Any] | None = None
+    panel: str | None = None
 
     def _spec(self) -> dict[str, Any]:
         spec: dict[str, Any] = {"type": "legend", **legend_layout(self, "legend")}
         if self.id is not None:
             spec["id"] = self.id
+        if self.panel is not None:
+            if not isinstance(self.panel, str) or self.panel in ("", "*"):
+                raise ValueError(
+                    f"legend panel: expected a panel's id; received {shown(self.panel)}"
+                )
+            spec["panel"] = self.panel
         if self.scales is not None:
             spec["scales"] = [_spec(_built(ref, ScaleRef, "legend scales")) for ref in self.scales]
         if self.show is not None:
@@ -743,7 +794,9 @@ def legend(**options: Any) -> LegendGuide:
     of the automatic legend; laid out in ``columns`` or ``rows`` under a
     ``title``, with ``entries`` of your own, and ``swatches="mark"`` for
     swatches that look like the marks. Legends list one entry per value a
-    chart's series stand for, whichever marks and panels show it."""
+    chart's series stand for, whichever marks and panels show it. With
+    ``panel``, it lists what that panel draws (above the panel by default),
+    and its entries hide and show it there."""
     return LegendGuide(**options)
 
 

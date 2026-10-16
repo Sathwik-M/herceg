@@ -12,11 +12,12 @@ from typing import Any, Literal
 
 import numpy as np
 
-from .._chart import Chart, HelperOptions
+from .._chart import Chart
 from .._data import Column
 from . import _numerics as numerics
 from . import _regression as regression
 from ._common import (
+    ExpressOptions,
     Levels,
     Source,
     Statistics,
@@ -95,7 +96,7 @@ def regplot(
     truncate: bool = True,
     grid_size: int = 100,
     palette: Sequence[str] | None = None,
-    **options: Unpack[HelperOptions],
+    **options: Unpack[ExpressOptions],
 ) -> Chart:
     """Points of ``y`` against ``x`` with a regression line and its
     confidence band, per ``series`` (and facet panel).
@@ -692,7 +693,7 @@ def residplot(
     delta: float = 0.0,
     x_partial: str | None = None,
     y_partial: str | None = None,
-    **options: Unpack[HelperOptions],
+    **options: Unpack[ExpressOptions],
 ) -> Chart:
     """The residuals of ``y`` from a least-squares polynomial fit of
     ``order`` in ``x`` (or with ``robust=True`` a robust line), against

@@ -270,11 +270,11 @@ export class GeoMap implements LayoutMark {
         }
         return undefined;
       },
-      lassoed(polygon, table) {
+      lassoed(polygon, table, shows) {
         // Layers of one table select together.
         let rows: number[] | undefined;
         for (const result of results) {
-          const found = result.lassoed?.(polygon, table);
+          const found = result.lassoed?.(polygon, table, shows);
           if (found) rows = rows ? rows.concat(found) : found;
         }
         return rows;

@@ -16,7 +16,7 @@ import type { LayoutResult, PlaneView } from "../marks/layout-mark.ts";
 import type { Binding } from "../model/bindings.ts";
 import type { ItemPanel } from "../model/item-views.ts";
 import type { ChartConfig } from "../model/model.ts";
-import type { Scene } from "../scene/scene.ts";
+import type { Rect, Scene } from "../scene/scene.ts";
 import type { Theme } from "../theme.ts";
 import { Brush, type BrushPanel } from "./brush.ts";
 import { DRAG_THRESHOLD } from "./brushed.ts";
@@ -66,6 +66,8 @@ export class Controls implements ChartControls {
   /** With both a lasso and zoom, whether a plain drag lassos (the toolbars' toggle). */
   #lassoing = true;
   #theme: Theme | undefined;
+  /** The parts of panels' plots their insets leave visible, by panel, as last drawn. */
+  #visible = new Map<string, readonly Rect[]>();
   /**
    * A press that may become a drag: where it started, what it does, the
    * panel and plane drawn then (which a lasso is drawn on), and the view a pan moves.
@@ -192,6 +194,7 @@ export class Controls implements ChartControls {
 
   draw(scene: Scene): void {
     this.#theme = scene.theme;
+    this.#visible = new Map(scene.panels.flatMap((p) => (p.visible ? [[p.key, p.visible]] : [])));
     const planes = this.#planes();
     // A press on a panel that is gone ends.
     if (this.#press && !planes.some(({ key }) => key === this.#press!.panel)) this.#cancel();
@@ -245,15 +248,22 @@ export class Controls implements ChartControls {
 
   /** The panel of the family holding a pixel of the chart. */
   #planeAt(x: number, y: number): PlanePanel | undefined {
-    return this.#planes().find(({ plane }) => inRoom(plane, x, y));
+    const { model } = this.#host;
+    return this.#planes().find(
+      ({ key, plane }) => inRoom(plane, x, y) && !model.coveredAt(key, x, y),
+    );
   }
 
-  /** The room a plane is drawn in, and its scales, as the brush draws in it. */
-  #brushPanel(plane: Plane): BrushPanel {
+  /** The room panel `key`'s plane is drawn in, and its scales, as the brush draws in it. */
+  #brushPanel({ key, plane }: { key: string; plane: Plane }): BrushPanel {
     const [left, right] = plane.x.range;
     const top = Math.min(...plane.y.range);
     const bottom = Math.max(...plane.y.range);
-    return { plot: { x: left, y: top, width: right - left, height: bottom - top }, ...plane };
+    return {
+      plot: { x: left, y: top, width: right - left, height: bottom - top },
+      visible: this.#visible.get(key),
+      ...plane,
+    };
   }
 
   /** Draws the chart's lasso in the panels of the family it belongs to. */
@@ -264,7 +274,7 @@ export class Controls implements ChartControls {
     if (!this.#brush || !this.#theme) return;
     const panels = selection?.lasso ? this.#planes().filter(({ key }) => owners.includes(key)) : [];
     this.#brush.draw(
-      panels.map(({ plane }) => this.#brushPanel(plane)),
+      panels.map((panel) => this.#brushPanel(panel)),
       this.#theme,
       panels.length > 0 ? selection : null,
     );
@@ -457,15 +467,14 @@ export class Controls implements ChartControls {
       }
       const brush = this.#brush;
       if (!brush || !this.#theme) return;
-      if (!brush.dragging) brush.start(press.x, press.y, this.#brushPanel(press.plane));
+      const pressed = { key: press.panel, plane: press.plane };
+      if (!brush.dragging) brush.start(press.x, press.y, this.#brushPanel(pressed));
       brush.move(x, y);
       // Facet panels share the plane: the lasso shows in each.
       const state = this.#planeOf(press.panel)?.state;
       const panels = this.#planes().filter((panel) => state === "" && panel.state === "");
       brush.draw(
-        (panels.length > 0 ? panels.map(({ plane }) => plane) : [press.plane]).map((plane) =>
-          this.#brushPanel(plane),
-        ),
+        (panels.length > 0 ? panels : [pressed]).map((panel) => this.#brushPanel(panel)),
         this.#theme,
         null,
       );

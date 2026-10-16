@@ -1,5 +1,6 @@
 // Two CPU 3D subplots: turn one while the other reuses its geometry and raster.
 import { type Chart, createChart, panels, point3d, table } from "herceg";
+import { grid } from "herceg/layout";
 import type { PlotRect } from "../../../packages/herceg/src/scene/scene.ts";
 import { View } from "../../../packages/herceg/src/three/camera.ts";
 import { FaceBuffer } from "../../../packages/herceg/src/three/faces.ts";
@@ -28,7 +29,7 @@ async function mount(): Promise<void> {
   );
   chart = createChart(document.querySelector<HTMLElement>("#chart")!, {
     marks,
-    panels: panels([{ id: "a" }, { id: "b" }], { columns: 2 }),
+    panels: panels([{ id: "a" }, { id: "b" }], grid({ columns: 2 })),
     renderer: "canvas",
     width: 1000,
     height: 500,

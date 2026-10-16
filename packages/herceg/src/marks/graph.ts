@@ -1232,7 +1232,7 @@ export class GraphMark implements LayoutMark {
           if (network.linkOfRow[row] === link) out.push(row);
         return out;
       },
-      lassoed: (polygon, table) => {
+      lassoed: (polygon, table, shows) => {
         if (table !== this.nodes) return undefined;
         const held = new Uint8Array(count);
         for (const node of nodes) {
@@ -1243,7 +1243,8 @@ export class GraphMark implements LayoutMark {
             px <= bounds.x + bounds.width &&
             py >= bounds.y &&
             py <= bounds.y + bounds.height &&
-            insidePolygon(polygon, px, py)
+            insidePolygon(polygon, px, py) &&
+            shows(px, py)
           )
             held[node] = 1;
         }

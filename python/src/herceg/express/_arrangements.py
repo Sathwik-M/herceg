@@ -10,6 +10,7 @@ import numpy as np
 
 from .._chart import AxisOptions, Chart, HelperOptions, Panel
 from .._data import Column, Matrix
+from .._layout import Grid
 from . import _numerics as numerics
 from . import _regression as regression
 from ._common import (
@@ -142,7 +143,7 @@ def pairplot(
     axis_defaults(settings, "x_axis", scope="column")
     axis_defaults(settings, "y_axis", scope="panel")
     settings["panels"] = panels
-    settings["panel_columns"] = k
+    settings["layout"] = Grid(columns=k)
     drawn = {"hist": "histograms", "kde": "kernel densities", None: "nothing"}[diagonal]
     sentence = (
         f"Scatter plots pair {', '.join(names)}{by(series)}; the diagonal shows each variable's "
@@ -296,9 +297,7 @@ def jointplot(
             Panel("joint", x=AxisOptions(title=x), y=AxisOptions(title=y)),
             Panel("y", x=hidden, y=hidden),
         ],
-        panel_columns=2,
-        panel_row_heights=[1, ratio],
-        panel_column_widths=[ratio, 1],
+        layout=Grid(rows=[1, ratio], columns=[ratio, 1]),
     )
     axis_defaults(settings, "x_axis", scope="column")
     axis_defaults(settings, "y_axis", scope="row")
@@ -575,9 +574,7 @@ def clustermap(
             Panel("left", x=hidden, y=AxisOptions(show=False)),
             Panel("matrix"),
         ],
-        panel_columns=2,
-        panel_row_heights=ratio,
-        panel_column_widths=ratio,
+        layout=Grid(rows=ratio, columns=ratio),
     )
     axis_defaults(settings, "x_axis", scope="column")
     axis_defaults(settings, "y_axis", scope="row")

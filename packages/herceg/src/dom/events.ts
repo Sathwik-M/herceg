@@ -101,9 +101,13 @@ export interface ChartEvents {
   /**
    * Series or items were hidden or shown: through the legend,
    * `setVisibility` or `setHiddenKeys`, or as marks the chart no longer
-   * has took their keys along. The keys now hidden.
+   * has took their keys along. The keys now hidden, and by panel, the keys
+   * a panel's legend hid or showed there unlike in the rest of the chart.
    */
-  visibility: { hiddenKeys: readonly string[] };
+  visibility: {
+    hiddenKeys: readonly string[];
+    panels?: Readonly<Record<string, { hidden: readonly string[]; shown: readonly string[] }>>;
+  };
   /**
    * The chart drew a frame of its data, axes, and legend (a cursor or
    * tooltip moving alone draws none): panels, pixel mapping, and the legend

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid } from "../../src/layout.ts";
 import { HistogramMark, histogram } from "../../src/marks/histogram.ts";
 import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";
@@ -382,7 +383,7 @@ describe("histogram options", () => {
       const data = table({ v: [0, 1, 2] });
       const { model } = build({
         marks: [histogram(data, { y: "v", bins: [0, 1, 3], panel: "*" })],
-        panels: panels([{ id: "p" }, { id: "q" }], { columns: 2 }),
+        panels: panels([{ id: "p" }, { id: "q" }], grid({ columns: 2 })),
         y: { scope: resolution },
       });
       for (const panel of model.panels()) {

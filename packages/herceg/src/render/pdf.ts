@@ -29,6 +29,7 @@ import {
   type Geometry,
   type GuideItem,
   type MarkGeometry,
+  type Panel,
   type PointGeometry,
   type Rect,
   type Scene,
@@ -788,45 +789,78 @@ export function drawPdfPage(scene: Scene, page: PdfPage, locale?: string): PdfPa
     paint(page, background, { fill: surface({ ...theme, text: ink }) });
   }
 
-  for (const { plot, frame } of scene.panels) {
-    if (!frame?.fill) continue;
-    const back = new PathBuilder();
-    back.rect(plot.x, plot.y, plot.width, plot.height);
-    paint(page, back, { fill: frame.fill });
-  }
-  for (const stroke of gridStrokes(scene.panels, theme)) paintItem(page, stroke);
+  const [base, ...insets] = scene.layers ?? [scene.panels];
+  /** The plots' backgrounds and grid lines of `panels`. */
+  const under = (panels: readonly Panel[]) => {
+    for (const { plot, frame, visible } of panels) {
+      if (!frame?.fill) continue;
+      const back = new PathBuilder();
+      for (const { x, y, width, height } of visible ?? [plot]) back.rect(x, y, width, height);
+      paint(page, back, { fill: frame.fill });
+    }
+    for (const stroke of gridStrokes(panels, theme)) paintItem(page, stroke);
+  };
+  under(base!);
   // One figure owns the complete chart, including panels, labels, and legends.
   page.write("EMC\n/Figure << /MCID 0 >> BDC\n");
 
   if (lang) page.write(`/Span <<${lang} >> BDC\n`);
 
-  const cut = (box: Rect) =>
-    page.write(`q ${num(box.x)} ${num(box.y)} ${num(box.width)} ${num(box.height)} re W n\n`);
-  for (const { plot, marks } of scene.panels) {
-    cut(plot);
-    for (const mark of marks)
-      if (!mark.draw.guide && clipOf(mark) === "plot")
-        paintGeometry(page, mark, plot, theme, regular);
-    page.write("Q\n");
-  }
-  // Then what the plot does not cut: data, then guides, each cut as its mark says.
+  const cut = (boxes: readonly Rect[]) => {
+    page.write("q ");
+    for (const box of boxes)
+      page.write(`${num(box.x)} ${num(box.y)} ${num(box.width)} ${num(box.height)} re `);
+    page.write("W n\n");
+  };
   const chart = { x: 0, y: 0, width, height };
-  for (const { plot, marks } of scene.panels) {
-    for (const guides of [false, true])
-      for (const mark of marks) {
-        const clip = clipOf(mark);
-        if (!!mark.draw.guide !== guides || (clip === "plot" && !guides)) continue;
-        if (clip) cut(clip === "plot" ? plot : chart);
-        paintGeometry(page, mark, plot, theme, regular);
-        if (clip) page.write("Q\n");
+  // Layer by layer: the panels in cells, then each inset over its box. A
+  // panel with insets over it draws only where they leave its plot visible.
+  // Axes and borders go over every layer: an inset sits in its parent's plot, clear of its axes.
+  for (const panels of [base!, ...insets]) {
+    const cover = panels[0]?.cover;
+    if (cover) {
+      if (theme.background !== "transparent") {
+        const box = new PathBuilder();
+        box.rect(cover.x, cover.y, cover.width, cover.height);
+        paint(page, box, { fill: surface({ ...theme, text: ink }) });
       }
+      under(panels);
+    }
+    for (const { plot, marks, visible } of panels) {
+      cut(visible ?? [plot]);
+      for (const mark of marks)
+        if (!mark.draw.guide && clipOf(mark) === "plot")
+          paintGeometry(page, mark, plot, theme, regular);
+      page.write("Q\n");
+    }
+    // Then what the plot does not cut: data, then guides, each cut as its
+    // mark says, and off the insets over the panel (out of its plot, or in
+    // the parts of it they leave).
+    for (const { plot, marks, visible } of panels) {
+      if (visible) {
+        page.write("q ");
+        for (const box of [chart, plot, ...visible])
+          page.write(`${num(box.x)} ${num(box.y)} ${num(box.width)} ${num(box.height)} re `);
+        page.write("W* n\n");
+      }
+      for (const guides of [false, true])
+        for (const mark of marks) {
+          const clip = clipOf(mark);
+          if (!!mark.draw.guide !== guides || (clip === "plot" && !guides)) continue;
+          if (clip) cut(clip === "plot" ? (visible ?? [plot]) : [chart]);
+          paintGeometry(page, mark, plot, theme, regular);
+          if (clip) page.write("Q\n");
+        }
+      if (visible) page.write("Q\n");
+    }
   }
-  for (const panel of scene.panels) for (const axis of panel.axes) paintItems(page, axis.items);
-  for (const { plot, frame } of scene.panels) {
-    if (!frame?.stroke) continue;
-    const border = new PathBuilder();
-    border.rect(plot.x, plot.y, plot.width, plot.height);
-    paint(page, border, { stroke: frame.stroke, strokeWidth: frame.strokeWidth });
+  for (const { plot, frame, axes } of scene.panels) {
+    for (const axis of axes) paintItems(page, axis.items);
+    if (frame?.stroke) {
+      const border = new PathBuilder();
+      border.rect(plot.x, plot.y, plot.width, plot.height);
+      paint(page, border, { stroke: frame.stroke, strokeWidth: frame.strokeWidth });
+    }
   }
   for (const guide of scene.guides) paintItems(page, guide.items);
 

@@ -4,48 +4,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MountedChart } from "../../../packages/herceg/src/dom/chart.ts";
 import { MOUSE } from "../../../scripts/browser/mouse.ts";
-import herceg, { type Component, type Header } from "../streamlit.ts";
+import type { Header } from "../streamlit.ts";
 import { itemChart, key } from "./items.ts";
 import { focusMap, mapSpec } from "./maps.ts";
+import { payload, run } from "./streamlit-payload.ts";
 import { threeSpec } from "./three.ts";
-
-/**
- * A payload as Python builds it, placed `offset` bytes into a larger buffer
- * as protobuf hands it over.
- */
-function payload(
-  spec: Header["spec"],
-  buffers: ArrayBufferView[],
-  events: Header["events"],
-  offset = 3,
-  epoch?: string,
-  itemEpoch?: string,
-): Uint8Array {
-  const offsets: [number, number][] = [];
-  let end = 0;
-  for (const buffer of buffers) {
-    offsets.push([end, buffer.byteLength]);
-    end = Math.ceil((end + buffer.byteLength) / 8) * 8;
-  }
-  const header = new TextEncoder().encode(
-    JSON.stringify({
-      spec,
-      buffers: offsets,
-      events,
-      ...(epoch && { epoch }),
-      ...(itemEpoch && { itemEpoch }),
-    }),
-  );
-  const start = Math.ceil((4 + header.length) / 8) * 8;
-  const out = new Uint8Array(offset + start + end).subarray(offset);
-  new DataView(out.buffer, out.byteOffset).setUint32(0, header.length, true);
-  out.set(header, 4);
-  buffers.forEach((buffer, i) => {
-    const bytes = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-    out.set(bytes, start + offsets[i]![0]);
-  });
-  return out;
-}
 
 function lineChart(title: string, events: Header["events"], options: Partial<Header["spec"]> = {}) {
   return payload(
@@ -93,19 +56,6 @@ function bars(dictionary: string[], brush: "x" | "lasso" = "x", title?: string) 
     [Int32Array.from(dictionary, (_, i) => i), Float64Array.from(dictionary, (_, i) => i + 1)],
     ["select"],
   );
-}
-
-/** Streamlit's side of one script run: the payload and the value setters. */
-function run(parentElement: HTMLElement | ShadowRoot, data: Uint8Array) {
-  const state: [string, unknown][] = [];
-  const triggers: [string, unknown][] = [];
-  const component: Component = {
-    data,
-    parentElement,
-    setStateValue: (name, value) => state.push([name, value]),
-    setTriggerValue: (name, value) => triggers.push([name, value]),
-  };
-  return { cleanup: herceg(component), state, triggers };
 }
 
 let hosts: HTMLElement[] = [];
@@ -832,7 +782,7 @@ describe("Streamlit component with panels' own x scales", () => {
             { type: "line", data: "series", x: "t", y: "v", panel: "series" },
           ],
           panels: [{ id: "spread" }, { id: "series" }],
-          grid: { columns: 2 },
+          layout: { type: "grid", columns: [1, 1] },
           x: { scope: "panel" },
         },
         [
@@ -1005,7 +955,7 @@ it("reports and keeps each subplot tree's root and map's view across reruns", as
       interaction: { zoom: true },
       projection: "equirectangular",
       panels: [{ id: "tree" }, { id: "map" }],
-      grid: { columns: 2 },
+      layout: { type: "grid", columns: [1, 1] },
       data: {
         ...fixture.spec.data,
         places: {
@@ -1046,6 +996,161 @@ it("reports and keeps each subplot tree's root and map's view across reruns", as
   }
 });
 
+it("reports each subplot's own x view and the panel of the selection", async () => {
+  const listener = vi.spyOn(MountedChart.prototype, "on");
+  try {
+    const parent = host();
+    const line = (panel: string) => ({ type: "line", x: "x", y: "y", data: "data", panel });
+    const spec = {
+      width: 400,
+      height: 200,
+      renderer: "svg",
+      interaction: { zoom: "x", brush: "x" },
+      panels: [{ id: "latency" }, { id: "errors" }],
+      layout: { type: "grid", columns: [2, 1] },
+      data: {
+        data: {
+          columns: {
+            x: { type: "number", dtype: "float64", buffer: 0 },
+            y: { type: "number", dtype: "float64", buffer: 1 },
+          },
+        },
+      },
+      marks: [line("latency"), line("errors")],
+    } as Header["spec"];
+    const { state } = run(
+      parent,
+      payload(
+        spec,
+        [new Float64Array([0, 1, 2]), new Float64Array([1, 3, 2])],
+        ["viewport", "select"],
+      ),
+    );
+    const chart = listener.mock.instances[0] as MountedChart;
+    chart.setViewport({ x: [0, 1] }, { panel: "latency" });
+    chart.setViewport({ x: [1, 2] }, { panel: "errors" });
+    const view = state.findLast(([name]) => name === "viewport")![1] as {
+      x?: unknown;
+      panels: Record<string, { x: unknown }>;
+    };
+    // No view is the whole chart's: each panel has its own.
+    expect(view.x).toBeUndefined();
+    expect(view.panels.latency!.x).toEqual([0, 1]);
+    expect(view.panels.errors!.x).toEqual([1, 2]);
+    chart.select({ x: [1.2, 1.8], y: null, lasso: null }, { panel: "errors" });
+    await vi.dynamicImportSettled();
+    expect(state.findLast(([name]) => name === "selection")![1]).toMatchObject({
+      panels: ["errors"],
+      x: [1.2, 1.8],
+    });
+  } finally {
+    listener.mockRestore();
+  }
+});
+
+it("keeps subplots' views across reruns of a chart waiting for its guides", async () => {
+  const listener = vi.spyOn(MountedChart.prototype, "on");
+  try {
+    const parent = host();
+    const line = (panel: string) => ({ type: "line", x: "x", y: "y", data: "data", panel });
+    const spec = (title: string) =>
+      ({
+        title,
+        width: 400,
+        height: 200,
+        renderer: "svg",
+        interaction: { zoom: "x" },
+        panels: [{ id: "latency" }, { id: "errors" }],
+        layout: { type: "grid", columns: [2, 1] },
+        // A panel's legend needs the guide compiler, which loads first.
+        guides: [{ type: "legend", panel: "latency" }],
+        data: {
+          data: {
+            columns: {
+              x: { type: "number", dtype: "float64", buffer: 0 },
+              y: { type: "number", dtype: "float64", buffer: 1 },
+            },
+          },
+        },
+        marks: [line("latency"), line("errors")],
+      }) as Header["spec"];
+    const buffers = [new Float64Array([0, 1, 2]), new Float64Array([1, 3, 2])];
+    run(parent, payload(spec("Before"), buffers, ["viewport"]));
+    const chart = listener.mock.instances[0] as MountedChart;
+    // Its panels come with its first scene.
+    expect(chart.getPanels()).toEqual([]);
+    await chart.loading;
+    chart.render();
+    chart.setViewport({ x: [1, 2] }, { panel: "errors" });
+    run(parent, payload(spec("After"), buffers, ["viewport"]));
+    expect(parent.querySelector('[role="alert"]')).toBeNull();
+    const next = listener.mock.instances.at(-1) as MountedChart;
+    expect(next).not.toBe(chart);
+    await next.loading;
+    await frame();
+    expect(next.getViewport({ panel: "errors" }).x).toEqual([1, 2]);
+    expect(next.getViewport({ panel: "latency" }).x).toBeNull();
+  } finally {
+    listener.mockRestore();
+  }
+});
+
+it("keeps a selection on the panels sharing x when an inset comes before them", async () => {
+  const listener = vi.spyOn(MountedChart.prototype, "on");
+  try {
+    const parent = host();
+    const columns = {
+      c: { type: "category", codes: 0, dictionary: ["a", "b", "z"] },
+      v: { type: "number", dtype: "float64", buffer: 1 },
+    };
+    const plain = {
+      width: 400,
+      height: 200,
+      renderer: "svg",
+      interaction: { brush: "x" },
+      data: { data: { columns } },
+      marks: [{ type: "bar", x: "c", y: "v", data: "data" }],
+    } as Header["spec"];
+    const laidOut = {
+      ...plain,
+      width: 600,
+      height: 400,
+      x: { scope: "chart" },
+      panels: [{ id: "share" }, { id: "detail" }, { id: "bars" }],
+      layout: {
+        type: "grid",
+        columns: [1, 1],
+        cells: [
+          {
+            row: 0,
+            column: 0,
+            content: { type: "panel", panel: "share", insets: [{ panel: "detail" }] },
+          },
+          { row: 0, column: 1, content: { type: "panel", panel: "bars" } },
+        ],
+      },
+      marks: [
+        { type: "pie", category: "c", value: "v", data: "data", panel: "share" },
+        { type: "line", x: "v", y: "v", data: "data", panel: "detail" },
+        { type: "bar", x: "c", y: "v", data: "data", panel: "bars" },
+      ],
+    } as Header["spec"];
+    const buffers = [new Int32Array([0, 1, 2]), new Float64Array([1, 2, 3])];
+    run(parent, payload(plain, buffers, ["select"]));
+    const chart = listener.mock.instances[0] as MountedChart;
+    chart.render();
+    chart.select({ x: [0, 1], y: null, lasso: null });
+    run(parent, payload(laidOut, buffers, ["select"]));
+    const next = listener.mock.instances.at(-1) as MountedChart;
+    await next.loading;
+    await frame();
+    expect(next.selection?.x).toEqual([0, 1]);
+    expect(next.selectionPanels).toEqual(["bars"]);
+  } finally {
+    listener.mockRestore();
+  }
+});
+
 it("keeps two map subplots' views and a lasso in one, naming its panel, across reruns", async () => {
   const listener = vi.spyOn(MountedChart.prototype, "on");
   try {
@@ -1064,7 +1169,7 @@ it("keeps two map subplots' views and a lasso in one, naming its panel, across r
       projection: "equirectangular",
       interaction: { zoom: true, brush: "lasso" },
       panels: [{ id: "a" }, { id: "b" }],
-      grid: { columns: 2 },
+      layout: { type: "grid", columns: [1, 1] },
       data: {
         places: {
           columns: {
@@ -1116,7 +1221,7 @@ it("keeps the trees still drawn when a rerun draws another mark in a tree's subp
       ...fixture.spec,
       height: 300,
       panels: [{ id: "a" }, { id: "b" }],
-      grid: { columns: 2 },
+      layout: { type: "grid", columns: [1, 1] },
       marks: [
         { ...tree!, panel: "a" },
         { ...tree!, panel: "b" },

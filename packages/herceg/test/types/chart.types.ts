@@ -1,6 +1,7 @@
 // Compile-time tests: checked by `npm run typecheck`, never executed.
 import { table } from "../../src/data/table.ts";
 import { createChart } from "../../src/dom/chart.ts";
+import { inset } from "../../src/layout.ts";
 import { custom } from "../../src/marks/custom.ts";
 import { line } from "../../src/marks/line.ts";
 import type { PlotRect } from "../../src/scene/scene.ts";
@@ -60,3 +61,8 @@ custom({
     plot.width = 0;
   },
 });
+
+// Insets are placed by fractions or pixels of the plot or the chart, not data.
+inset("zoom", { place: { at: { x: { fraction: 0.5 }, y: { px: 10, frame: "chart" } } } });
+// @ts-expect-error data values place marks, not insets
+inset("zoom", { place: { at: { x: { data: 3 }, y: { px: 10 } } } });

@@ -12,12 +12,14 @@
       "herceg/fonts": ["../packages/herceg/src/fonts.ts"],
       "herceg/spec": ["../packages/herceg/src/from-spec.ts"],
       "herceg/grid": ["../packages/herceg/src/grid.ts"],
+      "herceg/layout": ["../packages/herceg/src/layout.ts"],
       "herceg/grid/pivot": ["../packages/herceg/src/grid-pivot.ts"],
       "herceg/grid/remote": ["../packages/herceg/src/grid-remote.ts"],
       "herceg/grid/memory": ["../packages/herceg/src/grid-memory.ts"],
       "herceg/pivot": ["../packages/herceg/src/pivot.ts"],
       "@herceg/react": ["../packages/react/src/index.ts"],
       "@herceg/react/grid": ["../packages/react/src/grid.tsx"],
+      "@herceg/react/layout": ["../packages/react/src/layout.tsx"],
       "@herceg/vue": ["../packages/vue/src/index.ts"],
       "@herceg/svelte": ["../packages/svelte/src/index.ts"]
     }

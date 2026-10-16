@@ -57,6 +57,8 @@ export interface PanelInfo {
   readonly label: string;
   /** The area inside the axes, in CSS pixels from the top left corner of `chart.root`. */
   readonly plot: PlotRect;
+  /** An inset's: the key of the panel it is drawn over. */
+  readonly parent?: string | undefined;
   /** Charts of a layout mark (a pie, a map, a 3D chart) have no axes. */
   readonly x?: AxisInfo | undefined;
   readonly y?: AxisInfo | undefined;
@@ -232,8 +234,11 @@ export interface Chart {
    * shows no legend: series, or a layout mark's items.
    */
   getLegend(): readonly LegendEntry[];
-  /** The keys of the series and items hidden, as the legend hides them. */
-  getHiddenKeys(): readonly string[];
+  /**
+   * The keys of the series and items hidden, as the legend hides them; with
+   * `panel`, those hidden in that subplot, as its own legend may hide them.
+   */
+  getHiddenKeys(options?: { panel?: string | undefined }): readonly string[];
   /**
    * Hides the series and items keyed `keys`, and shows the others. Keys of
    * series not drawn now stay hidden for when they are. A mark's keys go
@@ -241,8 +246,16 @@ export interface Chart {
    * without the mark drops them, and a mark that takes its index keeps them.
    */
   setHiddenKeys(keys: readonly string[]): void;
-  /** Shows or hides series or items by key, as their legend entries do. */
-  setVisibility(keys: string | readonly string[], visible: boolean): void;
+  /**
+   * Shows or hides series or items by key, as their legend entries do: in
+   * every panel, letting go of what panels' legends set of them; or with
+   * `panel`, in that subplot only, as its own legend does.
+   */
+  setVisibility(
+    keys: string | readonly string[],
+    visible: boolean,
+    options?: { panel?: string | undefined },
+  ): void;
   /**
    * Shows the cursor at a value, as a synced chart's cursor shows: a
    * crosshair and the points there in each panel, with no tooltip, and a

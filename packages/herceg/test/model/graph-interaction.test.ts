@@ -612,7 +612,10 @@ describe("network navigation and lassos", () => {
     ] as const;
     model.hidden.add(legendOf(scene)[0]!.key);
     model.scene(estimateText);
-    expect(model.items!.result()!.lassoed!(all, nodes as unknown as Table)).toEqual([2, 3]);
+    const everywhere = () => true;
+    expect(model.items!.result()!.lassoed!(all, nodes as unknown as Table, everywhere)).toEqual([
+      2, 3,
+    ]);
     expect(
       model.items!.result()!.lassoed!(
         [
@@ -621,6 +624,7 @@ describe("network navigation and lassos", () => {
           [1, 1],
         ],
         nodes as unknown as Table,
+        everywhere,
       ),
     ).toEqual([]);
   });

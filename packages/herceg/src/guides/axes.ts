@@ -82,6 +82,8 @@ export interface ListedAxis {
   plain: boolean;
   /** For a y axis on the right: whether the panels of each row share y, so the last one's axis is theirs. */
   rows: boolean;
+  /** Where panels sharing its scale draw it: on their outer edge, or "all" of them. */
+  repeat: "outer" | "all" | undefined;
 }
 
 /**
@@ -128,7 +130,11 @@ export function listedAxes(
       sides.add(side);
       first ??= guide;
       if (side === HOME[scale]) home = guide;
-      axes.push({ ...resolve(guide, scale, side, short, `chart guides[${i}]`), rows });
+      axes.push({
+        ...resolve(guide, scale, side, short, `chart guides[${i}]`),
+        rows,
+        repeat: guide.repeat ?? short?.repeat,
+      });
     });
     if (sides.size === 0) continue;
     // Grid lines follow the axis on the default side, or without one, the
@@ -165,6 +171,7 @@ export function listedAxes(
       ...(owner.ticks !== undefined && { ticks: owner.ticks }),
       ...(owner.format !== undefined && { format: owner.format }),
       ...(owner.grid !== undefined && { grid: owner.grid }),
+      ...(home?.repeat !== undefined && { repeat: home.repeat }),
       ...(style && { style }),
     };
   }
@@ -177,7 +184,7 @@ function resolve(
   side: Side,
   short: ChartAxisOptions | undefined,
   path: string,
-): Omit<ListedAxis, "rows"> {
+): Omit<ListedAxis, "rows" | "repeat"> {
   const home = side === HOME[scale];
   const across = scale === "x";
   const layers = resolveLayers(
@@ -350,14 +357,16 @@ export function compiledAxes(kit: GuideKit, listed: readonly ListedAxis[]): Comp
             ),
           );
       });
+      const over = state.labeled.x.map(() => false);
       for (const axis of elsewhere) {
         if (axis.side !== "top") continue;
         if (state.headers)
           throw new Error(
             `${axis.path}.place.side: an x axis above the plots needs panels without titles or headers; place it on the "bottom"`,
           );
-        for (let i = 0; i < state.labeled.x.length; i++)
-          if (drawsIn(axis, state, i))
+        for (let i = 0; i < over.length; i++)
+          if (drawsIn(axis, state, i)) {
+            over[i] = true;
             top = Math.max(
               top,
               depthOf(
@@ -368,9 +377,10 @@ export function compiledAxes(kit: GuideKit, listed: readonly ListedAxis[]): Comp
                 placedLayers(kit, axis, state, i, provisional(state, axis, i)),
               ),
             );
+          }
       }
       reserved = { top: Math.max(top, kept.top), bottom: Math.max(bottom, kept.bottom) };
-      return reserved;
+      return { ...reserved, over };
     },
     beside(state) {
       let left = 0;
@@ -386,17 +396,20 @@ export function compiledAxes(kit: GuideKit, listed: readonly ListedAxis[]): Comp
         if (scale === "y") left = outward(home.layers) + reach;
         else right = outward(home.layers) + reach;
       }
+      const after = state.drawsY.map(() => false);
       for (const axis of elsewhere) {
         if (axis.side !== "right") continue;
-        if (state.columns > 1 && !axis.rows)
+        if (!state.cells && state.columns > 1 && !axis.rows && axis.repeat !== "all")
           throw new Error(
-            `${axis.path}.place.side: a y axis on the right stands beside each row's last panel, so the panels of a row must share y; give y scope "row" or "chart", or keep the axis on the left`,
+            `${axis.path}.place.side: a y axis on the right stands beside each row's last panel, so the panels of a row must share y; give y scope "row" or "chart", repeat "all" for one beside every panel, or keep the axis on the left`,
           );
         state.drawsY.forEach((_, i) => {
-          if (drawsIn(axis, state, i)) right = Math.max(right, breadth(kit, axis, state, i));
+          if (!drawsIn(axis, state, i)) return;
+          after[i] = true;
+          right = Math.max(right, breadth(kit, axis, state, i));
         });
       }
-      return { left, right };
+      return { left, right, after };
     },
     ends(plan, state, i) {
       const { measure } = state;
@@ -484,13 +497,19 @@ export function compiledAxes(kit: GuideKit, listed: readonly ListedAxis[]): Comp
 /**
  * Whether panel `i` draws `axis`, an axis elsewhere: an x axis above each
  * panel of the first row, a y axis beside the last panel of each row that
- * draws along y, unless the panel's own settings hide the scale's axis.
+ * draws along y (in a layout of cells, the outer panels of those sharing
+ * the scale), or with `repeat` "all" every panel; unless the panel's own
+ * settings hide the scale's axis.
  */
 function drawsIn(axis: ListedAxis, state: AxesState, i: number): boolean {
   if (axis.off?.[i]) return false;
+  const { cells } = state;
+  const all = axis.repeat === "all";
   return axis.side === "top"
-    ? i < state.columns && i < state.labeled.x.length
-    : !!state.drawsY[i] && lastInRow(state, i);
+    ? cells
+      ? cells.top(i, axis)
+      : i < state.labeled.x.length && (all || i < state.columns)
+    : !!state.drawsY[i] && (cells ? cells.last(i, axis) : all || lastInRow(state, i));
 }
 
 /** Whether panel `i` is the last of its row, where y axes on the right go. */
@@ -512,7 +531,7 @@ export function outward(layers: readonly Layer[]): number {
 
 /** The x plan an axis' room is measured with before x is planned: over a column's share of the width. */
 function provisional(state: AxesState, axis: ListedAxis, i: number): AxisPlan | undefined {
-  return state.plan(axis.scale, i, state.width / state.columns);
+  return state.plan(axis.scale, i, state.cells?.width(i) ?? state.width / state.columns);
 }
 
 /** Panel `i`'s layers of `axis` over `plan`: each one's ticks and labels, as its collision policy keeps them. */
@@ -541,7 +560,8 @@ function placedLayers(
       `${at}.tick`,
     ),
   };
-  return layered(kit, axis, base, styles.read, state.measure, plan, state.height);
+  const within = state.cells?.within(i) ?? [0, state.height];
+  return layered(kit, axis, base, styles.read, state.measure, plan, within);
 }
 
 /**
@@ -555,8 +575,11 @@ export function layered(
   read: Read,
   measure: MeasureText,
   plan: AxisPlan | undefined,
-  /** The chart's height labels along y stay inside; undefined to leave them at their ticks. */
-  height: number | undefined,
+  /**
+   * The span down labels along y stay inside (the chart, or an inset's
+   * box); undefined to leave them at their ticks.
+   */
+  within: readonly [number, number] | undefined,
 ): Placed[] {
   const run: Run = axis.across ? (axis.above ? "above" : "below") : "along";
   const placed = axis.layers.map((layer): Placed => {
@@ -594,13 +617,24 @@ export function layered(
       const collision = labels.collision ?? "show";
       if (collision === "wrap") ticks = wrapped(ticks, label, measure);
       if (collision === "stagger") lanes = 2;
-      // Labels along y stay inside the chart, where the plot's ends leave
-      // no room for a layer's taller ones: they meet where they are drawn.
-      if (run === "along" && height !== undefined)
+      // Labels along y stay inside the chart (an inset's box), where the
+      // plot's ends leave no room for a layer's taller ones: they meet
+      // where they are drawn.
+      if (run === "along" && within !== undefined) {
+        const [lo, hi] = within;
         labelAt = ticks.map(({ position, label: text }) => {
-          const half = boxOf(text, label, measure).height / 2;
-          return Math.min(Math.max(position, half), height - half);
+          if (!text) return position;
+          const { height } = boxOf(text, label, measure);
+          if (height > hi - lo + 0.5)
+            throw new kit.ChartError({
+              code: "layout-failed",
+              phase: "layout",
+              path: layer.path,
+              message: `${layer.path}: a label ${Math.ceil(height)} px tall does not fit the ${Math.floor(hi - lo)} px down it stays inside; make the chart or inset taller, or its labels smaller or of fewer lines`,
+            });
+          return Math.min(Math.max(position, lo + height / 2), hi - height / 2);
         });
+      }
       if (collision === "hide" || collision === "stagger") {
         const drawnAt = labelAt;
         const shown = drawnAt ? ticks.map((t, k) => ({ ...t, position: drawnAt[k]! })) : ticks;

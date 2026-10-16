@@ -11,8 +11,9 @@ import { type Table, table } from "../../src/data/table.ts";
 import { fieldReader } from "../../src/dom/tooltip-content.ts";
 import { plan, sidesOf, snapshot } from "../../src/dom/value-transition.ts";
 import { guideCompiler } from "../../src/guides/compile.ts";
-import { colorbar } from "../../src/guides/options.ts";
+import { colorbar, legend } from "../../src/guides/options.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { inset, panel } from "../../src/layout.ts";
 import { Polyline } from "../../src/lod/polyline.ts";
 import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
@@ -701,6 +702,76 @@ describe("capabilities: subplots", () => {
   });
 });
 
+/** A line in panel "a", and the inset "b" over it. */
+const insetted = (indicator = false) =>
+  panels(
+    panel("a", [inset("b", { width: { fraction: 0.5 }, height: { fraction: 0.5 }, indicator })]),
+  );
+
+describe("capabilities: insets", () => {
+  it.each(cartesian)("$name draws in an inset, with an indicator on continuous axes", (c) => {
+    const marks = [line(samples, { x: "x", y: "y", panel: "a" }), c.make({ panel: "b" })];
+    const { scene, model } = build({ marks, panels: insetted() });
+    expect(scene.panels[1]!.cover).toBeDefined();
+    expectGeometry(scene.panels[1]!, c.kind);
+    // Categories have no range on the parent's numbers to box.
+    const [, own] = model.panels();
+    if (own!.x.type === "band" || own!.y.type === "band")
+      expect(() => build({ marks, panels: insetted(true) })).toThrow(
+        /indicator: .* band; drop indicator/,
+      );
+    else {
+      const [a] = build({ marks, panels: insetted(true) }).scene.panels;
+      expect(a!.marks.some((m) => m.kind === "shapes")).toBe(true);
+    }
+  });
+
+  it.each(layouts)("$name draws in an inset, which refuses an indicator", (c) => {
+    const marks = [line(samples, { x: "x", y: "y", panel: "a" }), c.make({ panel: "b" })];
+    const { scene } = build({ marks, panels: insetted() });
+    expect(scene.panels[1]!.cover).toBeDefined();
+    expectGeometry(scene.panels[1]!, c.kind);
+    expect(() => build({ marks, panels: insetted(true) })).toThrow(
+      "layout.insets[0].indicator: parent and inset must use compatible continuous x and y coordinates",
+    );
+  });
+});
+
+describe("capabilities: panel legends", () => {
+  const compiled = (config: ChartConfig) => {
+    const model = new ChartModel(
+      { locale: "en-US", timeZone: "UTC", ...config },
+      undefined,
+      ...staticCompilers(),
+    );
+    model.setSize(600, 400, 1);
+    return model.scene(estimateText);
+  };
+  const legendIn = (config: ChartConfig, panel: string) =>
+    guidesOf(compiled(config), "legend").find((g) => g.panel === panel)?.entries ?? [];
+
+  it.each(cartesian.filter((c) => !c.noLegend))(
+    "$name lists its series in its panel's legend",
+    (c) => {
+      const config: ChartConfig = {
+        marks: [c.make({ panel: "a" })],
+        panels: subplot,
+        x: { scope: "panel" },
+        guides: [legend({ panel: "a" }), legend({ panel: "b" })],
+      };
+      expect(legendIn(config, "a").length).toBeGreaterThan(0);
+      expect(legendIn(config, "b")).toEqual([]);
+    },
+  );
+
+  // Gauges, funnels, Sankey diagrams, and surfaces have no legend entries.
+  const listed = layouts.filter((c) => !["gauge", "funnel", "sankey", "surface"].includes(c.name));
+  it.each(listed)("$name lists its items in its panel's legend", (c) => {
+    const config: ChartConfig = { ...besideLine(c), guides: [legend({ panel: "b" })] };
+    expect(legendIn(config, "b").length).toBeGreaterThan(0);
+  });
+});
+
 describe("capabilities: per-panel scales", () => {
   it.each(cartesian)("$name accepts independent facet scales", (c) => {
     const { model, scene } = build(
@@ -1144,6 +1215,7 @@ describe("capabilities: synced selection", () => {
       const stacked = build({
         marks: [c.make({ panel: "*" })],
         panels: subplot,
+        x: { scope: "chart" },
         y: { scope: "chart" },
         interaction,
       });

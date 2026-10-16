@@ -96,7 +96,7 @@ export function renderToSnapshot(options: ChartConfig, env: SnapshotOptions): Ch
     pngDataUrl(raster.columns, raster.rows, raster.pixels);
   const layer = new SvgLayer(document as unknown as Document, idPrefix);
   layer.render(scene, { marks: true, encodeRaster });
-  const legend = new Legend(document as unknown as Document, () => {});
+  const legend = new Legend(document as unknown as Document, () => false);
   const legends = guidesOf(scene, "legend");
   legend.update(legends, scene.theme);
   const root = document.createElement("div");
@@ -154,16 +154,23 @@ function stateOf(
   return {
     panels: scene.panels.map((panel) => {
       const { data, above } = panelDrawing(panel, true);
-      return [panel.key, geometry(data), geometry(above)];
+      const drawn: SnapshotState["panels"][number] = [panel.key, geometry(data), geometry(above)];
+      // An inset's box, plot, and grid go over the panels before it.
+      if (panel.cover) drawn.push(hash(underMarkup(scene, [panel])));
+      return drawn;
     }),
-    under: hash(underMarkup(scene)),
+    under: hash(underMarkup(scene, (scene.layers ?? [scene.panels])[0])),
     guides: hash(guidesMarkup(scene, idPrefix, false)),
     chartClip: cutToChart(scene),
     legend: legends.flatMap((legend) =>
-      legend.entries.map((item): [string, string | readonly string[]] => [
-        entryId(legends, legend, item),
-        item.targets ?? item.key,
-      ]),
+      legend.entries.map((item): SnapshotState["legend"][number] => {
+        const entry: SnapshotState["legend"][number] = [
+          entryId(legends, legend, item),
+          item.targets ?? item.key,
+        ];
+        if (legend.panel !== undefined) entry.push(legend.panel);
+        return entry;
+      }),
     ),
   };
 }

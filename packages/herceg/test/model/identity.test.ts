@@ -7,6 +7,7 @@ import { derive } from "../../src/data/derive.ts";
 import { col } from "../../src/data/expr.ts";
 import { type Table, table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid } from "../../src/layout.ts";
 import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { errorBar } from "../../src/marks/errorbar.ts";
@@ -122,7 +123,7 @@ describe("identity", () => {
       .aggregate({ by: ["site"], ops: { total: { op: "sum", field: "v" } } })
       .table();
     const model = build({
-      panels: panels([{ id: "a" }, { id: "b" }, { id: "c" }], { columns: 3 }),
+      panels: panels([{ id: "a" }, { id: "b" }, { id: "c" }], grid({ columns: 3 })),
       x: { scope: "panel" },
       marks: [
         line(rows, { x: "t", y: "v", series: "site", panel: "a" }),
@@ -255,7 +256,7 @@ describe("identity", () => {
   it("gives a pie's slices their category's color and entry, beside series of the field", () => {
     const sales = table({ t: [0, 0, 1, 1], region: ["N", "S", "N", "S"], v: [1, 2, 3, 4] });
     const model = build({
-      panels: panels([{ id: "lines" }, { id: "share" }], { columns: 2 }),
+      panels: panels([{ id: "lines" }, { id: "share" }], grid({ columns: 2 })),
       marks: [
         line(sales, { x: "t", y: "v", color: "region", panel: "lines" }),
         pie(sales, { category: "region", value: "v", panel: "share" }),

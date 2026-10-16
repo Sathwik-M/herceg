@@ -46,6 +46,19 @@ export function uncutMarkup(
   return data + guides;
 }
 
+/**
+ * For a panel with insets over it, the path (filled evenly and oddly) of
+ * what it draws beyond its plot's cut keeps to: out of its plot, or in the
+ * parts of it the insets leave; "" for other panels.
+ */
+export function keepPath(scene: Scene, { plot, visible }: Panel): string {
+  if (!visible) return "";
+  let d = `M0 0H${scene.width}V${scene.height}H0Z`;
+  for (const { x, y, width, height } of [plot, ...visible])
+    d += `M${x} ${y}h${width}v${height}h${-width}Z`;
+  return d;
+}
+
 /** Whether any geometry of the scene is cut to the chart, which needs a clip path of its own. */
 export function cutToChart(scene: Scene): boolean {
   return scene.panels.some((panel) => panel.marks.some((mark) => mark.clip === "chart"));
@@ -118,33 +131,30 @@ export function itemsMarkup(
   return out;
 }
 
-/** Markup of what is drawn under the data: the chart's and plots' backgrounds, and the grid lines. */
-export function underMarkup(scene: Scene): string {
+/**
+ * Markup of what is drawn under the data of `panels` (by default the
+ * scene's): the chart's background (an inset's, over its box), the plots'
+ * backgrounds, and the grid lines.
+ */
+export function underMarkup(scene: Scene, panels: readonly Panel[] = scene.panels): string {
   const { theme, width, height } = scene;
-  let out =
-    theme.background !== "transparent"
-      ? `<rect width="${width}" height="${height}" fill="${escapeXml(theme.background)}"/>`
-      : "";
-  for (const { plot, frame } of scene.panels)
-    if (frame?.fill) out += rectMarkup(plot, 0, ` fill="${escapeXml(frame.fill)}"`);
-  for (const stroke of gridStrokes(scene.panels, theme))
+  const cover = panels[0]?.cover;
+  const background = theme.background !== "transparent" && ` fill="${escapeXml(theme.background)}"`;
+  let out = !background
+    ? ""
+    : cover
+      ? rectMarkup(cover, 0, background)
+      : `<rect width="${width}" height="${height}"${background}/>`;
+  for (const { plot, frame, visible } of panels)
+    if (frame?.fill)
+      for (const rect of visible ?? [plot])
+        out += rectMarkup(rect, 0, ` fill="${escapeXml(frame.fill)}"`);
+  for (const stroke of gridStrokes(panels, theme))
     out += `<path d="${segmentPath(stroke.coords)}"${strokeAttributes(stroke.paint)} fill="none"/>`;
   return out;
 }
 
 /** Markup of plots' borders, drawn over the data. */
-export function plotBorders(panels: readonly Panel[]): string {
-  let out = "";
-  for (const { plot, frame } of panels)
-    if (frame?.stroke)
-      out += rectMarkup(
-        plot,
-        0,
-        ` fill="none" stroke="${escapeXml(frame.stroke)}"${frame.strokeWidth !== 1 ? ` stroke-width="${frame.strokeWidth}"` : ""}`,
-      );
-  return out;
-}
-
 /**
  * Markup of a scene's axes, plot borders, and guides; without `legend`,
  * not the series legend, which the browser draws as buttons.
@@ -154,10 +164,16 @@ export function guidesMarkup(scene: Scene, id: string, legend: boolean): string 
   let ramps = 0;
   const next = () => `${id}-ramp-${ramps++}`;
   let out = '<g style="font-variant-numeric:tabular-nums">';
-  for (const panel of scene.panels)
-    for (const axis of panel.axes) out += itemsMarkup(axis.items, root, next);
+  for (const { axes, plot, frame } of scene.panels) {
+    for (const axis of axes) out += itemsMarkup(axis.items, root, next);
+    if (frame?.stroke)
+      out += rectMarkup(
+        plot,
+        0,
+        ` fill="none" stroke="${escapeXml(frame.stroke)}"${frame.strokeWidth !== 1 ? ` stroke-width="${frame.strokeWidth}"` : ""}`,
+      );
+  }
   out += "</g>";
-  out += plotBorders(scene.panels);
   for (const guide of scene.guides)
     if (legend || guide.kind !== "legend") out += itemsMarkup(guide.items, root, next, guide);
   return out;
@@ -259,22 +275,38 @@ export function renderSvg(scene: Scene, options: SvgOptions = {}): string {
   if (fixed)
     out += `<style>[id="${escapeXml(cssString(id))}"] *{vector-effect:non-scaling-stroke}</style>`;
   out += "<defs>";
-  scene.panels.forEach(({ plot }, i) => {
-    out += `<clipPath id="${id}-clip-${i}">${rectMarkup(plot, 0, "")}</clipPath>`;
+  // A panel with insets over it draws only where they leave its plot visible.
+  scene.panels.forEach((panel, i) => {
+    let rects = "";
+    for (const rect of panel.visible ?? [panel.plot]) rects += rectMarkup(rect, 0, "");
+    out += `<clipPath id="${id}-clip-${i}">${rects}</clipPath>`;
+    // What it draws beyond that keeps off the insets too.
+    const keep = keepPath(scene, panel);
+    if (keep)
+      out += `<clipPath id="${id}-keep-${i}"><path clip-rule="evenodd" d="${keep}"/></clipPath>`;
   });
   if (cutToChart(scene))
     out += `<clipPath id="${id}-clip-chart"><rect width="${width}" height="${height}"/></clipPath>`;
-  out += `</defs>${underMarkup(scene)}`;
+  out += "</defs>";
   const context: SvgContext = { theme, encodeRaster: options.encodeRaster };
-  scene.panels.forEach(({ marks }, i) => {
-    out += `<g clip-path="url(#${id}-clip-${i})">`;
-    for (const mark of marks)
-      if (!mark.draw.guide && clipOf(mark) === "plot") out += mark.draw.svg(mark, context);
-    out += "</g>";
-  });
-  scene.panels.forEach(({ marks }, i) => {
-    out += uncutMarkup(marks, context, `${id}-clip-${i}`, `${id}-clip-chart`);
-  });
+  // Layer by layer: the panels in cells, then each inset over its box (and
+  // the axes over every layer: an inset sits in its parent's plot).
+  for (const panels of scene.layers ?? [scene.panels]) {
+    const clip = (panel: Panel) => `${id}-clip-${scene.panels.indexOf(panel)}`;
+    out += underMarkup(scene, panels);
+    for (const panel of panels) {
+      out += `<g clip-path="url(#${clip(panel)})">`;
+      for (const mark of panel.marks)
+        if (!mark.draw.guide && clipOf(mark) === "plot") out += mark.draw.svg(mark, context);
+      out += "</g>";
+    }
+    for (const panel of panels) {
+      const markup = uncutMarkup(panel.marks, context, clip(panel), `${id}-clip-chart`);
+      out += panel.visible
+        ? `<g clip-path="url(#${id}-keep-${scene.panels.indexOf(panel)})">${markup}</g>`
+        : markup;
+    }
+  }
   out += guidesMarkup(scene, id, options.legend ?? true);
   return `${out}</svg>`;
 }

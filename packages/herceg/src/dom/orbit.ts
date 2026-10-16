@@ -93,10 +93,15 @@ export class Controls implements ChartControls {
     const rect = this.#root.getBoundingClientRect();
     const x = ((event.clientX - rect.left) * this.#host.model.width) / rect.width;
     const y = ((event.clientY - rect.top) * this.#host.model.height) / rect.height;
+    const { model } = this.#host;
     return this.#panels().find(
-      ({ plot }) =>
-        this.#host.model.items?.alone ||
-        (x >= plot.x && x <= plot.x + plot.width && y >= plot.y && y <= plot.y + plot.height),
+      ({ key, plot }) =>
+        model.items?.alone ||
+        (x >= plot.x &&
+          x <= plot.x + plot.width &&
+          y >= plot.y &&
+          y <= plot.y + plot.height &&
+          !model.coveredAt(key, x, y)),
     )?.key;
   }
 

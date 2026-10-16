@@ -23,12 +23,13 @@ same arguments and seed.
 
 from ._arrangements import clustermap, jointplot, pairplot
 from ._categorical import boxenplot, boxplot, stripplot, swarmplot, violinplot
-from ._common import Statistics, recompute, statistics
+from ._common import ExpressOptions, Statistics, recompute, statistics
 from ._distributions import KdeOptions, ecdfplot, histplot, kdeplot, rugplot
 from ._estimates import barplot, lineplot, pointplot
 from ._fits import regplot, residplot
 
 __all__ = [
+    "ExpressOptions",
     "KdeOptions",
     "Statistics",
     "barplot",

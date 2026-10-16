@@ -11,11 +11,12 @@ from typing import Any, Literal
 
 import numpy as np
 
-from .._chart import Chart, HelperOptions, Jitter
+from .._chart import Chart, Jitter
 from .._data import Column
 from . import _numerics as numerics
 from . import _swarm
 from ._common import (
+    ExpressOptions,
     Source,
     Statistics,
     by,
@@ -66,7 +67,7 @@ def stripplot(
     seed: int | None = 0,
     radius: float | None = None,
     palette: Sequence[str] | None = None,
-    **options: Unpack[HelperOptions],
+    **options: Unpack[ExpressOptions],
 ) -> Chart:
     """A point per value in each category, spread across the category by
     ``jitter``, as ``Chart.point`` spreads them: the fraction (0 to 1) of
@@ -123,7 +124,7 @@ def swarmplot(
     radius: float = 2.5,
     warn_thresh: float = 0.05,
     palette: Sequence[str] | None = None,
-    **options: Unpack[HelperOptions],
+    **options: Unpack[ExpressOptions],
 ) -> Chart:
     """A point per value in each category, packed across the category
     without overlap in order of value, as ``Chart.point(swarm=True)`` packs
@@ -331,7 +332,7 @@ def boxplot(
     notch: bool = False,
     outliers: bool = True,
     palette: Sequence[str] | None = None,
-    **options: Unpack[HelperOptions],
+    **options: Unpack[ExpressOptions],
 ) -> Chart:
     """Box plots of a number column per category (and ``series``, side by
     side): boxes from the lower to the upper quartile (NumPy's linear
@@ -389,7 +390,7 @@ def boxenplot(
     width_method: Literal["exponential", "linear", "area"] = "exponential",
     outliers: bool = True,
     palette: Sequence[str] | None = None,
-    **options: Unpack[HelperOptions],
+    **options: Unpack[ExpressOptions],
 ) -> Chart:
     """Letter-value ("boxen") plots of a number column per category (and
     ``series``, side by side), as herceg's boxen mark draws them: nested
@@ -536,7 +537,7 @@ def violinplot(
     split: bool = False,
     inner: Literal["box", "quartiles", "none"] = "box",
     palette: Sequence[str] | None = None,
-    **options: Unpack[HelperOptions],
+    **options: Unpack[ExpressOptions],
 ) -> Chart:
     """Violins of a number column per category (and ``series``, side by
     side): each the Gaussian kernel density of its values, mirrored, as

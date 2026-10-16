@@ -10,6 +10,7 @@ import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
 import type { ChartEvents } from "../../src/dom/events.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { inset, panel } from "../../src/layout.ts";
 import { geopoint } from "../../src/marks/geopoint.ts";
 import { geoshape } from "../../src/marks/geoshape.ts";
 import { graph } from "../../src/marks/graph.ts";
@@ -17,6 +18,7 @@ import { line } from "../../src/marks/line.ts";
 import { sunburst } from "../../src/marks/sunburst.ts";
 import { treemap } from "../../src/marks/treemap.ts";
 import { ChartModel, type ItemInspection } from "../../src/model/model.ts";
+import { panels } from "../../src/model/panels.ts";
 import { rowSelection } from "../../src/model/row-selection.ts";
 import { accessibilityTree, MOUSE, modelOf, pageOrigin, realMouse } from "./helpers.ts";
 
@@ -523,6 +525,44 @@ describe("maps", () => {
     await frame();
     expect(picked()).toBeNull();
     expect(chart.selection).toBeNull();
+  });
+
+  it("cut a lasso to what an inset over the map leaves of it", async () => {
+    const chart = await mount({
+      marks: [
+        geoshape(fromGeoJSON(countries()), { labelField: "name", panel: "map" }),
+        geoshape(fromGeoJSON(countries()), { labelField: "name", panel: "small", id: "inset" }),
+      ],
+      projection: "equirectangular",
+      interaction: { brush: "lasso" },
+      panels: panels(
+        panel("map", [
+          inset("small", {
+            place: { inside: "top-left" },
+            width: { fraction: 0.4 },
+            height: { fraction: 0.4 },
+          }),
+        ]),
+      ),
+    });
+    const { x, y } = modelOf(chart).items!.result("map")!.plane!;
+    const [left, right] = [Math.min(...x.range), Math.max(...x.range)];
+    const [top, bottom] = [Math.min(...y.range), Math.max(...y.range)];
+    // Around the map's lower right, away from the inset at its top left.
+    const at = (fx: number, fy: number) =>
+      [left + fx * (right - left), top + fy * (bottom - top)] as const;
+    await mouse(chart, "mouseMoved", ...at(0.6, 0.6));
+    await mouse(chart, "mousePressed", ...at(0.6, 0.6));
+    for (const point of [at(0.9, 0.6), at(0.9, 0.9), at(0.6, 0.9), at(0.6, 0.61)])
+      await mouse(chart, "mouseMoved", ...point);
+    await frame();
+    // Drawn while dragging and once selected, its clip leaves the inset's box out.
+    const cut = () => chart.root.querySelector('clipPath[id*="-lasso-"]')?.childElementCount;
+    expect(cut()).toBeGreaterThan(1);
+    await mouse(chart, "mouseReleased", ...at(0.6, 0.61));
+    await frame();
+    expect(chart.selection?.lasso).toBeTruthy();
+    expect(cut()).toBeGreaterThan(1);
   });
 });
 

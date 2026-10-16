@@ -20,10 +20,17 @@ export function gridStrokes(panels: readonly Panel[], theme: Theme, ratio = 1): 
   // Lines fall on pixel centers, so 1-pixel lines are crisp.
   const snap = (at: number) => (Math.round(at * ratio) + 0.5) / ratio;
   for (const { plot, grid } of panels) {
+    // Where insets over a plot leave its lines (`ySpans`, `xSpans`), else across it.
     const ys: number[] = [];
-    for (const y of grid.y) ys.push(plot.x, snap(y), plot.x + plot.width, snap(y));
+    grid.y.forEach((y, i) => {
+      for (const [from, to] of grid.ySpans?.[i] ?? [[plot.x, plot.x + plot.width]])
+        ys.push(from, snap(y), to, snap(y));
+    });
     const xs: number[] = [];
-    for (const x of grid.x) xs.push(snap(x), plot.y, snap(x), plot.y + plot.height);
+    grid.x.forEach((x, i) => {
+      for (const [from, to] of grid.xSpans?.[i] ?? [[plot.y, plot.y + plot.height]])
+        xs.push(snap(x), from, snap(x), to);
+    });
     add(ys, grid.yPaint ?? theme.style.grid);
     add(xs, grid.xPaint ?? theme.style.grid);
   }

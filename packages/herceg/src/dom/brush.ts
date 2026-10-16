@@ -13,6 +13,8 @@ import { DRAG_THRESHOLD, normalize, type Selection } from "./brushed.ts";
 /** A plotting area the brush draws in: its plot and scales. */
 export interface BrushPanel {
   plot: Rect;
+  /** With insets over the panel, the parts of its plot they leave visible. */
+  visible?: readonly Rect[] | undefined;
   x: PositionScale;
   y: PositionScale;
 }
@@ -28,7 +30,7 @@ export class Brush {
   mode: BrushSpec = "x";
   /** A drag in progress: its pixel points in the panel it started in. */
   #drag: { points: [number, number][]; panel: BrushPanel } | null = null;
-  #outlines: { path: SVGPathElement; clip: SVGRectElement }[] = [];
+  #outlines: { path: SVGPathElement; clip: SVGClipPathElement }[] = [];
   #shown = false;
   /** Prefix of the clip paths' ids, unique in the page. */
   readonly #id: string;
@@ -89,13 +91,11 @@ export class Brush {
     const document = this.element.ownerDocument;
     while (this.#outlines.length < panels.length) {
       const id = `${this.#id}-${this.#outlines.length}`;
-      const clipPath = document.createElementNS(SVG, "clipPath");
-      clipPath.setAttribute("id", id);
-      const clip = document.createElementNS(SVG, "rect");
-      clipPath.append(clip);
+      const clip = document.createElementNS(SVG, "clipPath");
+      clip.setAttribute("id", id);
       const path = document.createElementNS(SVG, "path");
       path.setAttribute("clip-path", `url(#${id})`);
-      this.element.append(clipPath, path);
+      this.element.append(clip, path);
       this.#outlines.push({ path, clip });
     }
     this.#outlines.forEach(({ path, clip }, i) => {
@@ -105,11 +105,18 @@ export class Brush {
         path.setAttribute("visibility", "hidden");
         return;
       }
-      const { plot } = panel;
-      clip.setAttribute("x", String(plot.x));
-      clip.setAttribute("y", String(plot.y));
-      clip.setAttribute("width", String(plot.width));
-      clip.setAttribute("height", String(plot.height));
+      // Cut to the plot, or the parts of it insets over it leave visible.
+      const rects = [...(panel.visible ?? [panel.plot])];
+      while (clip.childElementCount > rects.length) clip.lastElementChild!.remove();
+      while (clip.childElementCount < rects.length)
+        clip.append(document.createElementNS(SVG, "rect"));
+      rects.forEach((rect, k) => {
+        const node = clip.children[k]!;
+        node.setAttribute("x", String(rect.x));
+        node.setAttribute("y", String(rect.y));
+        node.setAttribute("width", String(rect.width));
+        node.setAttribute("height", String(rect.height));
+      });
       path.setAttribute("d", d);
       path.setAttribute("fill", theme.muted);
       path.setAttribute("fill-opacity", "0.18");

@@ -23,9 +23,14 @@ const publicAPIs = {
   "herceg/grid/memory": ["memorySource"],
   "herceg/grid/conformance": ["checkGridSource", "GRID_SOURCE_FIXTURES"],
   "herceg/pivot": ["pivotRows"],
+  "herceg/layout": ["columns", "rows", "grid", "cell", "panel", "inset", "mosaic", "panels"],
   "@herceg/react": ["Chart", "Line"],
   "@herceg/react/grid": ["Grid"],
+  "@herceg/react/layout": ["Columns", "Rows", "Grid", "Cell", "Panel", "Inset"],
+  "@herceg/react/guides": ["Legend"],
   "@herceg/vue": ["Chart", "Line"],
+  "@herceg/vue/layout": ["Columns", "Rows", "Grid", "Cell", "Panel", "Inset"],
+  "@herceg/vue/guides": ["Legend"],
   "@herceg/svelte": ["Chart", "Line"],
 };
 const readJSON = (path) => JSON.parse(readFileSync(path, "utf8"));

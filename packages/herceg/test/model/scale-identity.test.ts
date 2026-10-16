@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid } from "../../src/layout.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
@@ -24,11 +25,11 @@ function build(config: ChartConfig, width = 600, height = 400) {
 
 const zones = table({ z: ["North", "South", "East"], v: [12, 7, 9] });
 const hourly = table({ h: [0, 1, 2, 3], v: [3, 5, 4, 6] });
-const two = panels([{ id: "a" }, { id: "b" }], { columns: 2 });
+const two = panels([{ id: "a" }, { id: "b" }], grid({ columns: 2 }));
 
 describe("scale scopes", () => {
-  it("default to the whole chart for x, y as the layout says, and yRight as y", () => {
-    expect(scopesOf({}, "panel")).toEqual({ x: "chart", y: "panel", yRight: "panel" });
+  it("default x and y as the layout says, and yRight as y", () => {
+    expect(scopesOf({}, "panel")).toEqual({ x: "panel", y: "panel", yRight: "panel" });
     expect(scopesOf({}, "chart")).toEqual({ x: "chart", y: "chart", yRight: "chart" });
     expect(scopesOf({ y: { scope: "row" } }, "chart")).toEqual({
       x: "chart",
@@ -136,6 +137,7 @@ describe("subplots mixing category and number axes", () => {
           line(hourly, { x: "h", y: "v", panel: "b" }),
         ],
         panels: two,
+        x: { scope: "chart" },
       }),
     ).toThrow(
       'line x: numbers in panel "b" cannot share scale "x" with the categories of the bar in panel "a"; give x scope "panel"',

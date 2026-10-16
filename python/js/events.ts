@@ -198,15 +198,18 @@ interface Scales {
 }
 
 /**
- * The axes Python reads, as the chart last drew them: x, which every panel
- * with axes of a live chart shares, and the y axes of `panel` (by default
- * the first with axes). A map's or network's subplot has none: its plane's
- * values are plain numbers.
+ * The axes Python reads, as the chart last drew them: of `panel`, or by
+ * default of the first panel drawing with the x scale panels share (else
+ * the first with axes). A map's or network's subplot has none: its
+ * plane's values are plain numbers.
  */
 function scalesOf(chart: Chart, panel?: string): Scales {
   const axes = chart.getPanels().filter(({ x }) => x);
-  const found = panel === undefined ? axes[0] : axes.find(({ key }) => key === panel);
-  return { x: found && axes[0]!.x, y: found?.y, yRight: found?.yRight };
+  const found =
+    panel === undefined
+      ? (axes.find(({ x }) => x!.group === "") ?? axes[0])
+      : axes.find(({ key }) => key === panel);
+  return { x: found?.x, y: found?.y, yRight: found?.yRight };
 }
 
 const timeAxes = (scales: Scales, axes: readonly Axis[]): Axis[] =>
@@ -214,15 +217,26 @@ const timeAxes = (scales: Scales, axes: readonly Axis[]): Axis[] =>
 
 /** An edge event as Python reads it, with whether its scale holds times. */
 export function edgePayload(chart: Chart, edge: ChartEvents["edge"]) {
-  // The scale of the panels the edge names, or of the first with axes.
+  // The scale of the panels the edge names, or of those sharing x.
   const panels = chart.getPanels();
-  const panel = panels.find(({ key }) => edge.panels?.includes(key)) ?? panels.find(({ x }) => x);
+  const panel =
+    panels.find(({ key }) => edge.panels?.includes(key)) ??
+    panels.find(({ x }) => x?.group === "") ??
+    panels.find(({ x }) => x);
   return { ...edge, time: panel?.[edge.scale]?.type === "time" };
 }
 
-/** A viewport as Python reads it; a plane's (a map's or network's subplot's) has no times. */
-export function viewportPayload(chart: Chart, view: Viewport, plane = false): ViewportPayload {
-  const scales = plane ? { x: undefined, y: undefined } : scalesOf(chart);
+/**
+ * A viewport as Python reads it, of `panel`'s axes (or the first panel's);
+ * a plane's (a map's or network's subplot's) has no times.
+ */
+export function viewportPayload(
+  chart: Chart,
+  view: Viewport,
+  plane = false,
+  panel?: string,
+): ViewportPayload {
+  const scales = plane ? { x: undefined, y: undefined } : scalesOf(chart, panel);
   return {
     x: ends(view.x, scales.x),
     y: ends(view.y, scales.y),
@@ -231,9 +245,16 @@ export function viewportPayload(chart: Chart, view: Viewport, plane = false): Vi
   };
 }
 
-/** A viewport from Python as the chart takes it: category labels become band indices. */
-export function chartViewport(chart: Chart, payload: ViewportPayload | null): Viewport {
-  const scales = scalesOf(chart);
+/**
+ * A viewport from Python as the chart takes it, on `panel`'s axes (or the
+ * first panel's): category labels become band indices.
+ */
+export function chartViewport(
+  chart: Chart,
+  payload: ViewportPayload | null,
+  panel?: string,
+): Viewport {
+  const scales = scalesOf(chart, panel);
   return {
     x: chartRange(payload?.x ?? null, scales.x),
     y: chartRange(payload?.y ?? null, scales.y),

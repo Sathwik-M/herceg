@@ -23,6 +23,11 @@
       "import": "./dist/from-spec.js",
       "default": "./dist/from-spec.js"
     },
+    "./layout": {
+      "types": "./dist/layout.d.ts",
+      "import": "./dist/layout.js",
+      "default": "./dist/layout.js"
+    },
     "./pdf": {
       "types": "./dist/pdf.d.ts",
       "import": "./dist/pdf.js",

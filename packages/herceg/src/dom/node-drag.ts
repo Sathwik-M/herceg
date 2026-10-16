@@ -158,13 +158,15 @@ export class Controls implements ChartControls {
 
   /** The panel drawing a network that holds a pixel of the chart. */
   #panelAt(x: number, y: number): string | undefined {
-    return this.#host.model.items?.panels.find(
-      ({ plot, result }) =>
+    const { model } = this.#host;
+    return model.items?.panels.find(
+      ({ key, plot, result }) =>
         result.moves &&
         x >= plot.x &&
         x <= plot.x + plot.width &&
         y >= plot.y &&
-        y <= plot.y + plot.height,
+        y <= plot.y + plot.height &&
+        !model.coveredAt(key, x, y),
     )?.key;
   }
 

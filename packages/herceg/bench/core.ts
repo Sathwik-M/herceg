@@ -12,6 +12,7 @@ import { selectionStore, selectWhere } from "../src/data/selection.ts";
 import { type Table, table } from "../src/data/table.ts";
 import { fromWall } from "../src/format/zone.ts";
 import { estimateText } from "../src/layout/text.ts";
+import { grid } from "../src/layout.ts";
 import { m4 } from "../src/lod/m4.ts";
 import { MinMaxIndex } from "../src/lod/minmax-index.ts";
 import { Polyline } from "../src/lod/polyline.ts";
@@ -550,7 +551,7 @@ const sixMaps = new ChartModel({
   ),
   panels: panels(
     ["a", "b", "c", "d", "e", "f"].map((id) => ({ id })),
-    { columns: 3 },
+    grid({ columns: 3 }),
   ),
 });
 sixMaps.setSize(1800, 900, 1);

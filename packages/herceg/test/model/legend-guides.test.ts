@@ -7,6 +7,7 @@ import { table } from "../../src/data/table.ts";
 import { guideCompiler } from "../../src/guides/compile.ts";
 import { legend } from "../../src/guides/options.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid } from "../../src/layout.ts";
 import { area } from "../../src/marks/area.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
@@ -143,7 +144,7 @@ describe("one entry for the same value across marks", () => {
   const a = table({ t: [0, 1], site: ["North", "South"], v: [1, 2] });
   const b = table({ t: [0, 1], site: ["North", "South"], v: [3, 4] }, { origin: a });
   const subplots = (second = b) => ({
-    panels: panels([{ id: "a" }, { id: "b" }], { columns: 2 }),
+    panels: panels([{ id: "a" }, { id: "b" }], grid({ columns: 2 })),
     marks: [
       line(a, { x: "t", y: "v", series: "site", panel: "a" }),
       area(second, { x: "t", y: "v", series: "site", panel: "b" }),

@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid } from "../../src/layout.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { point } from "../../src/marks/point.ts";
 import { rowOf } from "../../src/marks/series.ts";
@@ -354,7 +355,7 @@ describe("heatmaps in subplots", () => {
         heatmap(morning, { ...fields, ...gray, panel: "am" }),
         heatmap(evening, { ...fields, ...gray, panel: "pm" }),
       ],
-      panels: panels([{ id: "am" }, { id: "pm" }], { columns: 2 }),
+      panels: panels([{ id: "am" }, { id: "pm" }], grid({ columns: 2 })),
       x: { scope: "panel" },
     });
     expect(categories(model, "x")).toEqual([

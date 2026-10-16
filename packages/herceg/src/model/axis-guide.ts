@@ -50,8 +50,9 @@ export function axisItems(
   const text = (label: string, at: TextAt, paint: TextPaint) =>
     items.push(textItem(label, at, paint, placement.surface, measure));
   for (const { position, label } of ticks) {
+    // One line, as it is drawn, its box too: a line break is a space here.
     text(
-      label,
+      label.replaceAll("\n", " "),
       below
         ? { x: position, y: edge + gap, anchor: "middle", baseline: "hanging", angle: 0 }
         : {

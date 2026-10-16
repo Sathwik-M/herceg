@@ -145,11 +145,16 @@ y axis (in facets and subplots too, shared or per panel), small multiples
 histograms, box plots, boxen plots, and violins summarizing each panel's rows,
 annotations over a table drawing each row in its own panel, and categories
 per panel for every mark on a category axis), points on category axes,
-subplots (with weighted rows and columns), pies, treemaps, sunbursts, gauges, funnels, radars, Sankey
+subplots placed by a layout of nested columns, rows, and spanning grid cells
+(weights, pixels, and least sizes per track; scales of their own per panel
+or shared by chart, row, column, grid, or list), insets drawn over a panel
+with an indicator of their ranges, panels' own legends that hide and show
+series there, pies, treemaps, sunbursts, gauges, funnels, radars, Sankey
 diagrams, maps, and networks in each facet panel or in a subplot of their own (facet panels drilled,
 panned, and zoomed together, each subplot alone), live notebook charts (a widget that streams updates from Python
-and reports interaction, tree drill roots, and network node positions back),
-a Streamlit component with the same drill and move results, row views and
+and reports interaction, tree drill roots, and network node positions back,
+and each panel's own view and selection),
+a Streamlit component with the same results, row views and
 selection stores shared by charts and
 grids (charts' brushes, lassos, and clicks select rows there and highlight what others select), maps that pan, zoom, and lasso their rows,
 treemaps and sunbursts that drill into nodes with breadcrumbs, networks

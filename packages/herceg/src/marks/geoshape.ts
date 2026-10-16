@@ -407,12 +407,13 @@ export class GeoShapeMark implements GeoLayer {
       },
       // A region is in a lasso when its anchor is: a point inside it, the
       // same at any zoom. Regions not drawn are not selected.
-      lassoed(polygon, of) {
+      lassoed(polygon, of, shows) {
         if (of !== table) return undefined;
         const { x0, y0, k } = transform;
         return drawn.rows.filter((row) => {
           const [x, y] = planeAnchor(set, codes[row]!, plan);
-          return insidePolygon(polygon, x0 + k * x, y0 - k * y);
+          const [px, py] = [x0 + k * x, y0 - k * y];
+          return insidePolygon(polygon, px, py) && shows(px, py);
         });
       },
     };

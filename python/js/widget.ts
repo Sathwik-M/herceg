@@ -169,7 +169,14 @@ interface View {
   positions: Map<string, ItemPositionsPayload>;
   /** The last error shown above the chart. */
   error: HTMLElement | undefined;
+  /** What panels' legends hid and showed unlike the chart, as its chart last said. */
+  overrides?: Overrides | undefined;
+  /** While its chart waits for its panels, the visibility it is to restore, which a chart drawn before then takes over. */
+  pending?: { hidden: readonly string[]; overrides: Overrides | undefined } | undefined;
 }
+
+/** By panel, the keys its legends hid and showed unlike the chart. */
+type Overrides = Readonly<Record<string, { hidden: readonly string[]; shown: readonly string[] }>>;
 
 const DEFAULT_HEIGHT = 320;
 /** Hover, zoom, and selection reach Python at most this often, the latest last. */
@@ -253,6 +260,7 @@ class Widget {
     this.#mount(view);
     return () => {
       view.chart?.destroy();
+      view.chart = undefined;
       view.error?.remove();
       element.remove();
       this.#views.delete(view);
@@ -304,8 +312,8 @@ class Widget {
     restored = false,
   ) {
     // Option updates never change the row selection: it binds the tables loaded here.
-    const { data, marks, version, facet, panels, grid, rowSelection, ...options } = spec;
-    this.#structure = { data, marks, version, facet, panels, grid, rowSelection };
+    const { data, marks, version, facet, panels, layout, rowSelection, ...options } = spec;
+    this.#structure = { data, marks, version, facet, panels, layout, rowSelection };
     this.#options = options;
     for (const stop of this.#unsubscribe) stop();
     this.#unsubscribe = [];
@@ -398,15 +406,35 @@ class Widget {
 
   /**
    * Draws the chart in a view. A chart drawn again (`again`, from a whole
-   * chart Python sent) keeps what its legend hid, whose keys name the values
-   * series stand for (`{"table":…,"value":…}`), and the keyboard focus.
+   * chart Python sent) keeps what its legends hid, in the chart and in each
+   * panel, whose keys name the values series stand for
+   * (`{"table":…,"value":…}`) or series of marks named by an id the chart
+   * still has (`["id",…]`; a mark's place may hold another mark now), and
+   * the keyboard focus.
    */
   #mount(view: View, again = false) {
-    const hidden = again
-      ? (view.chart?.getHiddenKeys() ?? []).filter(
-          (key) => key.startsWith('{"') && key.includes(',"value":'),
-        )
-      : [];
+    const previous = again ? view.chart : undefined;
+    const named = new Set(this.#config?.marks.map(({ spec }) => spec.id) ?? []);
+    const kept = (keys: readonly string[]) =>
+      keys.filter((key) => {
+        if (key.startsWith('{"')) return key.includes(',"value":');
+        try {
+          const [owner] = JSON.parse(key) as unknown[];
+          return typeof owner === "string" && named.has(owner);
+        } catch {
+          return false;
+        }
+      });
+    // A chart still waiting to restore hands on what it was to restore.
+    const pending = previous ? view.pending : undefined;
+    const hidden = kept(pending?.hidden ?? previous?.getHiddenKeys() ?? []);
+    const overrides = !this.#config?.panels
+      ? undefined
+      : pending
+        ? pending.overrides
+        : previous && view.overrides;
+    view.overrides = undefined;
+    view.pending = undefined;
     const focused = again && view.element.contains(view.element.ownerDocument.activeElement);
     view.chart?.destroy();
     view.chart = undefined;
@@ -426,7 +454,9 @@ class Widget {
     }
     view.chart = chart;
     view.positions = new Map();
-    if (hidden.length) chart.setHiddenKeys(hidden);
+    chart.on("visibility", ({ panels }) => {
+      view.overrides = panels;
+    });
     if (focused) view.element.querySelector<HTMLElement>("[tabindex]")?.focus();
     const config = this.#config;
     // Each subplot's map, network, or tree has a state of its own.
@@ -434,24 +464,78 @@ class Widget {
     const cameras = statePanels(config, CAMERAS);
     const drills = statePanels(config, DRILLS);
     const moves = statePanels(config, MOVES);
-    // Restored before listening, so restoring does not echo back to Python.
-    // Without axes, only the subplots' planes have views.
-    if (planes.length === 0 || chart.getPanels().some(({ x }) => x))
-      this.#show(view, "viewport", this.#state("viewport"));
-    for (const panel of planes)
-      this.#show(view, "viewport", this.#state("viewport", panel), false, panel);
-    for (const panel of cameras)
-      this.#show(view, "camera", this.#state("camera", panel), true, panel);
-    for (const panel of drills) this.#show(view, "drill", this.#state("drill", panel), true, panel);
-    for (const panel of moves) this.#show(view, "itemMove", this.#positions(panel), true, panel);
-    this.#show(view, "select", this.#state("select"));
+    // What Python and the last chart left: restored before listening, so
+    // that restoring does not echo back to Python, or for a subplot chart
+    // whose first scene waits for its guides, once its panels are known
+    // (what is reported then is what Python has, and goes no further).
+    const restore = () => {
+      if (hidden.length) chart.setHiddenKeys(hidden);
+      // Each panel's own settings, of what series stand for and then of
+      // series, as settings of the first replace those of the second.
+      for (const [panel, own] of Object.entries(overrides ?? {})) {
+        if (!config.panels?.list.some(({ id }) => id === panel)) continue;
+        for (const identities of [true, false])
+          for (const [keys, visible] of [
+            [own.hidden, false],
+            [own.shown, true],
+          ] as const) {
+            const set = kept(keys).filter((key) => key.startsWith('{"') === identities);
+            if (set.length) chart.setVisibility(set, visible, { panel });
+          }
+      }
+      // The chart's view is of the x scale its panels share, if they share
+      // one; subplots' planes, and panels with x scales of their own (insets,
+      // say), have views of their own.
+      if (!config.panels || chart.getPanels().some(({ x }) => x?.group === ""))
+        this.#show(view, "viewport", this.#state("viewport"));
+      // Views of panels whose x is the chart's now are the chart's view, and go.
+      const panels = chart.getPanels();
+      for (const key of [...this.#states.keys()])
+        if (key.startsWith("viewport:")) {
+          const panel = key.slice("viewport:".length);
+          const own =
+            planes.includes(panel) ||
+            panels.some(({ key, x }) => key === panel && x !== undefined && x.group !== "");
+          if (own) this.#show(view, "viewport", this.#state("viewport", panel), false, panel);
+          else this.#states.delete(key);
+        }
+      for (const panel of cameras)
+        this.#show(view, "camera", this.#state("camera", panel), true, panel);
+      for (const panel of drills)
+        this.#show(view, "drill", this.#state("drill", panel), true, panel);
+      for (const panel of moves) this.#show(view, "itemMove", this.#positions(panel), true, panel);
+      this.#show(view, "select", this.#state("select"));
+    };
+    // What restoring changed that Python should hear.
+    const restored = () => {
+      for (const panel of drills)
+        this.#report("drill", view, drillPayload(chart.getDrillRoot(targetOf(panel))), panel);
+      if (!chart.getHiddenKeys().length)
+        for (const panel of moves)
+          this.#report("itemMove", view, { ...view.positions.get(panel) }, panel);
+      // A selection whose categories are gone, or moved under its lasso, goes,
+      // and Python hears so.
+      if (this.#state("select") && !chart.selection) this.#report("select", view, null);
+      for (const panel of cameras)
+        this.#report("camera", view, chart.getCamera(targetOf(panel)) ?? null, panel);
+    };
+    const waiting = this.#waiting(chart) ? chart.loading : undefined;
+    if (!waiting) restore();
     chart.on("select", (selection) =>
       this.#report("select", view, selectionPayload(chart, selection, selection.panels)),
     );
-    // A subplot's map or network names its panel.
+    // A subplot's map or network names its panel, and a change of an x
+    // scale that panels have of their own names each panel showing it.
     chart.on("viewport", (viewport) => {
-      const panel = viewport.panels?.[0] ?? "";
-      this.#report("viewport", view, viewportPayload(chart, viewport, panel !== ""), panel);
+      for (const panel of viewport.panels ?? [""]) {
+        const payload = viewportPayload(
+          chart,
+          viewport,
+          planes.includes(panel),
+          panel || undefined,
+        );
+        this.#report("viewport", view, payload, panel);
+      }
     });
     chart.on("drill", (root) => {
       if (!this.#applying) this.#report("drill", view, drillPayload(root), root.panels?.[0] ?? "");
@@ -478,14 +562,31 @@ class Widget {
     chart.on("visibility", () => {
       for (const panel of moves) this.#show(view, "itemMove", this.#positions(panel), true, panel);
     });
-    for (const panel of drills)
-      this.#report("drill", view, drillPayload(chart.getDrillRoot(targetOf(panel))), panel);
-    if (!chart.getHiddenKeys().length)
-      for (const panel of moves)
-        this.#report("itemMove", view, { ...view.positions.get(panel) }, panel);
-    // A selection whose categories are gone, or moved under its lasso, goes,
-    // and Python hears so.
-    if (this.#state("select") && !chart.selection) this.#report("select", view, null);
+    if (!waiting) restored();
+    else {
+      // What a chart drawn before then takes over: what this one would
+      // restore, of its panels and marks.
+      view.pending = {
+        hidden,
+        overrides:
+          overrides &&
+          Object.fromEntries(
+            Object.entries(overrides)
+              .filter(([panel]) => config.panels?.list.some(({ id }) => id === panel))
+              .map(([panel, own]) => [panel, { hidden: kept(own.hidden), shown: kept(own.shown) }]),
+          ),
+      };
+      waiting.then(
+        () => {
+          if (view.chart !== chart) return;
+          view.pending = undefined;
+          chart.render();
+          restore();
+          restored();
+        },
+        () => {},
+      );
+    }
     chart.on("hover", ({ inspection }) => {
       if (!this.#listening("hover")) return;
       this.#outbox.post("hover", {
@@ -505,8 +606,6 @@ class Widget {
     chart.on("camera", ({ camera, panels }) =>
       this.#report("camera", view, camera, panels?.[0] ?? ""),
     );
-    for (const panel of cameras)
-      this.#report("camera", view, chart.getCamera(targetOf(panel)) ?? null, panel);
   }
 
   #size({ element }: View) {
@@ -571,7 +670,7 @@ class Widget {
       else if (held) unsent.set(panel, { moves: this.#positions(panel), view: undefined });
     }
     this.#cancelItems(panels);
-    const views = [...this.#views].filter(({ chart }) => chart);
+    const views = [...this.#views].filter((view) => this.#ready(view));
     for (const panel of panels) {
       const waiting = unsent.get(panel);
       const state = waiting?.moves ?? this.#positions(panel);
@@ -583,7 +682,7 @@ class Widget {
       const source = waiting?.view;
       const view = source ? (this.#views.has(source) ? source : undefined) : views[0];
       let keeps = (key: string) => this.#ownsNode(key);
-      if (view) {
+      if (view && this.#ready(view)) {
         view.chart!.render();
         const kept = view.chart!.getItemPositions(targetOf(panel));
         keeps = (key) => Object.hasOwn(kept, key);
@@ -620,7 +719,7 @@ class Widget {
     if (same && !resend) return;
     const shown = same ? [] : this.#views;
     for (const view of shown) {
-      if (!view.chart || (view === source && event !== "itemMove")) continue;
+      if (!this.#ready(view) || (view === source && event !== "itemMove")) continue;
       try {
         this.#show(view, event, payload, event === "itemMove", panel);
       } catch (error) {
@@ -639,6 +738,19 @@ class Widget {
    * changes it has not drawn yet. A selection shown here writes no rows:
    * the view brushed wrote them to the stores every view shares.
    */
+  /** Whether a subplot chart has not had its first scene, its panels unknown until loading settles. */
+  #waiting(chart: Chart): boolean {
+    return !!this.#config?.panels && chart.getPanels().length === 0 && chart.loading !== undefined;
+  }
+
+  /**
+   * Whether a view shows a chart that states apply to now: one waiting for
+   * its panels takes the latest when it has them.
+   */
+  #ready(view: View): boolean {
+    return !!view.chart && !this.#waiting(view.chart);
+  }
+
   #show(view: View, event: ViewEvent, payload: ViewState, restore = false, panel = "") {
     const chart = view.chart!;
     if (event === "camera") {
@@ -672,16 +784,25 @@ class Widget {
       return;
     }
     const viewport = payload as ViewportPayload | null;
-    if (panel !== "") {
-      // A subplot's plane: numbers in its units.
-      chart.setViewport({ x: viewport?.x ?? null, y: viewport?.y ?? null } as Viewport, { panel });
-      return;
-    }
+    // Categories named by label are read off the data as drawn: changes
+    // still to draw are drawn first.
     const labels = [viewport?.x, viewport?.y].some((ends) => typeof ends?.[0] === "string");
     if (labels) chart.render();
+    if (panel !== "") {
+      // A subplot's plane: numbers in its units; a panel's own x scale: as on its axis.
+      const plane = statePanels(this.#config!, PLANES).includes(panel);
+      chart.setViewport(
+        plane
+          ? ({ x: viewport?.x ?? null, y: viewport?.y ?? null } as Viewport)
+          : { x: chartViewport(chart, viewport, panel).x },
+        { panel },
+      );
+      return;
+    }
     const restored = chartViewport(chart, viewport);
     // Charts whose panels have y scales of their own have no y viewport.
-    const first = chart.getPanels().find(({ x }) => x);
+    const panels = chart.getPanels();
+    const first = panels.find(({ x }) => x?.group === "") ?? panels.find(({ x }) => x);
     chart.setViewport({
       x: restored.x,
       y:
@@ -816,7 +937,7 @@ class Widget {
         this.#states.set(stateKey("itemMove", panel), next);
         const applied = new Set<string>();
         for (const view of this.#views) {
-          if (!view.chart) continue;
+          if (!this.#ready(view)) continue;
           // A display that hides a node takes its override too, and draws it once shown.
           this.#show(view, "itemMove", next, true, panel);
           for (const key of Object.keys(view.positions.get(panel) ?? {})) applied.add(key);
@@ -824,7 +945,8 @@ class Widget {
         const unknown = Object.keys(next).filter(
           (key) => !applied.has(key) && !Object.hasOwn(known, key),
         );
-        const source = [...this.#views].find((view) => view.chart);
+        // Checked where a chart has its networks drawn; else kept for restoring.
+        const source = [...this.#views].find((view) => this.#ready(view));
         if (unknown.length && source) {
           const invalid = new Set(unknown);
           const kept = Object.fromEntries(
@@ -861,7 +983,8 @@ class Widget {
         // them, and Python sets them with `row_selection`.
         const name = panel ? "widget.panel_drill_roots" : "widget.drill_root";
         for (const view of this.#views) {
-          if (!view.chart) continue;
+          // A chart waiting for its panels restores the state once it has them.
+          if (!this.#ready(view)) continue;
           const root = () => drillPayload(view.chart!.getDrillRoot(targetOf(panel)));
           try {
             this.#show(view, message.type, payload, false, panel);
@@ -888,7 +1011,7 @@ class Widget {
   #keepCategorySelection() {
     const selection = this.#state("select");
     if (!namesCategories(selection)) return;
-    for (const view of this.#views) if (view.chart) this.#show(view, "select", selection);
+    for (const view of this.#views) if (this.#ready(view)) this.#show(view, "select", selection);
   }
 
   /**

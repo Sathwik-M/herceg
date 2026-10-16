@@ -96,9 +96,14 @@ export interface MarkSeries {
   rows?: RowParts | undefined;
 }
 
-/** A mark a panel inspects: its series there, and its index in the chart's marks. */
+/**
+ * A mark a panel inspects: its series there, its index in the chart's
+ * marks, and the frame it was drawn with where that is not its axis' (a
+ * mark of every panel, by the chart's visibility in a panel with its own).
+ */
 export interface InspectedMark extends MarkSeries {
   index: number;
+  frame?: Frame | undefined;
 }
 
 /** A y axis: the frame its marks draw with and the formatter of its values. */
@@ -126,6 +131,7 @@ export interface DrawnScene {
 
 interface ReadableMark extends InspectedMark {
   axis: YAxisView;
+  frame: Frame;
   visible: Series[];
 }
 
@@ -173,9 +179,11 @@ export class Inspector {
     this.#right = scene.right;
     this.marks = scene.marks.map((entry) => {
       const axis = this.axisOf(entry.mark);
-      const series = entry.mark.readSeries?.(entry.series, axis.frame) ?? entry.series;
-      const visible = series.filter((s) => !scene.hidden.has(s.key) && s.length > 0);
-      const owner = { ...entry, series, axis, visible };
+      const frame = entry.frame ?? axis.frame;
+      const series = entry.mark.readSeries?.(entry.series, frame) ?? entry.series;
+      const hidden = entry.frame?.hidden ?? scene.hidden;
+      const visible = series.filter((s) => !hidden.has(s.key) && s.length > 0);
+      const owner = { ...entry, series, axis, frame, visible };
       for (const s of series) this.#ownerOf.set(s, owner);
       return owner;
     });
@@ -234,10 +242,10 @@ export class Inspector {
     let closest = Infinity;
     let snapped = Number.NaN;
     for (const s of series) {
-      const { mark, axis: markAxis } = this.#ownerOf.get(s)!;
+      const { mark, frame } = this.#ownerOf.get(s)!;
       const position =
         mark.place && mark.pick
-          ? (mark.pick([s], px, py, markAxis.frame)?.position ?? -1)
+          ? (mark.pick([s], px, py, frame)?.position ?? -1)
           : axis === "x" && s.sorted
             ? this.#drawnNear(s, this.#nearestWithin(s, target, lo, hi), target, lo, hi)
             : this.#scanNearest(s, axis, target, lo, hi, scale);
@@ -372,11 +380,11 @@ export class Inspector {
    * end of a range.
    */
   #pixels(s: Series, row: number): readonly [number, number] | undefined {
-    const { mark, axis } = this.#ownerOf.get(s)!;
-    if (mark.place) return mark.place(s, row, axis.frame);
+    const { mark, frame } = this.#ownerOf.get(s)!;
+    if (mark.place) return mark.place(s, row, frame);
     const finite = Number.isFinite;
     if (!finite(s.values[row]!)) return undefined;
-    const { x, y } = axis.frame;
+    const { x, y } = frame;
     const at = placeAt(s, "x", row);
     const across = placeAt(s, "y", row);
     const px = x.map(at);
@@ -396,9 +404,9 @@ export class Inspector {
       if (!finite(scale.map(low)) || (scale.type === "band" && low < 0)) return undefined;
     }
     // A heatmap's cell is at its center, which its value need not be.
-    if (mark.pointAnchor) return mark.pointAnchor(s, row, axis.frame);
+    if (mark.pointAnchor) return mark.pointAnchor(s, row, frame);
     // Marks spreading rows across their bands (dodge, jitter) draw them off their values' place.
-    const [dx, dy] = mark.displace?.(s, row, axis.frame) ?? STILL;
+    const [dx, dy] = mark.displace?.(s, row, frame) ?? STILL;
     return [px + dx, py + dy];
   }
 
@@ -413,16 +421,16 @@ export class Inspector {
       if (distance < (best?.distance ?? Infinity)) best = { series: s, position: k, distance };
     };
     const target = x.invert(px);
-    for (const { mark, visible: series, axis } of this.marks) {
+    for (const { mark, visible: series, frame } of this.marks) {
       if (mark.pick) {
         // Ties go to later marks, which are drawn on top.
-        const hit = mark.pick(series, px, py, axis.frame);
+        const hit = mark.pick(series, px, py, frame);
         if (hit && hit.distance <= (best?.distance ?? Infinity)) best = hit;
         continue;
       }
       for (const s of series) {
         // Marks spreading rows across their bands draw them up to `reach` off their x.
-        const reach = mark.maxDisplacement?.(s, axis.frame) ?? 0;
+        const reach = mark.maxDisplacement?.(s, frame) ?? 0;
         if (!s.sorted || reach === Infinity) {
           for (let k = 0; k < s.length; k++) consider(s, k);
           continue;

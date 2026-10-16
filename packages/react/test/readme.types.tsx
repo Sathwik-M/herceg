@@ -1,6 +1,7 @@
 // The README examples, compiled by `npm run typecheck` so the docs stay true.
 import { table, time, viridis } from "herceg";
 import { useEffect, useMemo } from "react";
+import { Legend } from "../src/guides.tsx";
 import {
   Bar,
   Boxen,
@@ -11,6 +12,7 @@ import {
   ErrorBar,
   Histogram,
   Line,
+  Pie,
   Point,
   Region,
   Rug,
@@ -18,6 +20,7 @@ import {
   Text,
   Violin,
 } from "../src/index.ts";
+import { Columns, Inset, Panel, Rows } from "../src/layout.tsx";
 
 declare const timestamps: Float64Array;
 declare const p50: Float64Array;
@@ -278,6 +281,41 @@ export function Tooltips() {
       <Line data={metrics} x="time" y="p99" tooltip={{ fields: ["service"] }} />
       {/* @ts-expect-error tooltip fields are fields of the mark's data */}
       <Line data={metrics} x="time" y="p99" tooltip={{ fields: ["services"] }} />
+    </Chart>
+  );
+}
+
+// Layouts.
+const regions = table({
+  time: time(timestamps),
+  p99,
+  errors: p50,
+  requests: p50,
+  region: ["eu", "us"],
+});
+declare const start: number;
+declare const end: number;
+
+export function Dashboard() {
+  return (
+    <Chart height={600}>
+      <Columns weights={[2, 1]}>
+        <Rows weights={[2, 1]}>
+          <Panel id="latency" title="p99">
+            <Line data={regions} x="time" y="p99" color="region" />
+            <Legend place={{ inside: "top-left" }} />
+            <Inset id="detail" x={{ domain: [start, end] }} indicator>
+              <Line data={regions} x="time" y="p99" color="region" />
+            </Inset>
+          </Panel>
+          <Panel id="errors" title="Errors">
+            <Bar data={regions} x="time" y="errors" color="region" />
+          </Panel>
+        </Rows>
+        <Panel id="share" title="By region">
+          <Pie data={regions} category="region" value="requests" />
+        </Panel>
+      </Columns>
     </Chart>
   );
 }

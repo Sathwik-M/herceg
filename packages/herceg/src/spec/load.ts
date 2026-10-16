@@ -167,7 +167,7 @@ export function loadSpec(
     version: _version,
     facet: split,
     panels,
-    grid,
+    layout,
     x,
     navigator: strip,
     rowSelection: bindings,
@@ -177,7 +177,7 @@ export function loadSpec(
   const rows =
     bindings && loadRowSelection(bindings, tables, marks, buffers, byName(options.stores), stores);
   const facet = split && new Facet(split);
-  const subplots = panels && new Panels(panels, grid);
+  const subplots = panels && new Panels(panels, layout);
   const navigator = strip ? rangeNavigator(strip === true ? {} : strip) : undefined;
   // Breaks become the TimeBreaks that resolve them.
   const { breaks, ...axis } = x ?? {};

@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid } from "../../src/layout.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { candlestick } from "../../src/marks/candlestick.ts";
 import { errorBar } from "../../src/marks/errorbar.ts";
@@ -632,7 +633,7 @@ describe("categories resolved per panel", () => {
   it("give subplots categories of their own", () => {
     const fruit = table({ name: ["apple", "pear"], v: [3, 4] });
     const cars = table({ name: ["vw", "bmw", "audi"], v: [5, 6, 7] });
-    const layout = panels([{ id: "fruit" }, { id: "cars" }], { columns: 2 });
+    const layout = panels([{ id: "fruit" }, { id: "cars" }], grid({ columns: 2 }));
     const { model, scene } = build({
       marks: [
         bar(fruit, { x: "name", y: "v", panel: "fruit" }),

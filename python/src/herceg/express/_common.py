@@ -21,7 +21,7 @@ from typing import Any, Literal, TypeVar
 
 import numpy as np
 
-from .._chart import AxisOptions, Chart, _chart_of, helper
+from .._chart import AxisOptions, Chart, HelperOptions, Panel, _chart_of, helper
 from .._data import Column, Table, listed, shown
 from .._errors import ChartError
 from .._rows import SelectionBinding
@@ -33,6 +33,15 @@ ErrorBar = tuple[ErrorMethod, float] | ErrorMethod | ErrorFunction | None
 
 #: The level each error method takes when only its name is given, as in Seaborn.
 _LEVELS: dict[str, float] = {"ci": 95, "pi": 95, "se": 1, "sd": 1}
+
+
+class ExpressOptions(HelperOptions, total=False):
+    """The options of the express functions that draw one plot: the chart's,
+    as a helper takes them, and ``panel``, a panel of another chart (from
+    ``chart.columns()``, ``rows()``, ``grid()``, or ``mosaic()``) to draw the
+    plot in, which returns that chart."""
+
+    panel: Panel
 
 
 @dataclass(frozen=True)
@@ -55,14 +64,43 @@ class Statistics:
 
 
 _RECORDS: weakref.WeakKeyDictionary[Chart, Statistics] = weakref.WeakKeyDictionary()
+#: What express functions drawing in a panel (``panel=``) computed, by chart and panel id.
+_PANEL_RECORDS: weakref.WeakKeyDictionary[Chart, dict[str, Statistics]] = (
+    weakref.WeakKeyDictionary()
+)
 
 
-def statistics(chart: Chart) -> Statistics:
-    """The statistics an express function computed for ``chart``."""
+def statistics(chart: Chart, panel: Panel | str | None = None) -> Statistics:
+    """The statistics an express function computed for ``chart``, or with
+    ``panel`` (a panel or its id), for the plot it drew in that panel."""
+    if panel is not None:
+        id = panel.id if isinstance(panel, Panel) else panel
+        drawn = _PANEL_RECORDS.get(chart, {})
+        if id not in drawn:
+            listed = ", ".join(repr(name) for name in drawn) or "none"
+            raise ValueError(
+                f"hx.statistics panel: no express plot in panel {id!r}; those with one are {listed}"
+            )
+        return drawn[id]
     try:
         return _RECORDS[chart]
     except KeyError:
+        if chart in _PANEL_RECORDS:
+            listed = ", ".join(repr(name) for name in _PANEL_RECORDS[chart])
+            raise ValueError(
+                "hx.statistics: the chart's express plots are in its panels; "
+                f"name one with panel= ({listed})"
+            ) from None
         raise ValueError("the chart was not made by a herceg.express function") from None
+
+
+#: How express functions drawing in a panel (``panel=``) were called, by chart and panel id.
+_PANEL_CALLS: weakref.WeakKeyDictionary[Chart, dict[str, Call]] = weakref.WeakKeyDictionary()
+
+
+def panel_plots(chart: Chart) -> dict[str, Call]:
+    """How express functions drew plots in panels of `chart` (``panel=``), by panel id."""
+    return dict(_PANEL_CALLS.get(chart, {}))
 
 
 def record(chart: Chart, stats: Statistics) -> Chart:
@@ -121,9 +159,17 @@ def express(function: _F) -> _F:
     ``helper``) and remembers each call with the chart it makes."""
     checked = helper(function)
     signature = inspect.signature(function)
+    _PARAMETERS[function.__name__] = frozenset(
+        name
+        for name, parameter in signature.parameters.items()
+        if parameter.kind is not inspect.Parameter.VAR_KEYWORD
+    )
 
     @functools.wraps(function)
     def make(*args: Any, **kwargs: Any) -> Chart:
+        panel = kwargs.pop("panel", None)
+        if panel is not None:
+            return _draw_in(panel, function.__name__, lambda: make(*args, **kwargs), kwargs)
         bound = signature.bind(*args, **kwargs)
         # A color column is the series' column, as for the chart's marks.
         color = bound.arguments.pop("color", None)
@@ -153,6 +199,86 @@ def express(function: _F) -> _F:
         return chart
 
     return make  # type: ignore[return-value]
+
+
+#: Express functions that draw several panels, and so make charts of their own.
+_ARRANGEMENTS = frozenset(("pairplot", "jointplot", "clustermap"))
+#: The options an express function takes beside ``panel``: the panel's axes'.
+_PANEL_OPTIONS = frozenset(("x_axis", "y_axis"))
+
+
+def _draw_in(
+    panel: Any, function: str, draw: Callable[[], Chart], options: Mapping[str, Any]
+) -> Chart:
+    """The chart `panel` is in, with the plot `draw` makes in that panel: its
+    tables and marks, its axes' titles where the panel has none, and what it
+    computed (``hx.statistics(chart, panel=...)``)."""
+    if function in _ARRANGEMENTS:
+        raise ChartError(
+            f"{function} panel: draws several panels, in a chart of its own; drop panel",
+            path="panel",
+        )
+    if not isinstance(panel, Panel):
+        raise ChartError(
+            f"{function} panel: expected a panel of a chart, from chart.columns(), rows(), "
+            f"grid(), or mosaic(); received {shown(panel)}",
+            path="panel",
+        )
+    chart = panel._bound(f"hx.{function}")
+    for name, value in options.items():
+        if name in _PANEL_OPTIONS or value is None:
+            continue
+        if name == "palette":
+            raise ChartError(
+                f"{function} palette: colors every series of the chart it draws in; "
+                "give the chart a theme with that palette",
+                path="palette",
+            )
+        if name not in _own_parameters(function):
+            raise ChartError(
+                f"{function} {name}: sets the whole chart, and panel= draws in one of its "
+                f"panels; set {name} on the chart",
+                path=name,
+            )
+    # A panel's plot is one express call's: what it computed, and the data
+    # it computed that from, which live charts keep from changing.
+    drawn = _PANEL_CALLS.get(chart, {}).get(panel.id)
+    if drawn is not None:
+        raise ChartError(
+            f"{function} panel: panel {panel.id!r} has a plot of "
+            f"hx.{drawn.function.__name__} already; draw this one in another panel, "
+            "or add marks to it with the panel's methods",
+            path="panel",
+        )
+    made = draw()
+    # Each table of the plot's in the chart, and those made from its data
+    # (estimates, densities) standing for the chart's table of that data.
+    tables: dict[int, int] = {}
+    for index, (source, columns) in enumerate(made._tables):
+        tables[index] = (
+            chart._table(source) if index in made._derived else chart._table(source, columns)
+        )
+    for index, origin in made._origins.items():
+        chart._origins[tables[index]] = tables[origin]
+    for spec, table in made._marks:
+        chart._add(
+            {**copy.deepcopy(spec), "panel": panel.id}, None if table is None else tables[table]
+        )
+    for axis in ("x", "y"):
+        given = made._settings.get(axis)
+        if getattr(panel, axis) is None and given is not None:
+            setattr(panel, axis, given)
+    _PANEL_RECORDS.setdefault(chart, {})[panel.id] = _RECORDS[made]
+    _PANEL_CALLS.setdefault(chart, {})[panel.id] = _CALLS[made]
+    return chart
+
+
+_PARAMETERS: dict[str, frozenset[str]] = {}
+
+
+def _own_parameters(function: str) -> frozenset[str]:
+    """The parameters express function `function` takes by name, beside the chart's options."""
+    return _PARAMETERS.get(function, frozenset())
 
 
 def series_of_color(series: str | None, color: str, function: str) -> str:

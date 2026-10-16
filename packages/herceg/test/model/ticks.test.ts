@@ -370,11 +370,13 @@ describe("scales", () => {
       { id: "b", x: { domain: [0, 9] } },
     ]);
     // Panels that share x must agree on its settings; scoped per panel, they need not.
-    expect(() => build({ panels: differing, marks })).toThrow(/panels\[1\]\.x: shares an x scale/);
-    expect(() => build({ panels: differing, marks, x: { scope: "panel" } })).not.toThrow();
-    expect(() =>
-      build({ panels: differing, marks, scales: { x: { scope: "panel" } } }),
-    ).not.toThrow();
+    expect(() => build({ panels: differing, marks, x: { scope: "chart" } })).toThrow(
+      /panels\[1\]\.x: shares an x scale/,
+    );
+    expect(() => build({ panels: differing, marks, scales: { x: { scope: "chart" } } })).toThrow(
+      /panels\[1\]\.x: shares an x scale/,
+    );
+    expect(() => build({ panels: differing, marks })).not.toThrow();
   });
 
   it("let shared panels agree on functions only when they are the same one", () => {
@@ -387,8 +389,9 @@ describe("scales", () => {
         { id: "a", x: { format: format(0) } },
         { id: "b", x: { format: format(1) } },
       ]);
-    expect(() => build({ panels: subplots(() => formats[0]!), marks })).not.toThrow();
-    expect(() => build({ panels: subplots((i) => formats[i]!), marks })).toThrow(
+    const x = { scope: "chart" } as const;
+    expect(() => build({ panels: subplots(() => formats[0]!), marks, x })).not.toThrow();
+    expect(() => build({ panels: subplots((i) => formats[i]!), marks, x })).toThrow(
       /panels\[1\]\.x: shares an x scale with others but differs in type, domain, zero, nice, ticks, format/,
     );
   });

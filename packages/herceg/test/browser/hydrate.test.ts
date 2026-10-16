@@ -6,10 +6,13 @@ import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type ChartOptions, createChart } from "../../src/dom/chart.ts";
 import { hydrateChart } from "../../src/dom/hydrate.ts";
+import { legend } from "../../src/guides/options.ts";
+import { columns, inset, panel } from "../../src/layout.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { line } from "../../src/marks/line.ts";
 import { point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
+import { panels } from "../../src/model/panels.ts";
 import { renderToSnapshot } from "../../src/render/snapshot.ts";
 import { MOUSE } from "./helpers.ts";
 import { hasWebGL2 } from "./webgl.ts";
@@ -205,6 +208,58 @@ describe("hydrateChart", () => {
         { width: 640, height: 320, idPrefix: "x" },
       ),
     ).toThrow('renderToSnapshot timeZone: "local" is the server\'s zone');
+  });
+
+  it("takes over a panel's legend, whose clicks before loading toggle there", async () => {
+    const data = table({ t: [0, 1, 0, 1], v: [1, 2, 3, 4], region: ["eu", "eu", "us", "us"] });
+    const legends = (): ChartOptions => ({
+      marks: [
+        line(data, { x: "t", y: "v", color: "region", panel: "a" }),
+        line(data, { x: "t", y: "v", color: "region", panel: "b" }),
+      ],
+      panels: panels(columns([1, 1], [panel("a"), panel("b")])),
+      guides: [legend({ panel: "b" })],
+    });
+    const initial = renderToSnapshot(legends(), { width: 640, height: 320, idPrefix: "own" });
+    host.innerHTML = initial.html;
+    const chart = hydrateChart(host, legends(), initial);
+    // Before the guide compiler loads, a click on the panel's legend (after
+    // the chart's, for panel a) hides there only.
+    const buttons = [...chart.root.querySelectorAll("button")];
+    expect(buttons).toHaveLength(4);
+    buttons[2]!.click();
+    expect(chart.getHiddenKeys()).toEqual([]);
+    expect(chart.getHiddenKeys({ panel: "b" })).toHaveLength(1);
+    await chart.loading;
+    chart.destroy();
+  });
+
+  it("takes over the nodes of a chart with an inset, its box and grid among them", async () => {
+    const data = table({ t: [0, 1, 2, 3, 4], v: [3, 1, 2, 5, 4] });
+    const insetted = (): ChartOptions => ({
+      marks: [
+        line(data, { x: "t", y: "v", panel: "main" }),
+        line(data, { x: "t", y: "v", panel: "detail" }),
+      ],
+      panels: panels(
+        panel("main", [inset({ id: "detail", x: { domain: [1, 3] } }, { indicator: true })]),
+      ),
+    });
+    const initial = renderToSnapshot(insetted(), { width: 640, height: 320, idPrefix: "inset" });
+    host.innerHTML = initial.html;
+    const root = host.firstElementChild!;
+    const before = geometry(root);
+    const groups = [...root.querySelector("svg")!.children];
+    const chart = hydrateChart(host, insetted(), initial);
+    await frame();
+    expect(chart.root).toBe(root);
+    expect(geometry(chart.root)).toEqual(before);
+    expect([...chart.root.querySelector("svg")!.children]).toEqual(groups);
+    expect(chart.getPanels().map(({ key, parent }) => [key, parent])).toEqual([
+      ["main", undefined],
+      ["detail", "main"],
+    ]);
+    chart.destroy();
   });
 
   it("matches a chart created in the browser, node for node", () => {

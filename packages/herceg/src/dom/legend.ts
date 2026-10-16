@@ -12,8 +12,11 @@ export interface Entry {
   text: HTMLSpanElement;
   /** What the entry last showed, to skip rewriting unchanged entries. */
   shown: string;
-  /** The keys it hides and shows. */
+  /** The keys it hides and shows, in its legend's panel only for a panel's legend. */
   targets: string | readonly string[];
+  panel?: string | undefined;
+  /** Its click shows what it names: hidden, or hidden in some panels only (`LegendItem.mixed`). */
+  show?: boolean | undefined;
 }
 
 /**
@@ -27,11 +30,11 @@ export class Legend {
   /**
    * A new legend, or one taking over the element and entries of a chart's
    * server markup (`adopted`, see dom/adopt.ts). `toggle` hides and shows
-   * what a button names.
+   * what a button names, and says whether it showed it.
    */
   constructor(
     document: Document,
-    toggle: (keys: string | readonly string[]) => void,
+    toggle: (keys: string | readonly string[], panel?: string, show?: boolean) => boolean,
     adopted?: { element: HTMLDivElement; entries: Map<string, Entry> },
   ) {
     this.element = adopted?.element ?? document.createElement("div");
@@ -41,8 +44,10 @@ export class Legend {
     this.#entries = adopted?.entries ?? new Map();
     // One listener for every button, those adopted included.
     this.element.addEventListener("click", ({ target }) => {
-      for (const { button, targets } of this.#entries.values())
-        if (button.contains(target as Node)) toggle(targets);
+      // A second click before the legend is drawn again undoes the first.
+      for (const entry of this.#entries.values())
+        if (entry.button.contains(target as Node))
+          entry.show = !toggle(entry.targets, entry.panel, entry.show);
     });
   }
 
@@ -70,9 +75,11 @@ export class Legend {
           this.#entries.set(id, entry);
         }
         entry.targets = item.targets ?? item.key;
+        entry.panel = legend.panel;
+        entry.show = item.hidden || !!item.mixed;
         // Rewriting styles every frame would make the browser recompute them.
         const label = legend.label;
-        const shown = `${item.x}|${item.y}|${item.hidden}|${item.color}|${item.glyph}|${item.stroke}|${item.label}|${label.css}|${label.color}|${label.opacity}|${labelStyle}|${item.sample && JSON.stringify(item.sample)}`;
+        const shown = `${item.x}|${item.y}|${item.hidden}|${item.mixed}|${item.color}|${item.glyph}|${item.stroke}|${item.label}|${label.css}|${label.color}|${label.opacity}|${labelStyle}|${item.sample && JSON.stringify(item.sample)}`;
         if (shown !== entry.shown) {
           entry.shown = shown;
           show(entry, item, label, labelStyle, theme);
@@ -145,11 +152,13 @@ function show(
     entry.text = box ? label.appendChild(label.ownerDocument.createElement("span")) : label;
   }
   const { text } = entry;
-  button.setAttribute("aria-pressed", String(!item.hidden));
-  button.title = item.hidden ? `Show ${item.label}` : `Hide ${item.label}`;
+  // Shown in some panels and hidden in others, an entry is pressed in part.
+  button.setAttribute("aria-pressed", item.mixed ? "mixed" : String(!item.hidden));
+  // What a click does: a mixed entry shows its series everywhere.
+  button.title = item.hidden || item.mixed ? `Show ${item.label}` : `Hide ${item.label}`;
   button.style.cssText = `position:absolute;left:${item.x}px;top:${item.y}px;transform:translateY(-50%);display:flex;align-items:center;gap:6px;padding:0;border:0;background:none;cursor:pointer;color:${paint.color};font:${paint.css}`;
   // A hidden series' swatch and text fade, as static output draws them; the box does not.
-  const fade = item.hidden ? HIDDEN : 1;
+  const fade = item.hidden ? HIDDEN : item.mixed ? (1 + HIDDEN) / 2 : 1;
   swatch.style.opacity = String(fade);
   // Point series show their symbol, as the SVG legend draws it; samples
   // the marks' look; others a rounded square.

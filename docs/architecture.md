@@ -37,6 +37,8 @@ One name per concept, used the same way in code and docs.
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
 | **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
 | **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one, or one per facet value or subplot, and with a navigator, the strip under them is a panel of the scene too, though not one the chart inspects or zooms. |
+| **Layout** | Where a chart's subplots go (`layout` in specs, `LayoutSpec`; the helpers of `herceg/layout`): a tree of grids of **tracks** (rows and columns sized by weight, by weight with a least size, or in pixels) whose **cells** hold panels or grids and may span tracks. A layout grid is not a Grid (the data grid), and a layout mark (a pie) lays out its own items, not panels. |
+| **Inset** | A panel drawn over another panel's plot (its parent), with scales of its own unless a scope names it, and optionally an **indicator** of its ranges on the parent. |
 | **Navigator** | A strip under the plot (under every panel, with facets or subplots) drawing a chart's marks over its whole x axis, with a window over the x range in view (the viewport) that the pointer and keyboard move and resize (`navigator`, a chart option made by `rangeNavigator`). |
 | **Geometry** | A mark's part of the scene: packed polylines (lines, areas, contour lines), rectangles (bars, regions), segments (rugs, error bars, candle wicks, dendrogram links, network links and arrowheads), points (network nodes too), a raster (heatmaps, 2D histograms), arcs (pie slices, gauge dials), polygons (a map's regions, contour bands), rules, text, shapes (custom marks, a gauge's value, funnel connectors, a directed network's bowed links), or faces (a 3D chart's surface cells and points, in drawing order). Geometry columns of tables are shapes in longitude and latitude, not scene geometry. |
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D, PDF. |
@@ -953,8 +955,8 @@ the groups' aggregate operations, field kinds, and the sort order of
 snapshot fit together; a query's grouping has the same level-by-level
 semantics as `groupRows` (aggregates over each group's rows, never its
 groups' values) and the group sort of a local grid, with ties by a group's
-own value. It is kept apart from the chart spec's `GridSpec`, which lays out
-panels. Times are epoch milliseconds; queries have no bins, since a fixed
+own value. It is kept apart from the chart spec's `LayoutSpec` (a
+`GridLayoutSpec` of cells), which lays out panels. Times are epoch milliseconds; queries have no bins, since a fixed
 step cannot be a local calendar day.
 
 The source protocol (`grid/source.ts`) is a request for `limit` rows (or a
@@ -1902,11 +1904,11 @@ marks: every panel's list holds every mark in the chart's order, with series
 only where the mark's `panel` names that panel (or is `"*"`), and a member
 mask so marks elsewhere are neither drawn nor inspected there. Marks keep
 their index in the chart as their identity in every panel, so series keys,
-colors, and legend state are the same as in one panel. Panels default to a y
-scale each (`y.scope` "panel"); each group of panels sharing y plans
-it from what its panels draw, with the chart's `y` and its first panel's own
-settings, and subplots infer each group's type (linear or time) from their
-own marks.
+colors, and legend state are the same as in one panel. Subplots default to
+x and y scales each (`scope` "panel"; with a range navigator, x is the
+chart's); each group of panels sharing a scale plans it from what its panels
+draw, with the chart's settings and its first panel's own, and subplots
+infer each group's type (linear or time) from their own marks.
 
 The right y axis is planned as the left one is, by one planner over either
 side's marks: shared, or with `yRight.scope` (by default the left one's
@@ -1927,9 +1929,11 @@ own right plan. A y zoom moves both axes through the same pixels, so facets
 refuse it when right marks have scales of their own, and `setViewport`
 checks each side's range against that side's resolution. Fifty panels of two lines over
 100,000 rows take about 1.6 ms a scene with both on the left or a shared
-right axis, and 1.8 ms with right axes of their own. What only a grid of panels needs
-(fitting it to the chart, weighted rows and columns, the room between rows)
-is the layout's (`PanelLayout.tracks`, `rowGap`), loaded only with it.
+right axis, and 1.8 ms with right axes of their own. Where panels go is the
+layout's `placement` (a `PanelPlacement`): a facet's uniform grid
+(`model/uniform-grid.ts`), or subplots' layout of cells (`model/cells.ts`,
+see Layouts of panels), each loaded only with it; a chart of one panel
+places itself.
 
 `x.scope` groups panels for x the same way (`PanelLayout.groups`), and the
 model plans each group as it plans the one shared x scale: the x extent of
@@ -1969,11 +1973,93 @@ across scales. Synced charts share cursors with such charts (each
 panel draws a cursor its scale holds) but neither send them nor take
 viewports and selections, which belong to some panels only; applications
 that link scales of the same quantity set them with `setViewport` and a
-panel. Python's live widgets report one viewport and selection and refuse
-charts whose panels have x scales of their own; the Streamlit component shows them and
-reports clicks (the clicked panel's scale decides whether values are
-times), keeps each panel's zoom across reruns by panel key, and refuses
-`on_select`.
+panel. Python's live widgets keep a view per subplot with an x scale of its
+own (the browser reports a change once for each panel showing the scale,
+and restores each panel's view by key), and refuse facet panels with x
+scales of their own, whose keys come from the data; the Streamlit component
+reports each panel's view and the panels of the selection, and keeps each
+panel's zoom across reruns by panel key.
+
+### Layouts of panels
+
+A chart's `layout` is a tree: grids of row and column tracks whose cells
+hold panels or grids, and panels holding insets. `layout/compile.ts` checks
+it (overlapping cells, panels placed twice or nowhere, indexes past the
+tracks, each refused as a `ChartError` at its path) and flattens it: the
+panels in reading and drawing order (depth first, a grid's cells by row then
+column, a panel followed by its insets), each with the chain of footprints
+(grid, tracks spanned) from the root down, or its parent if an inset.
+Scopes are groups over that order (`scopeGroups`): `"panel"` one each,
+`"chart"` every panel in a cell (insets keep their own), `"row"` and
+`"column"` the tracks of the grid holding a panel, `{ layout, by }` the
+tracks of a named grid an ancestor of the panel's, and `{ panels }` a list,
+insets included; a shared scale's labels go at the outer edge of the
+panels lined up along it (`linedUp`), or on every panel with `repeat:
+"all"`. The model plans each group's scale as before.
+
+`layout/grid.ts` sizes the tree along one axis at a time: tracks size
+plots, so each track's room before and after its plots is the most any cell
+starting or ending on it needs (titles, axes, labels, legends beside a
+panel), a spanning cell spans the gaps and the room between its tracks, a
+nested grid's outer plots take the room of the cell around them, fixed
+tracks keep their pixels, and flexible ones share what is left by weight,
+none under its least size. A layout that does not fit returns the length it
+needs, which the model reports as a `layout` error. `model/cells.ts` asks
+the model's measured needs (y labels' widths, x labels' heights, titles)
+per panel, places the plots, keeps margins from growing and shrinking while
+data streams as the one-panel path does, and places insets in their
+parents' plots (`layout/insets.ts`).
+
+An inset is a panel like the others, with a `cover` (its box, titles and
+axes included) in the scene, which stays inside its parent's plot (a box
+reaching outside it is refused), so that it covers its parent's data only,
+and nothing of other panels. Its tick labels stay in the box: the room
+beside its plot grows until its x labels fit (with no
+overhang into gutters, as cells have), and the room above and below holds
+the reach of the y labels its own styles give it, before y is planned (as
+margins are). Labels of layers the guides list along y stay inside the box
+as they stay inside the chart, moving in from their ticks at its ends
+where they are taller (`AxesState.cells.within`). A title longer than the
+box runs past it. A panel with insets over it has `visible`,
+its plot without their boxes as rectangles that do not overlap, and its
+grid lines' spans that keep their strokes clear of the boxes
+(`Panel.grid.xSpans/ySpans`); insets side by side may not overlap.
+Renderers draw the scene's `layers`: the panels in cells together, then
+each inset over the chart's background in its box, its grid and data. A
+panel's data, plot background, brushes, lassos, crosshair, and hover marks
+are clipped to its visible rectangles, and what it draws beyond them
+(annotations, labels) to the chart less the insets' boxes (`keepPath`, an
+even-odd path, also over a Canvas chart's canvas); axes and borders are
+drawn over every layer, outside the plots, and legends inside a plot over
+its insets. The live SVG layer keeps an inset's
+box and grid in a group of its own, which server snapshots record and
+hydration takes over. The pointer, the wheel, clicks, and row selections
+find the topmost panel under them: a panel is skipped where the box of an
+inset drawn after it holds the point (`ChartModel.coveredAt`, answered by
+the layout of cells, which keeps the last scene's boxes in drawing order).
+An inset's indicator is a shapes geometry on its parent: the inset's
+ranges on the parent's scales, within its plot, joined side to side to the
+inset's box; it needs continuous axes of the same kind in both.
+
+Panels' legends are guides with a `panel`: they list the entries whose
+series (or layout mark items) the panel draws, and the chart's automatic
+legend leaves out what panels with legends list where every panel drawing
+it has one. The guide compiler lays them out with what `PanelLegends`
+(`model/panel-legends.ts`, which loads with `panels`) finds of the panels;
+a legend above or below one panel wraps at the width the last scene of the
+same layout wrapped it at, or, for a layout placed anew (another size, an
+update, a theme or measure change), at a guess no narrower than its plot
+will be; when it is wider than its plot, the scene is laid out again with
+the plots' widths (twice at most), and a narrower one is kept, as margins
+are while the layout stays. A legend on the left or right makes its plot
+at least as tall as itself. Visibility stays on the model:
+`HiddenKeys` holds the chart's hidden keys and, per panel, the keys a
+panel's legend hid or showed there unlike the chart; a panel's frames,
+inspectors, and domains read the panel's snapshot, a chart-wide change lets
+go of the panels' settings for its keys (`Panels.visibility`), and the
+chart's legend marks entries hidden in some panels as mixed. All of this
+loads with `panels` (`model/panels.ts` and what it imports); a chart
+without subplots carries the hooks only.
 
 With a `scope` other than `"chart"` on a category axis, each group of panels
 sharing the axis holds only the chart's bands that the rows its panels draw
@@ -4045,9 +4131,11 @@ their room through the axes hooks (see Scales and guides). Marks that
 label outside their plots (a rule's label beside the y axis) ask for room
 (`Mark.room`): the widest on each side is a track of its own, innermost,
 and its marks draw their labels at its inner edge (`Frame.outside`).
-Tracks are the chart's; tracks beside one panel of several are not planned
-yet, so a side place with `scope: "panel"` is refused, and marks' labels
-outside panels other than the first and last columns' take no room.
+Tracks are the chart's. Legends beside one subplot (a side place with
+`scope: "panel"`, or a panel's legend) take room beside that panel's plot
+in the layout of cells instead (see Layouts of panels); in facets such a
+place is refused. Marks' labels outside panels other than the first and
+last columns' take no room.
 
 ## Scales and guides
 
@@ -5573,12 +5661,13 @@ mouse input, through Playwright's mouse.
 - One x axis per panel and at most two y axes per chart; category values
   and marks placed along y (horizontal bars and error bars) only on the
   left. Guides draw at most one axis per side, an x axis on top only
-  without panel headers, a y axis on the right only where each row's
-  panels share y, and rows, turned labels, staggers, and wraps on x axes
-  only; category axes label the categories that fit, with no tick steps,
-  values, or formats. Legends and colorbars stand in the chart's tracks,
-  not beside one panel of several, and name marks along axes, not layout
-  marks; colorbars show linear scales (no log color scale); custom
+  without panel headers, in a facet grid a y axis on the right only where
+  each row's panels share y (or with `repeat: "all"`), and rows, turned
+  labels, staggers, and wraps on x axes only; category axes label the
+  categories that fit, with no tick steps, values, or formats. Legends
+  stand in the chart's tracks or beside one subplot (a panel's legend);
+  colorbars stand in the chart's tracks only; both name marks along axes,
+  not layout marks; colorbars show linear scales (no log color scale); custom
   swatches are lines, boxes, and circles. Tick layers draw tick marks and
   labels, not grid lines of their own. A change of values that moves an
   axis the guides list is shown at once, not animated.
@@ -5745,10 +5834,12 @@ mouse input, through Playwright's mouse.
   highlighting of a node's links on hover. The whole layout is recomputed
   when the table changes, and the pointer lookup scans every node and link.
 - In charts whose panels have x scales of their own, one scale at a time
-  has a selection, synced charts share only cursors with them, and Python's
-  live widgets refuse them (Streamlit shows them without reporting
-  selections). Annotations repeated in panels whose x scales differ in type
-  are described in the text alternative with their first panel's formats.
+  has a selection, and synced charts share only cursors with them. Python's
+  live widgets keep each subplot's own view and the panels of a selection,
+  but refuse facets with x scales of their own, whose panels come from the
+  data; Streamlit reports each panel's view and the panels of a selection.
+  Annotations repeated in panels whose x scales differ in type are
+  described in the text alternative with their first panel's formats.
 - Selections report ranges and lasso outlines, not the rows inside them.
   Synced selections are data values, so charts with differently ordered
   categories select different categories. The keyboard selects ranges only;

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { category } from "../../src/data/column.ts";
 import { type Table, table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { grid } from "../../src/layout.ts";
 import { funnel } from "../../src/marks/funnel.ts";
 import { gauge } from "../../src/marks/gauge.ts";
 import { line } from "../../src/marks/line.ts";
@@ -178,7 +179,7 @@ describe("a layout mark in a subplot", () => {
         { id: "trend", title: "Trend" },
         { id: "share", title: "Share" },
       ],
-      { columns },
+      grid({ columns }),
     ),
   });
 
@@ -254,14 +255,14 @@ describe("a layout mark in a subplot", () => {
     ];
     const plain = build({
       marks,
-      panels: panels([{ id: "trend" }, { id: "share" }], { columns: 2 }),
+      panels: panels([{ id: "trend" }, { id: "share" }], grid({ columns: 2 })),
     });
     // The chart's y format, which only the pie's panel would take, labels nothing.
     const wide = build({
       marks,
       panels: panels(
         [{ id: "trend", y: { format: { maximumFractionDigits: 0 } } }, { id: "share" }],
-        { columns: 2 },
+        grid({ columns: 2 }),
       ),
       y: { format: { minimumFractionDigits: 20 } },
     });
@@ -269,7 +270,7 @@ describe("a layout mark in a subplot", () => {
     // Nor does a y title only the pie's panel would take.
     const untitled = build({
       marks,
-      panels: panels([{ id: "trend", y: { title: "" } }, { id: "share" }], { columns: 2 }),
+      panels: panels([{ id: "trend", y: { title: "" } }, { id: "share" }], grid({ columns: 2 })),
       y: { title: "Revenue" },
     });
     expect(untitled.scene.panels[0]!.plot).toEqual(plain.scene.panels[0]!.plot);
@@ -282,7 +283,7 @@ describe("a layout mark in a subplot", () => {
         marks: [dots, shares({ panel: "share" })],
         panels: panels(
           [{ id: "trend" }, { id: "share" }],
-          across ? { columns: 2, columnWidths: [10, 1] } : { rowHeights: [10, 1] },
+          across ? grid({ columns: [10, 1] }) : grid({ rows: [10, 1] }),
         ),
         y: { scope: "chart" },
       });

@@ -7,9 +7,13 @@ import { type MeasureText, textHalo, textHeight, textItem, textWidth } from "../
 import type { ColorRamp } from "../marks/mark.ts";
 import { type Guide, type GuideItem, LEGEND_SWATCH, type LegendItem } from "../scene/scene.ts";
 import type { TextPaint } from "../style/style.ts";
+import type { PanelSplit } from "./panel-layout.ts";
+import type { PanelLegends } from "./panel-legends.ts";
 
 /** Space between the chart's edges and what it draws. */
 export const EDGE = 8;
+/** Space between axes' labels and their titles, and around the chart's other furniture. */
+export const GAP = 6;
 const LEGEND_GAP = 16;
 
 /** A series' legend item before layout. */
@@ -23,11 +27,26 @@ export type LegendEntry = Omit<LegendItem, "hidden" | "x" | "y">;
  */
 export class HiddenKeys extends Set<string> {
   readonly groups = new Map<string, string>();
+  /**
+   * Per panel, series and item keys hidden (true) or shown (false) there
+   * unlike in the rest of the chart, as a panel's legend set them.
+   */
+  panels = new Map<string, Map<string, boolean>>();
   /** The keys `groups` mapped since the last scene was made (see `prune`). */
   #joined = new Set<string>();
 
   override has(key: string): boolean {
     return super.has(key) || super.has(this.groups.get(key) ?? key);
+  }
+
+  /**
+   * Whether `key` is hidden in panel `panel`: as the panel's legend set it
+   * or what it stands for, else as in the chart.
+   */
+  hiddenIn(key: string, panel: string | undefined): boolean {
+    // No panel's map is under an undefined key.
+    const own = this.panels.get(panel!);
+    return own?.get(key) ?? own?.get(this.groups.get(key)!) ?? this.has(key);
   }
 
   /** Maps a series' or item's key to its identity's. */
@@ -46,8 +65,8 @@ export class HiddenKeys extends Set<string> {
     this.#joined = new Set();
   }
 
-  /** Scene-owned membership, including the series hidden by their group entries. */
-  snapshot(): ReadonlySet<string> {
+  /** Scene-owned membership, including the series hidden by their group entries (see `Panels.snapshot`). */
+  snapshot(): Set<string> {
     const keys = new Set(this);
     for (const [key, entry] of this.groups) if (super.has(entry)) keys.add(key);
     return keys;
@@ -100,10 +119,22 @@ export interface LegendContent {
   entries: readonly LegendEntry[];
   /** In the order they flow. */
   parts: readonly LegendPart[];
-  /** Keys of hidden series. */
-  hidden: ReadonlySet<string>;
+  /** Keys of hidden series, and in charts of panels, what each panel shows unlike the chart. */
+  hidden: ReadonlySet<string> & Partial<Pick<HiddenKeys, "hiddenIn" | "panels" | "groups">>;
   /** Layout marks' entries, by key, whose looks swatches draw beside series' (`swatches: "mark"`). */
   also?: readonly LegendEntry[] | undefined;
+  /**
+   * Whether a series a legend's own entries name is hidden where the legend
+   * toggles it; by default, as `hidden` has it.
+   */
+  hides?: ((key: string) => boolean) | undefined;
+  /**
+   * In charts of subplots, what each panel draws, its items' colors, and
+   * what lists them in panels' legends (loaded with subplots).
+   */
+  split?: PanelSplit | undefined;
+  color?: ((key: string) => string) | undefined;
+  panelLegends?: typeof PanelLegends | undefined;
 }
 
 /**

@@ -26,7 +26,7 @@ except ImportError as error:  # pragma: no cover - depends on the environment
     ) from error
 
 from . import _render
-from ._chart import Camera, axis_scope
+from ._chart import Camera
 from ._data import shown
 from ._derive import Expr
 from ._events import (
@@ -81,8 +81,10 @@ class ChartState:
     panel_drill_roots: dict[str, DrillRoot | None] = field(default_factory=dict)
     #: Each network subplot's manual node positions, by panel id.
     panel_item_positions: dict[str, ItemPositions] = field(default_factory=dict)
-    #: Each map or network subplot's view, by panel id, in its plane's units
-    #: (``viewport`` is the chart's).
+    #: The views panels have of their own, by panel key: each map or network
+    #: subplot's, in its plane's units, and the x range of each panel with an x
+    #: scale of its own (subplots whose x's scope is not "chart", insets, facet
+    #: panels with x scales of their own). ``viewport`` is the chart's.
     panel_viewports: dict[str, Viewport] = field(default_factory=dict)
     #: Current standalone 3D camera, or each subplot's by panel id.
     camera: Camera | None = None
@@ -113,8 +115,9 @@ def chart(
     ``viewport`` in layout coordinates for networks or projected units for maps.
     ``drill_root`` and ``item_positions`` in the result
     hold their state. Inside ``st.form``, a selection reaches the script when the
-    form is submitted, and clicks cannot react. Charts whose panels have x scales of their own
-    (x's scope) cannot report selections. Give the chart a ``key`` to
+    form is submitted, and clicks cannot react. In charts whose panels have
+    x scales of their own, ``panel_viewports`` holds each panel's view, and a
+    selection names the panels it is in (``panels``). Give the chart a ``key`` to
     keep its selection when its data changes, and to show several charts
     with the same content. Charts without a ``theme`` follow the app's light
     or dark theme.
@@ -143,17 +146,6 @@ def chart(
                 f'streamlit.chart {options[name]}: expected "ignore", "rerun", or a function; '
                 f"received {shown(reaction)}"
             )
-    shares_x = axis_scope(chart._settings, "x") in (None, "chart")
-    if on_viewport != "ignore" and not shares_x:
-        raise ValueError(
-            "streamlit.chart on_viewport: reports one viewport, so the chart's panels must "
-            'share x; give the chart\'s x scope "chart"'
-        )
-    if on_select != "ignore" and not shares_x:
-        raise ValueError(
-            "streamlit.chart on_select: reports one selection, so the chart's panels must "
-            'share x; give the chart\'s x scope "chart"'
-        )
     if on_row_selection != "ignore":
         if len(chart._row_selection) != 1:
             raise ValueError(

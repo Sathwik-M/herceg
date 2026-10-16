@@ -405,7 +405,7 @@ def test_right_axes_in_facets_and_panels():
     assert ">p99</text>" in subplots.to_svg()
     with pytest.raises(
         ValueError,
-        match='AxisOptions scope: expected "chart", "panel", "row", or "column"; received "free"',
+        match='AxisOptions scope: expected "chart", "panel", "row", "column", ',
     ):
         hg.AxisOptions(scope="free")  # type: ignore[arg-type]
     # A scope in a chart of one panel has one instance to give.
@@ -414,7 +414,7 @@ def test_right_axes_in_facets_and_panels():
         in hg.Chart(DATA, y_right=hg.AxisOptions(scope="panel")).line(x="t", y="p50").to_svg()
     )
     with pytest.raises(
-        ValueError, match="Panel y scope: only the chart's x, y, and y_right take a scope"
+        ValueError, match="Panel y scope: only the chart's x, y, and y_right take scope"
     ):
         hg.Chart(DATA, panels=[hg.Panel("a", y=hg.AxisOptions(scope="panel"))]).to_spec()
     zoomed = hg.Chart(DATA, facet="host", zoom="xy", y_right=hg.AxisOptions(scope="panel"))
@@ -479,7 +479,7 @@ def test_panels_can_have_x_scales_of_their_own():
                 hg.Panel("a", x=hg.AxisOptions(title="Time")),
                 hg.Panel("b", x={"type": "log"}),
             ],
-            panel_row_heights=[2, 1],
+            layout=hg.Grid(rows=[2, 1]),
             x=hg.AxisOptions(scope="panel"),
         )
         .line(x="t", y="p50", panel="a")
@@ -511,7 +511,7 @@ def test_panels_can_have_categories_of_their_own():
     # Each panel labels its own categories: N's b and d, S's a and c, E's c.
     assert all(f">{label}</text>" in svg for label in "abcd")
     subplots = (
-        hg.Chart(panels=["fruit", "cars"], panel_columns=2, width=500, height=250)
+        hg.Chart(panels=["fruit", "cars"], layout=hg.Grid(columns=2), width=500, height=250)
         .bar(x="v", y="name", data={"name": ["apple", "pear"], "v": [3, 4]}, panel="fruit")
         .bar(x="v", y="name", data={"name": ["vw", "audi"], "v": [5, 6]}, panel="cars")
     )
@@ -1544,12 +1544,12 @@ def test_panels_draw_the_marks_that_name_them():
         {"id": "spread"},
     ]
     assert [mark["panel"] for mark in spec["marks"]] == ["latency", "spread", "*"]
-    assert "grid" not in spec
+    assert "layout" not in spec
     svg = chart.to_svg()
     assert ">Latency</text>" in svg and ">ms</text>" in svg
-    wide_chart = hg.Chart(DATA, panels=["a", "b"], panel_columns=2)
+    wide_chart = hg.Chart(DATA, panels=["a", "b"], layout=hg.Grid(columns=2))
     wide, _ = wide_chart.line(x="t", y="p50", panel="a").to_spec()
-    assert wide["grid"] == {"columns": 2}
+    assert wide["layout"] == {"type": "grid", "columns": [1.0, 1.0]}
     with pytest.raises(
         ValueError, match='line panel: expected the id of a panel, or "\\*" for every panel'
     ):
@@ -1574,38 +1574,33 @@ def test_panels_draw_the_marks_that_name_them():
     ):
         hg.Chart(DATA, panels=["a"], zoom="xy").line(x="t", y="p50", panel="a").to_spec()
     with pytest.raises(
-        ValueError, match="Chart panel_columns: lays out panels, and the chart has none"
+        ValueError, match="Chart layout: places the chart's panels, and it has none"
     ):
-        hg.Chart(DATA, panel_columns=2)
+        hg.Chart(DATA, layout=hg.Grid(columns=2))
     tall, _ = (
-        hg.Chart(DATA, panels=["a", "b"], panel_row_heights=[3, 1])
+        hg.Chart(DATA, panels=["a", "b"], layout=hg.Grid(rows=[3, 1]))
         .line(x="t", y="p50", panel="a")
         .to_spec()
     )
-    assert tall["grid"] == {"rowHeights": [3, 1]}
+    assert tall["layout"] == {"type": "grid", "rows": [3.0, 1.0], "columns": [1.0]}
     # NumPy weights arrive as plain numbers JSON can carry.
-    weighted = hg.Chart(DATA, panels=["a", "b"], panel_row_heights=np.array([3, 1]))
+    weighted = hg.Chart(DATA, panels=["a", "b"], layout=hg.Grid(rows=np.array([3, 1])))
     spec, _ = weighted.line(x="t", y="p50", panel="a").to_spec()
-    assert json.loads(json.dumps(spec["grid"])) == {"rowHeights": [3.0, 1.0]}
-    assert "rowHeights" in weighted.to_html()
-    with pytest.raises(
-        ValueError, match="Chart panel_row_heights: expected 2 heights, one per row; received 1"
-    ):
-        hg.Chart(DATA, panels=["a", "b"], panel_row_heights=[1])
+    assert json.loads(json.dumps(spec["layout"]))["rows"] == [3.0, 1.0]
+    assert "layout" in weighted.to_html()
+    # Too few rows for the panels fails as the layout is laid out.
+    with pytest.raises(hg.ChartError, match="layout.rows: 2 panels fill 2 rows of 1"):
+        hg.Chart(DATA, panels=["a", "b"], layout=hg.Grid(rows=[1])).line(
+            x="t", y="p50", panel="a"
+        ).to_svg()
     wide, _ = (
-        hg.Chart(DATA, panels=["a", "b", "c"], panel_columns=2, panel_column_widths=[2, 1])
+        hg.Chart(DATA, panels=["a", "b", "c"], layout=hg.Grid(columns=[2, 1]))
         .line(x="t", y="p50", panel="*")
         .to_spec()
     )
-    assert wide["grid"] == {"columns": 2, "columnWidths": [2.0, 1.0]}
-    with pytest.raises(
-        ValueError, match="Chart panel_column_widths: expected 2 widths, one per column; received 3"
-    ):
-        hg.Chart(DATA, panels=["a", "b"], panel_columns=3, panel_column_widths=[1, 1, 1])
-    with pytest.raises(ValueError, match="Chart panel_column_widths: expected positive numbers"):
-        hg.Chart(DATA, panels=["a", "b"], panel_columns=2, panel_column_widths=[1, 0])
-    with pytest.raises(ValueError, match="Chart panel_column_widths: lays out panels"):
-        hg.Chart(DATA, panel_column_widths=[1])
+    assert wide["layout"] == {"type": "grid", "columns": [2.0, 1.0]}
+    with pytest.raises(ValueError, match=r"Grid columns\[1\]: expected a weight greater than 0"):
+        hg.Chart(DATA, panels=["a", "b"], layout=hg.Grid(columns=[1, 0]))
 
 
 SALES = {
@@ -1669,7 +1664,7 @@ def test_facets_of_layout_marks_refuse_what_the_browser_refuses():
 
 def test_a_layout_mark_fills_its_own_panel_beside_others():
     chart = (
-        hg.Chart(SALES, panels=["trend", "share"], panel_columns=2, width=600, height=300)
+        hg.Chart(SALES, panels=["trend", "share"], layout=hg.Grid(columns=2), width=600, height=300)
         .line(x="week", y="revenue", panel="trend")
         .pie("product", "revenue", panel="share")
     )
@@ -1864,7 +1859,8 @@ def test_option_types_list_every_option():
     assert set(hg.ChartOptions.__optional_keys__) == parameters
     assert set(hg.ChartUpdate.__optional_keys__) == set(OPTIONS)
     helper = set(hg.HelperOptions.__optional_keys__)
-    assert helper == parameters - {"x", "y", "z"} | {"x_axis", "y_axis", "z_axis"}
+    # A helper draws one panel, and graph() names how it places nodes `layout`.
+    assert helper == parameters - {"x", "y", "z", "layout"} | {"x_axis", "y_axis", "z_axis"}
 
 
 def test_tooltip_fields_belong_to_marks():
@@ -2252,7 +2248,7 @@ def test_panels_that_do_not_fit_fail_as_a_layout():
     rows = {"t": [0, 1], "v": [1.0, 2.0]}
     chart = hg.Chart(rows, width=50, height=50, panels=["a", "b"])
     chart.line(x="t", y="v", panel="a").line(x="t", y="v", panel="b")
-    with pytest.raises(hg.ChartError, match="do not fit a 50×50 chart") as raised:
+    with pytest.raises(hg.ChartError, match="layout: needs at least .* px of height") as raised:
         chart.to_svg()
     assert (raised.value.code, raised.value.phase) == ("layout-failed", "layout")
 
